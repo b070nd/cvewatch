@@ -1,6 +1,6 @@
 module github.com/b070nd/cvewatch/app
 
-go 1.27.1
+go 1.27.3
 
 require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
