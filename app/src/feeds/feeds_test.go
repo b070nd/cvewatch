@@ -3,13 +3,14 @@ package feeds
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
-	"cvewatch/src/httpx"
-	"cvewatch/src/model"
+	"github.com/b070nd/cvewatch/app/src/httpx"
+	"github.com/b070nd/cvewatch/app/src/model"
 )
 
 // fakeGetter returns a canned response and records the request it saw.
@@ -293,10 +294,14 @@ func TestGHSA(t *testing.T) {
 	 {"ghsa_id":"GHSA-cfgh-2345-wxqr","cve_id":"CVE-2025-9999","summary":"RCE in http-kernel","description":"Fixes <i>also</i> CVE-2025-1234.",
 	  "severity":"high","html_url":"https://github.com/advisories/GHSA-cfgh-2345-wxqr","published_at":"2025-12-30T12:00:00Z",
 	  "cvss":{"score":8.1},
-	  "vulnerabilities":[{"package":{"name":"Symfony/HTTP-Kernel"}},{"package":{"name":"symfony/http-kernel"}},{"package":null},{"package":{"name":"symfony/http-foundation"}}]},
+	  "vulnerabilities":[
+	   {"package":{"ecosystem":"composer","name":"Symfony/HTTP-Kernel"},"vulnerable_version_range":">= 6.0, < 6.4.2","first_patched_version":"6.4.2"},
+	   {"package":{"ecosystem":"Composer","name":"symfony/http-kernel"},"vulnerable_version_range":"< 5.4.30","first_patched_version":{"identifier":"5.4.30"}},
+	   {"package":null},
+	   {"package":{"ecosystem":"composer","name":"symfony/http-foundation"},"vulnerable_version_range":"not a range","first_patched_version":null}]},
 	 {"ghsa_id":"GHSA-cccc-2222-3333","cve_id":null,"summary":"Prototype pollution","description":"",
 	  "severity":"unknown","html_url":"https://github.com/advisories/GHSA-cccc-2222-3333","published_at":"2025-12-31T12:00:00Z",
-	  "cvss":{"score":9.3},"vulnerabilities":[{"package":{"name":"lodash"}}]}
+	  "cvss":{"score":9.3},"vulnerabilities":[{"package":{"ecosystem":"npm","name":"lodash"},"vulnerable_version_range":"< 4.17.21"}]}
 	]`
 	items := fetch(t, body(fixture), "ghsa", model.FeedState{})
 	if len(items) != 2 {
@@ -306,8 +311,19 @@ func TestGHSA(t *testing.T) {
 	if want := []string{"CVE-2025-9999", "CVE-2025-1234", "GHSA-CFGH-2345-WXQR"}; !reflect.DeepEqual(a.IDs, want) {
 		t.Errorf("ids = %v, want %v", a.IDs, want)
 	}
-	if want := []string{"symfony/http-kernel", "symfony/http-foundation"}; !reflect.DeepEqual(a.Packages, want) {
-		t.Errorf("packages = %v, want %v", a.Packages, want)
+	wantAff := []model.Affected{
+		{Ecosystem: "composer", Name: "symfony/http-kernel", Fixed: "6.4.2", Ranges: []model.Range{{Min: "6.0", Max: "6.4.2", MaxExcl: true}, {Max: "5.4.30", MaxExcl: true}}},
+		{Ecosystem: "composer", Name: "symfony/http-foundation"},
+	}
+	if !reflect.DeepEqual(a.Affected, wantAff) {
+		t.Errorf("affected = %+v, want %+v", a.Affected, wantAff)
+	}
+	wantFix := []model.Fix{
+		{Kind: model.FixVersion, Detail: "6.4.2", URL: a.URL, Source: "src", Official: true},
+		{Kind: model.FixVersion, Detail: "5.4.30", URL: a.URL, Source: "src", Official: true},
+	}
+	if !reflect.DeepEqual(a.Fixes, wantFix) {
+		t.Errorf("fixes = %+v, want %+v", a.Fixes, wantFix)
 	}
 	if a.Severity != model.SevHigh || a.CVSS != 8.1 || a.Summary != "Fixes also CVE-2025-1234." || a.Title != "RCE in http-kernel" {
 		t.Errorf("item a = %+v", a)
@@ -316,8 +332,11 @@ func TestGHSA(t *testing.T) {
 	if !reflect.DeepEqual(b.IDs, []string{"GHSA-CCCC-2222-3333"}) || b.Severity != model.SevCritical || b.Summary != "Prototype pollution" {
 		t.Errorf("item b = %+v", b)
 	}
-	if !reflect.DeepEqual(b.Packages, []string{"lodash"}) {
-		t.Errorf("packages = %v", b.Packages)
+	if want := []model.Affected{{Ecosystem: "npm", Name: "lodash", Ranges: []model.Range{{Max: "4.17.21", MaxExcl: true}}}}; !reflect.DeepEqual(b.Affected, want) {
+		t.Errorf("affected = %+v", b.Affected)
+	}
+	if b.Fixes != nil {
+		t.Errorf("fixes = %+v, want none", b.Fixes)
 	}
 }
 
@@ -371,5 +390,111 @@ func TestPlainDropsEscapesAndBidiTricks(t *testing.T) {
 	got := plain("Bug \x1b[31mred\x1b[0m \u202eevil\u202c in <b>PHP</b>\x07")
 	if got != "Bug [31mred[0m evil in PHP" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestSourceTypeSet(t *testing.T) {
+	for typ, fixture := range map[string]string{
+		"kev":  `{"vulnerabilities":[{"cveID":"CVE-2025-0001","vendorProject":"A","product":"B","vulnerabilityName":"C","dateAdded":"2026-01-01"}]}`,
+		"nvd":  `{"vulnerabilities":[{"cve":{"id":"CVE-2025-0002"}}]}`,
+		"ghsa": `[{"ghsa_id":"GHSA-cfgh-2345-wxqr","summary":"s"}]`,
+		"hn":   `{"hits":[{"objectID":"1","title":"t","url":"https://ex.test","created_at_i":1767225600}]}`,
+	} {
+		items := fetch(t, body(fixture), typ, model.FeedState{})
+		if len(items) != 1 || items[0].SourceType != typ {
+			t.Errorf("%s: items = %+v", typ, items)
+		}
+	}
+}
+
+func TestNVDAffectedAndFixes(t *testing.T) {
+	const fixture = `{"vulnerabilities":[{"cve":{"id":"CVE-2025-1000","descriptions":[{"lang":"en","value":"Bug."}],
+	 "configurations":[{"nodes":[{"cpeMatch":[
+	  {"vulnerable":true,"criteria":"cpe:2.3:a:Example:Widget:*:*:*:*:*:*:*:*","versionStartIncluding":"1.0","versionEndExcluding":"1.4.2"},
+	  {"vulnerable":true,"criteria":"cpe:2.3:a:example:widget:*:*:*:*:*:*:*:*","versionStartExcluding":"2.0","versionEndIncluding":"2.1"},
+	  {"vulnerable":true,"criteria":"cpe:2.3:a:example:gadget:3.1:*:*:*:*:*:*:*"},
+	  {"vulnerable":true,"criteria":"cpe:2.3:a:example:everything:*:*:*:*:*:*:*:*"},
+	  {"vulnerable":true,"criteria":"cpe:2.3:a:example:na:-:*:*:*:*:*:*:*"},
+	  {"vulnerable":true,"criteria":"cpe:2.3:a:ex\\:corp:wid\\-get:1\\.0:*:*:*:*:*:*:*"},
+	  {"vulnerable":false,"criteria":"cpe:2.3:o:example:os:*:*:*:*:*:*:*:*"},
+	  {"vulnerable":true,"criteria":"cpe:2.3:a:short"}
+	 ]}]}],
+	 "references":[
+	  {"url":"https://ex.test/patch","source":"s","tags":["Patch","Vendor Advisory","Third Party Advisory"]},
+	  {"url":"https://ex.test/patch","source":"s","tags":["Patch"]},
+	  {"url":"http://ex.test/mit","tags":["Mitigation"]},
+	  {"url":"javascript:alert(1)","tags":["Patch"]},
+	  {"url":"ftp://ex.test/x","tags":["Patch"]},
+	  {"url":"https://ex.test/none","tags":["Exploit"]}
+	 ]}}]}`
+	items := fetch(t, body(fixture), "nvd", model.FeedState{})
+	if len(items) != 1 {
+		t.Fatalf("got %d items", len(items))
+	}
+	it := items[0]
+	want := []model.Affected{
+		{Ecosystem: "cpe", Name: "example:widget", Ranges: []model.Range{
+			{Min: "1.0", Max: "1.4.2", MaxExcl: true},
+			{Min: "2.0", MinExcl: true, Max: "2.1"},
+		}},
+		{Ecosystem: "cpe", Name: "example:gadget", Ranges: []model.Range{{Min: "3.1", Max: "3.1"}}},
+		{Ecosystem: "cpe", Name: "example:everything", Ranges: []model.Range{{}}},
+		{Ecosystem: "cpe", Name: "example:na", Ranges: []model.Range{{}}},
+		{Ecosystem: "cpe", Name: "ex:corp:wid-get", Ranges: []model.Range{{Min: "1.0", Max: "1.0"}}},
+	}
+	if !reflect.DeepEqual(it.Affected, want) {
+		t.Errorf("affected = %+v\nwant %+v", it.Affected, want)
+	}
+	wantFix := []model.Fix{
+		{Kind: model.FixPatch, URL: "https://ex.test/patch", Source: "src"},
+		{Kind: model.FixAdvisory, URL: "https://ex.test/patch", Source: "src", Official: true},
+		{Kind: model.FixMitigation, URL: "http://ex.test/mit", Source: "src"},
+	}
+	if !reflect.DeepEqual(it.Fixes, wantFix) {
+		t.Errorf("fixes = %+v\nwant %+v", it.Fixes, wantFix)
+	}
+}
+
+func TestNVDCaps(t *testing.T) {
+	var cpes, refs []string
+	for i := 0; i < 60; i++ {
+		cpes = append(cpes, fmt.Sprintf(`{"vulnerable":true,"criteria":"cpe:2.3:a:v:p%d:*:*:*:*:*:*:*:*"}`, i))
+		refs = append(refs, fmt.Sprintf(`{"url":"https://ex.test/%d","tags":["Patch"]}`, i))
+	}
+	fixture := `{"vulnerabilities":[{"cve":{"id":"CVE-2025-2000","configurations":[{"nodes":[{"cpeMatch":[` +
+		strings.Join(cpes, ",") + `]}]}],"references":[` + strings.Join(refs, ",") + `]}}]}`
+	it := fetch(t, body(fixture), "nvd", model.FeedState{})[0]
+	if len(it.Affected) != 50 || len(it.Fixes) != 20 {
+		t.Fatalf("affected = %d, fixes = %d", len(it.Affected), len(it.Fixes))
+	}
+}
+
+func TestKEVFixAndRansomware(t *testing.T) {
+	long := strings.Repeat("é", 300)
+	fixture := `{"vulnerabilities":[
+	 {"cveID":"CVE-2025-0010","vendorProject":"Acme","product":"Gate","vulnerabilityName":"RCE","shortDescription":"Bad.","dateAdded":"2025-12-30",
+	  "requiredAction":"Apply <b>updates</b> per vendor instructions.","knownRansomwareCampaignUse":"Known"},
+	 {"cveID":"CVE-2025-0011","vendorProject":"Acme","product":"Door","vulnerabilityName":"XSS","shortDescription":"Bad.","dateAdded":"2025-12-30",
+	  "requiredAction":"","knownRansomwareCampaignUse":"Unknown"},
+	 {"cveID":"CVE-2025-0012","vendorProject":"Acme","product":"Lock","vulnerabilityName":"Long","shortDescription":"Bad.","dateAdded":"2025-12-30",
+	  "requiredAction":"` + long + `"}
+	]}`
+	items := fetch(t, body(fixture), "kev", model.FeedState{})
+	if len(items) != 3 {
+		t.Fatalf("got %d items", len(items))
+	}
+	a := items[0]
+	wantFix := []model.Fix{{Kind: model.FixAction, Detail: "Apply updates per vendor instructions.", URL: a.URL, Source: "src", Official: true}}
+	if !reflect.DeepEqual(a.Fixes, wantFix) {
+		t.Errorf("fixes = %+v", a.Fixes)
+	}
+	if a.Summary != "Actively exploited (CISA KEV). Bad. Known ransomware use." {
+		t.Errorf("summary = %q", a.Summary)
+	}
+	if items[1].Fixes != nil || strings.Contains(items[1].Summary, "ransomware") {
+		t.Errorf("item b = %+v", items[1])
+	}
+	if n := len([]rune(items[2].Fixes[0].Detail)); n != 200 {
+		t.Errorf("action runes = %d, want 200", n)
 	}
 }

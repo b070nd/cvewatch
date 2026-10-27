@@ -9,7 +9,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"cvewatch/src/model"
+	"github.com/b070nd/cvewatch/app/src/model"
 )
 
 const maxText = 2000 // runes kept in titles and summaries
@@ -120,4 +120,25 @@ func parseTime(s string) time.Time {
 		}
 	}
 	return time.Time{}
+}
+
+// addAffected adds a to list, or merges it into the entry with the same
+// ecosystem and name: new ranges are appended and repeats dropped, and the
+// first fixed version given is kept.
+func addAffected(list []model.Affected, a model.Affected) []model.Affected {
+	for i := range list {
+		if list[i].Ecosystem != a.Ecosystem || list[i].Name != a.Name {
+			continue
+		}
+		for _, r := range a.Ranges {
+			if !slices.Contains(list[i].Ranges, r) {
+				list[i].Ranges = append(list[i].Ranges, r)
+			}
+		}
+		if list[i].Fixed == "" {
+			list[i].Fixed = a.Fixed
+		}
+		return list
+	}
+	return append(list, a)
 }

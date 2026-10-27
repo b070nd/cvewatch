@@ -10,13 +10,14 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
-	"cvewatch/src/model"
+	"github.com/b070nd/cvewatch/app/src/model"
 )
 
 type Settings struct {
@@ -27,6 +28,18 @@ type Settings struct {
 	AlertsDir string        `yaml:"alerts_dir"` // markdown reports land here
 	HTTP      HTTP          `yaml:"http"`
 	Slack     Slack         `yaml:"slack"`
+	// Access optionally limits who may see and change which projects, by the
+	// actor name (CVEWATCH_ACTOR or the OS user). Empty means everyone may do
+	// everything, which is right for a single operator. This is authorization
+	// on top of a local identity, not authentication: do not expose the
+	// tool to people you cannot identify by other means.
+	Access map[string]Grant `yaml:"access"`
+}
+
+// Grant is what one actor may do. "*" in Projects means every project.
+type Grant struct {
+	Projects []string `yaml:"projects"`
+	Write    bool     `yaml:"write"`
 }
 
 type HTTP struct {
@@ -102,6 +115,9 @@ func Load(root string) (*Bundle, error) {
 		if err := decode(path, &p, false); err != nil {
 			return err
 		}
+		for i, lf := range p.Lockfiles {
+			p.Lockfiles[i].Path = resolve(root, lf.Path) // relative paths follow the app root, not the working directory
+		}
 		b.Projects = append(b.Projects, p)
 		return nil
 	})
@@ -157,6 +173,14 @@ func (b *Bundle) validate() error {
 			if !known[strings.ToLower(t.Name)] {
 				b.Warnings = append(b.Warnings,
 					fmt.Sprintf("project %s: tech %q is not in techs.yaml and will never match", p.Name, t.Name))
+			}
+		}
+	}
+
+	for actor, g := range b.Access {
+		for _, name := range g.Projects {
+			if name != "*" && !names[name] {
+				fail("access for %q names unknown project %q", actor, name)
 			}
 		}
 	}
@@ -244,4 +268,21 @@ func each(dir string, fn func(path string) error) error {
 		}
 	}
 	return nil
+}
+
+// Allowed lists the projects an actor may see, and whether it may write.
+// open is true when no access rules exist, so everything is allowed. A nil
+// projects slice with open false means the actor has no access at all.
+func (b *Bundle) Allowed(actor string) (projects []string, write, open bool) {
+	if len(b.Access) == 0 {
+		return nil, true, true
+	}
+	g, ok := b.Access[actor]
+	if !ok {
+		return nil, false, false
+	}
+	if slices.Contains(g.Projects, "*") {
+		return nil, g.Write, true
+	}
+	return g.Projects, g.Write, false
 }

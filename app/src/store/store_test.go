@@ -1,70 +1,66 @@
 package store
 
 import (
+	"errors"
 	"testing"
 	"time"
 
-	"cvewatch/src/model"
+	"github.com/b070nd/cvewatch/app/src/ledger"
+	"github.com/b070nd/cvewatch/app/src/model"
 )
 
-func TestPersistenceAndStatus(t *testing.T) {
-	dir := t.TempDir()
-	s, err := Open(dir)
+// roundTrip is the contract every adapter must meet.
+func roundTrip(t *testing.T, st Storage, reopen func() Storage) {
+	t.Helper()
+	s, err := st.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Open(dir); err == nil {
-		t.Fatal("second Open must fail while locked")
-	}
-
-	v := &model.Vulnerability{ID: "CVE-2026-1", Aliases: []string{"GHSA-aaaa-bbbb-cccc"}}
-	s.AddVuln(v)
-	f := model.Finding{VulnID: v.ID, Project: "shop", Env: model.EnvProd, Status: model.StatusOpen}
-	if !s.AddFinding(f) || s.AddFinding(f) {
-		t.Fatal("AddFinding must insert once")
-	}
-	if _, err := s.SetStatus(v.ID, "shop", model.EnvProd, model.StatusFixed, "patched", time.Now()); err != nil {
+	l := ledger.New(s)
+	v := l.Create(model.Item{Title: "PHP bug", URL: "https://a.test/1", IDs: []string{"CVE-2026-1", "GHSA-AAAA-BBBB-CCCC"}}, time.Now(), []string{"php"})
+	l.AddFinding(model.Finding{VulnID: v.ID, Project: "shop", Env: model.EnvProd, Status: model.StatusOpen})
+	if _, err := l.SetStatus(v.ID, "shop", model.EnvProd, model.StatusFixed, "patched", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Save(); err != nil {
+	if err := st.Save(l.State()); err != nil {
 		t.Fatal(err)
 	}
-	s.Close()
+	st.Close()
 
-	s, err = Open(dir)
+	st = reopen()
+	defer st.Close()
+	s, err = st.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
-	if s.Lookup([]string{"GHSA-aaaa-bbbb-cccc"}) == nil {
+	re := ledger.New(s)
+	if re.Lookup([]string{"GHSA-AAAA-BBBB-CCCC"}) == nil {
 		t.Fatal("alias must resolve after reload")
 	}
-	if got := s.Findings()[0]; got.Status != model.StatusFixed || got.Note != "patched" {
+	if got := re.Findings()[0]; got.Status != model.StatusFixed || got.Note != "patched" {
 		t.Fatalf("status lost: %+v", got)
-	}
-	if s.AddFinding(f) || s.Findings()[0].Status != model.StatusFixed {
-		t.Fatal("rerun must not reset a fixed finding")
-	}
-	if _, err := s.SetStatus("CVE-nope", "shop", "", model.StatusFixed, "", time.Now()); err == nil {
-		t.Fatal("unknown finding must error")
 	}
 }
 
-func TestPruneKeepsFindingsAndDropsOldNoise(t *testing.T) {
-	s, err := Open(t.TempDir())
+func TestFileAdapter(t *testing.T) {
+	dir := t.TempDir()
+	st, err := OpenFile(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
-	now := time.Now()
-	s.AddVuln(&model.Vulnerability{ID: "OLD-NOISE", FirstSeen: now.AddDate(0, 0, -400)})
-	s.AddVuln(&model.Vulnerability{ID: "NEW-NOISE", FirstSeen: now})
-	s.AddVuln(&model.Vulnerability{ID: "OLD-REAL", FirstSeen: now.AddDate(0, 0, -400)})
-	s.AddFinding(model.Finding{VulnID: "OLD-REAL", Project: "p", Env: model.EnvProd, Status: model.StatusOpen})
-	if n := s.Prune(now.AddDate(0, 0, -180)); n != 1 {
-		t.Fatalf("pruned %d", n)
+	if _, err := OpenFile(dir); !errors.Is(err, ErrBusy) {
+		t.Fatalf("second open must fail while locked, got %v", err)
 	}
-	if s.Vuln("OLD-NOISE") != nil || s.Lookup([]string{"OLD-NOISE"}) != nil || s.Vuln("OLD-REAL") == nil || s.Vuln("NEW-NOISE") == nil {
-		t.Fatal("wrong records pruned")
-	}
+	roundTrip(t, st, func() Storage {
+		again, err := OpenFile(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return again
+	})
+}
+
+func TestMemoryAdapter(t *testing.T) {
+	m := NewMemory()
+	roundTrip(t, m, func() Storage { return m })
 }

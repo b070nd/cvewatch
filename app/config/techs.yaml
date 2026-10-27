@@ -1,23 +1,36 @@
 # Supported technologies. An item is relevant when its title or summary
 # mentions an alias as a whole word. Edit freely: changes apply to items
-# first seen from the next run on; earlier decisions are never rewritten.
+# first seen from the next run on; earlier decisions are never rewritten
+# (use `cvewatch rescan` to look back deliberately).
 #
 # excludes: if any of these words/phrases also appear, the item is about
 # something built ON the tech (a WordPress plugin, a CMS), not the tech itself.
-# Grow this list when you see noisy findings.
+#
+# cpe: "vendor:product" names from NVD's CPE data. When an NVD item carries
+# product data, it decides the match and free text is ignored, which also
+# gives version ranges. Check names in the NVD CPE dictionary before relying
+# on them: a wrong name hides real advisories. Without cpe, text decides.
 techs:
   - name: php
     aliases: [php, php-fpm]
+    cpe: [php:php]
     excludes: [wordpress, drupal, joomla, typo3, prestashop, opencart, "plugin for", "theme for", "module for", "extension for"]
   - name: nodejs
     aliases: [nodejs, node.js]
+    cpe: [nodejs:node.js]
     excludes: [cms, "content management", "plugin for", "module for", "is an open-source node.js", "is a node.js"]
   - name: nextjs
     aliases: [next.js, nextjs]
+    cpe: [vercel:next.js]
   - name: vercel
   - name: gitlab
+    cpe: [gitlab:gitlab]
   - name: elasticsearch
+    cpe: [elastic:elasticsearch]
   - name: magento
     aliases: [magento, adobe commerce]
+    cpe: [magento:magento, adobe:commerce]
   - name: nginx
+    cpe: [nginx:nginx]
   - name: redis
+    cpe: [redis:redis]

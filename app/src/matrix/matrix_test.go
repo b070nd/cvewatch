@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"cvewatch/src/model"
+	"github.com/b070nd/cvewatch/app/src/model"
 )
 
 func TestLoad(t *testing.T) {

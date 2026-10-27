@@ -22,3 +22,10 @@ http:
 slack:
   webhook_env: SLACK_WEBHOOK_URL  # the webhook itself stays in the environment
   min_severity: unknown           # unknown | low | medium | high | critical
+
+# Optional access rules by actor name (CVEWATCH_ACTOR, else the OS user).
+# Leave the section out for a single operator: everyone may do everything.
+# This is authorization on top of a local identity, not authentication.
+# access:
+#   alice: {projects: [shop], write: true}
+#   bob:   {projects: ["*"], write: false}

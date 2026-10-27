@@ -1,17 +1,20 @@
 package report
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"cvewatch/src/model"
-	"cvewatch/src/query"
+	"github.com/b070nd/cvewatch/app/src/model"
+	"github.com/b070nd/cvewatch/app/src/query"
 )
+
+var now = time.Date(2026, 10, 3, 5, 0, 0, 0, time.UTC)
 
 func TestPathIsStable(t *testing.T) {
 	v := &model.Vulnerability{ID: "CVE-2026-1111", Techs: []string{"php"}, FirstSeen: time.Date(2026, 10, 27, 23, 0, 0, 0, time.UTC)}
-	if got := Path("alerts", v); got != "alerts/2026/2026-10-27-php-cve-2026-1111.md" {
+	if got := Path("alerts", v); got != filepath.Join("alerts", "2026", "2026-10-27-php-cve-2026-1111.md") {
 		t.Fatal(got)
 	}
 	v.Techs = nil
@@ -20,18 +23,21 @@ func TestPathIsStable(t *testing.T) {
 	}
 }
 
-func TestDigestGroupsMarksAndLinks(t *testing.T) {
+func TestDigestGroupsAndSummarizes(t *testing.T) {
 	issues := []query.Issue{
-		{ID: "CRIT", Severity: model.SevCritical, Untrusted: query.Untrusted{Title: "crit one"},
-			Refs:    []model.Ref{{URL: "https://x.test/crit"}, {URL: "https://y.test"}},
+		{ID: "CRIT", Severity: model.SevCritical, Age: "2d 4h", ArticleCount: 3, Applies: model.AppAffected,
+			Aliases: []string{"GHSA-X"}, Fix: query.FixInfo{Available: true, Official: true},
+			Untrusted: query.Untrusted{Title: "crit one", Articles: []query.Article{{URL: "https://x.test/first"}},
+				Fixes: []model.Fix{{Kind: model.FixVersion, Detail: "8.2.30"}}},
 			Targets: []query.Target{{Project: "mw", Env: model.EnvProd}}},
-		{ID: "OLD", Severity: model.SevHigh, Targets: []query.Target{{Project: "shop", Env: model.EnvProd}, {Project: "shop", Env: model.EnvDev}}},
+		{ID: "OLD", Severity: model.SevHigh, ArticleCount: 1, Targets: []query.Target{{Project: "shop", Env: model.EnvProd}, {Project: "shop", Env: model.EnvDev}}},
 		{ID: "NEW", Severity: model.SevHigh, Targets: []query.Target{{Project: "shop", Env: model.EnvProd}}},
 		{ID: "ODD", Severity: model.SevUnknown, Targets: []query.Target{{Project: "shop", Env: model.EnvProd}}},
 	}
 	out := Digest(issues, map[string]bool{"NEW": true})
 	for _, want := range []string{"Open findings: 4", "CRITICAL (1)", "HIGH (2)", "UNRATED (1)", "NEW NEW",
-		"mw: prod  (+1 related)", "shop: prod,dev", "https://x.test/crit"} {
+		"mw: prod  [affected]  (+1 ids)", "shop: prod,dev  [unchecked]", "published 2d 4h ago · 3 articles · official fix: 8.2.30",
+		"1 article · no fix known", "https://x.test/first"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
@@ -44,27 +50,42 @@ func TestDigestGroupsMarksAndLinks(t *testing.T) {
 	}
 }
 
-func TestRenderShowsDescriptionAndOriginal(t *testing.T) {
-	v := &model.Vulnerability{ID: "CVE-1", Title: "Bug", Summary: "Plain words.", Severity: model.SevHigh,
-		Aliases: []string{"CVE-2"}, Refs: []model.Ref{{Source: "nvd", URL: "https://a.test/1"}, {Source: "hn", URL: "https://b.test/2"}}}
-	out := Render(v, []model.Finding{{VulnID: "CVE-1", Project: "shop", Env: model.EnvProd, Status: model.StatusOpen}})
-	for _, want := range []string{"## Description", "Plain words.", "**Original:** https://a.test/1", "https://b.test/2 (hn)", "**Also reported as:** CVE-2"} {
+func TestRenderShowsArticlesChronologicallyFixAndAge(t *testing.T) {
+	v := &model.Vulnerability{
+		ID: "CVE-1", Title: "Bug", Summary: "Plain words.", Severity: model.SevHigh, Aliases: []string{"CVE-2"},
+		Published: now.Add(-77 * time.Hour),
+		Refs: []model.Ref{
+			{Source: "hn", Kind: model.RefArticle, URL: "https://late.test", Title: "Late", Published: now.Add(-time.Hour)},
+			{Source: "nvd", Kind: model.RefAdvisory, URL: "https://nvd.test/1"},
+			{Source: "rss", Kind: model.RefArticle, URL: "https://early.test", Title: "Early", Published: now.Add(-70 * time.Hour)},
+		},
+		Fixes: []model.Fix{{Kind: model.FixVersion, Detail: "8.2.30", Source: "ghsa", Official: true, URL: "https://fix.test"}},
+	}
+	out := Render(v, []model.Finding{{VulnID: "CVE-1", Project: "shop", Env: model.EnvProd, Status: model.StatusOpen,
+		Applies: model.AppAffected, Reasons: []string{"php@8.2.10: in range"}}}, now)
+	for _, want := range []string{"(3d 5h ago)", "**Articles found:** 2", "**Also reported as:** CVE-2",
+		"**version** 8.2.30 (ghsa, official) https://fix.test", "https://nvd.test/1 (nvd)",
+		"inside the affected range", "php@8.2.10: in range"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
 	}
-	v.Summary = ""
-	if !strings.Contains(Render(v, nil), "gave no description") {
-		t.Error("missing no-description note")
+	if strings.Index(out, "Early") > strings.Index(out, "Late") || strings.Index(out, "Early") < 0 {
+		t.Errorf("articles must be oldest first:\n%s", out)
+	}
+	v.Summary, v.Fixes = "", nil
+	out = Render(v, nil, now)
+	if !strings.Contains(out, "gave no description") || !strings.Contains(out, "No official fix") {
+		t.Error("missing empty-state notes")
 	}
 }
 
 func TestRenderNeutralizesHostileText(t *testing.T) {
 	v := &model.Vulnerability{ID: "CVE-1", Title: "<script>alert(1)</script> bug", Summary: "<img src=x onerror=1>",
-		Severity: model.SevHigh, Refs: []model.Ref{{Source: "s", URL: "https://a.test/<b>"}}}
+		Severity: model.SevHigh, Refs: []model.Ref{{Source: "s", Kind: model.RefArticle, URL: "https://a.test/<b>", Title: "<i>t</i>"}}}
 	out := Render(v, []model.Finding{{VulnID: "CVE-1", Project: "shop", Env: model.EnvProd, Status: model.StatusOpen,
-		Note: "line1\nline2 | pipe"}})
-	if strings.Contains(out, "<script>") || strings.Contains(out, "<img") || strings.Contains(out, "<b>") {
+		Note: "line1\nline2 | pipe"}}, now)
+	if strings.Contains(out, "<script>") || strings.Contains(out, "<img") || strings.Contains(out, "<b>") || strings.Contains(out, "<i>") {
 		t.Fatalf("raw markup survived:\n%s", out)
 	}
 	if !strings.Contains(out, "line1 line2 \\| pipe") {

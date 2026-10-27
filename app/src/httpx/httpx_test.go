@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"cvewatch/src/model"
+	"github.com/b070nd/cvewatch/app/src/model"
 )
 
 // serve starts a test server and counts the requests it receives.

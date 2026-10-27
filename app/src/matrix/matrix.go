@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"cvewatch/src/model"
+	"github.com/b070nd/cvewatch/app/src/model"
 )
 
 // maxLockfile bounds what we parse; real lockfiles are a few MiB.

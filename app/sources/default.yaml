@@ -7,7 +7,8 @@ sources:
   - id: nvd
     type: nvd
     url: https://services.nvd.nist.gov/rest/json/cves/2.0?pubStartDate={since}&pubEndDate={now}
-    match_title_only: true   # NVD descriptions name platforms; the first sentence names the product
+    match_structured: true   # techs with CPE names match on NVD's product data, not on words in the description
+    match_title_only: true   # techs without CPE names: read the title only (the first sentence names the product)
   - id: ghsa
     type: ghsa
     url: https://api.github.com/advisories?per_page=100&type=reviewed&published=%3E%3D{since_date}

@@ -1,16 +1,17 @@
 // Package report writes the human-facing views: one markdown file per
 // vulnerability (alerts/YYYY/yyyy-mm-dd-tech-slug.md) and a digest of open work.
-// Files are generated from the store, which stays the source of truth.
+// Files are generated from the ledger, which stays the source of truth.
 package report
 
 import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
-	"cvewatch/src/fsx"
-	"cvewatch/src/model"
-	"cvewatch/src/query"
+	"github.com/b070nd/cvewatch/app/src/host"
+	"github.com/b070nd/cvewatch/app/src/model"
+	"github.com/b070nd/cvewatch/app/src/query"
 )
 
 // Path is stable for a vulnerability: it only uses the first-seen date and
@@ -36,14 +37,14 @@ func slug(s string) string {
 }
 
 // Write renders and stores the report, returning its path.
-func Write(alertsDir string, v *model.Vulnerability, fs []model.Finding) (string, error) {
+func Write(alertsDir string, v *model.Vulnerability, fs []model.Finding, now time.Time) (string, error) {
 	p := Path(alertsDir, v)
-	return p, fsx.WriteAtomic(p, []byte(Render(v, fs)))
+	return p, host.WriteFileAtomic(p, []byte(Render(v, fs, now)))
 }
 
-// Render builds the markdown: description, links to the originals, status
-// table and a rollout plan per project.
-func Render(v *model.Vulnerability, fs []model.Finding) string {
+// Render builds the markdown: description, fix evidence, the articles in
+// chronological order, status table and a rollout plan per project.
+func Render(v *model.Vulnerability, fs []model.Finding, now time.Time) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "---\nid: %s\nseverity: %s\npublished: %s\ntechs: [%s]\n---\n", v.ID, v.Severity,
 		v.Published.UTC().Format("2006-01-02"), strings.Join(v.Techs, ", "))
@@ -52,30 +53,68 @@ func Render(v *model.Vulnerability, fs []model.Finding) string {
 	if len(v.Aliases) > 0 {
 		fmt.Fprintf(&b, "**Also reported as:** %s\n\n", strings.Join(v.Aliases, ", "))
 	}
-	if v.CVSS > 0 {
-		fmt.Fprintf(&b, "**CVSS:** %.1f\n\n", v.CVSS)
+	fmt.Fprintf(&b, "**Published:** %s", v.Published.UTC().Format("2006-01-02"))
+	if age := query.Age(v.Published, now); age != "" {
+		fmt.Fprintf(&b, " (%s ago)", age)
 	}
-
-	b.WriteString("## Description\n\n")
+	arts := query.Articles(v.Refs)
+	fmt.Fprintf(&b, " · **Articles found:** %d", len(arts))
+	if v.CVSS > 0 {
+		fmt.Fprintf(&b, " · **CVSS:** %.1f", v.CVSS)
+	}
+	b.WriteString("\n\n## Description\n\n")
 	if v.Summary != "" {
 		fmt.Fprintf(&b, "%s\n\n", md(query.Clip(v.Summary, 600)))
 	} else {
-		b.WriteString("_The feed gave no description. Read the original below._\n\n")
+		b.WriteString("_The feed gave no description. Read the sources below._\n\n")
 	}
-	if len(v.Refs) > 0 {
-		fmt.Fprintf(&b, "**Original:** %s\n\n", md(v.Refs[0].URL))
+
+	b.WriteString("## Fix\n\n")
+	if len(v.Fixes) == 0 {
+		b.WriteString("No official fix, patch or mitigation was named by the feeds yet. Check the vendor.\n\n")
 	}
-	if len(v.Refs) > 1 {
-		b.WriteString("**More reports:**\n")
-		for _, r := range v.Refs[1:] {
-			fmt.Fprintf(&b, "- %s (%s)\n", md(r.URL), md(r.Source))
+	for _, f := range v.Fixes {
+		official := ""
+		if f.Official {
+			official = ", official"
 		}
+		detail := ""
+		if f.Detail != "" {
+			detail = " " + md(query.Clip(f.Detail, 200))
+		}
+		fmt.Fprintf(&b, "- **%s**%s (%s%s) %s\n", f.Kind, detail, md(f.Source), official, md(f.URL))
+	}
+	if len(v.Fixes) > 0 {
 		b.WriteString("\n")
 	}
 
-	b.WriteString("## Status\n\n| Project | Env | Status | Matched | Note |\n|---|---|---|---|---|\n")
+	b.WriteString("## Articles, oldest first\n\n")
+	if len(arts) == 0 {
+		b.WriteString("None yet.\n")
+	}
+	for i, a := range arts {
+		day := "undated"
+		if !a.Published.IsZero() {
+			day = a.Published.UTC().Format("2006-01-02")
+		}
+		fmt.Fprintf(&b, "%d. %s · %s · %s\n   %s\n", i+1, day, md(a.Source), md(a.Title), md(a.URL))
+	}
+	var advisories []model.Ref
+	for _, r := range v.Refs {
+		if r.Kind == model.RefAdvisory {
+			advisories = append(advisories, r)
+		}
+	}
+	if len(advisories) > 0 {
+		b.WriteString("\n**Advisories:**\n")
+		for _, r := range advisories {
+			fmt.Fprintf(&b, "- %s (%s)\n", md(r.URL), md(r.Source))
+		}
+	}
+
+	b.WriteString("\n## Status\n\n| Project | Env | Status | Version | Matched | Note |\n|---|---|---|---|---|---|\n")
 	for _, f := range fs {
-		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s |\n", cell(f.Project), f.Env, f.Status,
+		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s |\n", cell(f.Project), f.Env, f.Status, applies(f.Applies),
 			cell(strings.Join(f.Matched, ", ")), cell(f.Note))
 	}
 
@@ -84,6 +123,16 @@ func Render(v *model.Vulnerability, fs []model.Finding) string {
 		b.WriteString(plan(v, p))
 	}
 	return b.String()
+}
+
+func applies(a model.Applicability) string {
+	switch a {
+	case model.AppAffected:
+		return "affected"
+	case model.AppNotAffected:
+		return "not affected"
+	}
+	return "unchecked"
 }
 
 // md neutralizes markup in text that came from outside, so a hostile feed
@@ -100,8 +149,10 @@ func plan(v *model.Vulnerability, fs []model.Finding) string {
 	var b strings.Builder
 	project := fs[0].Project
 	fmt.Fprintf(&b, "\n### %s\n\n", project)
-	fmt.Fprintf(&b, "1. Read the sources and confirm the deployed version is affected (matched: %s).\n",
-		md(strings.Join(fs[0].Matched, ", ")))
+	fmt.Fprintf(&b, "1. %s (matched: %s).\n", check(fs[0]), md(strings.Join(fs[0].Matched, ", ")))
+	for _, r := range fs[0].Reasons {
+		fmt.Fprintf(&b, "   - %s\n", md(r))
+	}
 	if len(fs) == 1 {
 		fmt.Fprintf(&b, "2. Apply the fix or mitigation in %s (its only environment) and verify.\n", fs[0].Env)
 	} else {
@@ -112,6 +163,17 @@ func plan(v *model.Vulnerability, fs []model.Finding) string {
 	}
 	b.WriteString("3. If no fix exists yet, mitigate (disable the feature, block at WAF/proxy) and use `cvewatch ignore` only when it does not apply.\n")
 	return b.String()
+}
+
+// check words step one by what the version check could establish.
+func check(f model.Finding) string {
+	switch f.Applies {
+	case model.AppAffected:
+		return "The installed version is inside the affected range; confirm and plan the upgrade"
+	case model.AppNotAffected:
+		return "The installed version is outside the affected range; confirm, then close with `ignore`"
+	}
+	return "Read the sources and confirm the deployed version is affected"
 }
 
 func box(s model.Status) string {
@@ -164,11 +226,47 @@ func Digest(issues []query.Issue, fresh map[string]bool) string {
 		}
 		fmt.Fprintf(&b, "  %s%-18s %s\n", mark, is.ID, where(is))
 		fmt.Fprintf(&b, "      %s\n", query.Clip(is.Untrusted.Title, 100))
-		if len(is.Refs) > 0 {
-			fmt.Fprintf(&b, "      %s\n", is.Refs[0].URL)
+		fmt.Fprintf(&b, "      %s\n", facts(is))
+		if len(is.Untrusted.Articles) > 0 {
+			fmt.Fprintf(&b, "      %s\n", is.Untrusted.Articles[0].URL)
 		}
 	}
 	return b.String()
+}
+
+// facts is the one-line summary: age, article count and fix status.
+func facts(is query.Issue) string {
+	parts := []string{}
+	if is.Age != "" {
+		parts = append(parts, "published "+is.Age+" ago")
+	}
+	parts = append(parts, plural(is.ArticleCount, "article"))
+	switch {
+	case is.Fix.Official:
+		parts = append(parts, "official fix: "+fixWhat(is))
+	case is.Fix.Available:
+		parts = append(parts, "fix reference: "+fixWhat(is))
+	default:
+		parts = append(parts, "no fix known")
+	}
+	return strings.Join(parts, " · ")
+}
+
+// fixWhat names the patched version when a feed gave one, else the kind of remedy.
+func fixWhat(is query.Issue) string {
+	for _, f := range is.Untrusted.Fixes {
+		if f.Kind == model.FixVersion && f.Detail != "" {
+			return f.Detail
+		}
+	}
+	return string(is.Untrusted.Fixes[0].Kind)
+}
+
+func plural(n int, word string) string {
+	if n == 1 {
+		return "1 " + word
+	}
+	return fmt.Sprintf("%d %ss", n, word)
 }
 
 func label(s model.Severity) string {
@@ -178,7 +276,8 @@ func label(s model.Severity) string {
 	return strings.ToUpper(string(s))
 }
 
-// where renders "shop: dev,prod; middleware: prod" plus a count of related reports.
+// where renders "shop: dev,prod; middleware: prod", the version verdict and a
+// count of related ids.
 func where(is query.Issue) string {
 	var projects []string
 	envs := map[string][]string{}
@@ -192,9 +291,9 @@ func where(is query.Issue) string {
 	for i, p := range projects {
 		parts[i] = p + ": " + strings.Join(envs[p], ",")
 	}
-	out := strings.Join(parts, "; ")
-	if n := len(is.Aliases) + len(is.Refs) - 1; n > 0 {
-		out += fmt.Sprintf("  (+%d related)", n)
+	out := strings.Join(parts, "; ") + "  [" + applies(is.Applies) + "]"
+	if n := len(is.Aliases); n > 0 {
+		out += fmt.Sprintf("  (+%d ids)", n)
 	}
 	return out
 }

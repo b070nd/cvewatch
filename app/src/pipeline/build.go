@@ -6,19 +6,19 @@ import (
 	"os"
 	"time"
 
-	"cvewatch/src/audit"
-	"cvewatch/src/config"
-	"cvewatch/src/httpx"
-	"cvewatch/src/notify"
-	"cvewatch/src/store"
+	"github.com/b070nd/cvewatch/app/src/audit"
+	"github.com/b070nd/cvewatch/app/src/config"
+	"github.com/b070nd/cvewatch/app/src/httpx"
+	"github.com/b070nd/cvewatch/app/src/ledger"
+	"github.com/b070nd/cvewatch/app/src/notify"
 )
 
 // NewRunner wires the production dependencies: the rate-limited HTTP client
 // and, when the configured environment variable holds a webhook, Slack.
-func NewRunner(cfg *config.Bundle, st *store.Store, log *slog.Logger) (*Runner, error) {
+func NewRunner(cfg *config.Bundle, l *ledger.Ledger, save func() error, log *slog.Logger) (*Runner, error) {
 	h := cfg.HTTP
 	r := &Runner{
-		Cfg: cfg, Store: st, Log: log, Now: time.Now, Audit: audit.Open(cfg.DataDir),
+		Cfg: cfg, Ledger: l, Save: save, Log: log, Now: time.Now, Audit: audit.Open(cfg.DataDir),
 		Getter: httpx.New(httpx.Options{
 			UserAgent: h.UserAgent, Timeout: h.Timeout, Retries: h.Retries, RetryDelay: h.RetryDelay,
 			Rate: h.Rate, HostRates: h.HostRates, MaxBody: h.MaxBody,

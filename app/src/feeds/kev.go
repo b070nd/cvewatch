@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"cvewatch/src/model"
+	"github.com/b070nd/cvewatch/app/src/model"
 )
 
 // kevResponse is the part of the CISA KEV catalog we use.
@@ -17,6 +17,8 @@ type kevResponse struct {
 		VulnerabilityName string `json:"vulnerabilityName"`
 		ShortDescription  string `json:"shortDescription"`
 		DateAdded         string `json:"dateAdded"`
+		RequiredAction    string `json:"requiredAction"`
+		RansomwareUse     string `json:"knownRansomwareCampaignUse"`
 	} `json:"vulnerabilities"`
 }
 
@@ -37,10 +39,20 @@ func parseKEV(body []byte, src model.Source, since time.Time) ([]model.Item, err
 		if err == nil && added.Before(sinceDay) {
 			continue
 		}
+		link := "https://nvd.nist.gov/vuln/detail/" + v.CVEID
+		summary := "Actively exploited (CISA KEV). " + v.ShortDescription
+		if v.RansomwareUse == "Known" {
+			summary += " Known ransomware use."
+		}
+		var fixes []model.Fix
+		if action := truncate(plain(v.RequiredAction), 200); action != "" {
+			fixes = []model.Fix{{Kind: model.FixAction, Detail: action, URL: link, Source: src.ID, Official: true}}
+		}
 		it, ok := finish(src.ID, model.Item{
 			Title:     fmt.Sprintf("%s %s: %s", v.VendorProject, v.Product, v.VulnerabilityName),
-			URL:       "https://nvd.nist.gov/vuln/detail/" + v.CVEID,
-			Summary:   "Actively exploited (CISA KEV). " + v.ShortDescription,
+			URL:       link,
+			Summary:   summary,
+			Fixes:     fixes,
 			Published: added,
 			Severity:  model.SevHigh,
 		}, v.CVEID)

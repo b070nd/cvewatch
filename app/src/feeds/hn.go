@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"cvewatch/src/model"
+	"github.com/b070nd/cvewatch/app/src/model"
 )
 
 // hnResponse is the part of the Algolia search_by_date answer we use.
