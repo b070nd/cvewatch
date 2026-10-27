@@ -1,28 +1,29 @@
-// Package pipeline runs one monitoring cycle: fetch feeds, skip what was
-// already evaluated, match the rest against the current config, record
-// findings, write reports and alert.
+// Package pipeline runs one monitoring cycle: fetch feeds, judge each item
+// against the current config, fold it into the ledger, write reports and
+// alert. Rules about relevance live in package relevance, rules about
+// identity in package ledger; this package only sequences them.
 package pipeline
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"maps"
 	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
-	"cvewatch/src/audit"
-	"cvewatch/src/config"
-	"cvewatch/src/feeds"
-	"cvewatch/src/match"
-	"cvewatch/src/matrix"
-	"cvewatch/src/model"
-	"cvewatch/src/notify"
-	"cvewatch/src/report"
-	"cvewatch/src/store"
+	"github.com/b070nd/cvewatch/app/src/audit"
+	"github.com/b070nd/cvewatch/app/src/config"
+	"github.com/b070nd/cvewatch/app/src/feeds"
+	"github.com/b070nd/cvewatch/app/src/ledger"
+	"github.com/b070nd/cvewatch/app/src/matrix"
+	"github.com/b070nd/cvewatch/app/src/model"
+	"github.com/b070nd/cvewatch/app/src/notify"
+	"github.com/b070nd/cvewatch/app/src/relevance"
+	"github.com/b070nd/cvewatch/app/src/report"
 )
 
 // maxBatchesPerRun bounds Slack messages per cycle.
@@ -30,7 +31,8 @@ const maxBatchesPerRun = 5
 
 type Runner struct {
 	Cfg      *config.Bundle
-	Store    *store.Store
+	Ledger   *ledger.Ledger
+	Save     func() error // persists the ledger; called before alerting and at the end
 	Getter   feeds.Getter
 	Notifier notify.Notifier // nil disables alerting
 	Audit    *audit.Log      // nil disables the audit trail
@@ -55,61 +57,54 @@ type fetched struct {
 	err   error
 }
 
+// cycle carries what one run shares between its steps.
+type cycle struct {
+	r        *Runner
+	judge    *relevance.Judge
+	packages map[string][]model.Package
+	now      time.Time
+	dirty    map[string]bool // vulnerabilities whose report needs rewriting
+	gone     []*model.Vulnerability
+	res      Result
+}
+
 // Run executes one cycle. A failing source never stops the others, and its
 // cursor stays put so the next run retries the same window.
 func (r *Runner) Run(ctx context.Context) (Result, error) {
-	started := r.Now()
-	res := Result{Fresh: map[string]bool{}}
+	c := &cycle{
+		r: r, judge: relevance.New(r.Cfg.Techs), packages: LoadMatrix(r.Cfg, r.Log), now: r.Now(),
+		dirty: map[string]bool{}, res: Result{Fresh: map[string]bool{}},
+	}
+	results := r.fetchAll(ctx, c.now)
 
-	packages := r.loadMatrix()
-	matcher := match.New(r.Cfg.Techs)
-	results := r.fetchAll(ctx, started)
-
-	dirty := map[string]bool{} // vulnerabilities whose report needs rewriting
 	for i, src := range r.activeSources() {
 		f := results[i]
 		if f.err != nil {
-			res.Failed = append(res.Failed, src.ID+": "+f.err.Error())
+			c.res.Failed = append(c.res.Failed, src.ID+": "+f.err.Error())
 			r.Log.Warn("source failed", "source", src.ID, "err", f.err)
 			continue
 		}
-		r.Store.SetFeed(src.ID, model.FeedState{Validators: f.val, LastRun: started})
+		r.Ledger.SetFeed(src.ID, model.FeedState{Validators: f.val, LastRun: c.now})
 		for _, it := range f.items {
-			res.Items++
-			r.process(it, matcher, packages, started, dirty, &res)
+			c.res.Items++
+			c.process(it)
 		}
 	}
 
 	if r.Cfg.Retention > 0 {
-		res.Pruned = r.Store.Prune(started.Add(-r.Cfg.Retention))
+		c.res.Pruned = r.Ledger.Prune(c.now.Add(-r.Cfg.Retention))
 	}
-	if err := r.writeReports(dirty); err != nil {
-		return res, err
+	if err := c.writeReports(); err != nil {
+		return c.res, err
 	}
-	if err := r.auditDetected(res.Fresh, started); err != nil {
-		return res, err
+	if err := r.auditDetected(c.res.Fresh, c.now); err != nil {
+		return c.res, err
 	}
-	if err := r.Store.Save(); err != nil { // persist before alerting: a crash then repeats an alert, never loses a finding
-		return res, err
+	if err := r.Save(); err != nil { // persist before alerting: a crash then repeats an alert, never loses a finding
+		return c.res, err
 	}
-	res.Alerted = r.alert(ctx, started)
-	return res, r.Store.Save()
-}
-
-// auditDetected records when each new finding set was first seen.
-func (r *Runner) auditDetected(fresh map[string]bool, now time.Time) error {
-	var events []audit.Event
-	for _, id := range slices.Sorted(maps.Keys(fresh)) {
-		var projects []string
-		for _, f := range r.Store.FindingsOf(id) {
-			if !slices.Contains(projects, f.Project) {
-				projects = append(projects, f.Project)
-			}
-		}
-		events = append(events, audit.Event{Time: now, Actor: "cvewatch", Action: "detected", Vuln: id,
-			Project: strings.Join(projects, ",")})
-	}
-	return r.Audit.Append(events...)
+	c.res.Alerted = r.alert(ctx, c.now)
+	return c.res, r.Save()
 }
 
 func (r *Runner) activeSources() []model.Source {
@@ -125,7 +120,7 @@ func (r *Runner) fetchAll(ctx context.Context, now time.Time) []fetched {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			st := r.Store.Feed(src.ID) // read-only here; written after the join
+			st := r.Ledger.Feed(src.ID) // read-only here; written after the join
 			out[i].items, out[i].val, out[i].err = feeds.Fetch(ctx, r.Getter, src, st, now, r.Cfg.Lookback)
 		}()
 	}
@@ -133,15 +128,15 @@ func (r *Runner) fetchAll(ctx context.Context, now time.Time) []fetched {
 	return out
 }
 
-// loadMatrix reads every project's lockfiles afresh, so the tech matrix
+// LoadMatrix reads every project's lockfiles afresh, so the tech matrix
 // always follows the repositories.
-func (r *Runner) loadMatrix() map[string][]model.Package {
+func LoadMatrix(cfg *config.Bundle, log *slog.Logger) map[string][]model.Package {
 	out := map[string][]model.Package{}
-	for _, p := range r.Cfg.Projects {
+	for _, p := range cfg.Projects {
 		for _, lf := range p.Lockfiles {
 			pkgs, err := matrix.Load(lf)
 			if err != nil {
-				r.Log.Warn("lockfile skipped", "project", p.Name, "err", err)
+				log.Warn("lockfile skipped", "project", p.Name, "err", err)
 				continue
 			}
 			out[p.Name] = append(out[p.Name], pkgs...)
@@ -150,60 +145,108 @@ func (r *Runner) loadMatrix() map[string][]model.Package {
 	return out
 }
 
-func (r *Runner) process(it model.Item, m *match.Matcher, pkgs map[string][]model.Package,
-	now time.Time, dirty map[string]bool, res *Result) {
-
+func (c *cycle) process(it model.Item) {
 	if !safeURL(it.URL) {
-		r.Log.Debug("item skipped: link is not a plain http(s) URL", "source", it.SourceID)
+		c.r.Log.Debug("item skipped: link is not a plain http(s) URL", "source", it.SourceID)
 		return
 	}
-	if v := r.Store.Lookup(it.Keys()); v != nil {
-		if merge(r.Store, v, it) && len(r.Store.FindingsOf(v.ID)) > 0 {
-			dirty[v.ID] = true
-		}
-		return // already evaluated: config changes never re-judge old items
-	}
+	l := c.r.Ledger
+	verdict := c.judge.Judge(it, c.r.Cfg.Projects, c.packages)
 
-	v := &model.Vulnerability{
-		ID: it.Keys()[0], Aliases: slices.Clone(it.Keys()[1:]), Title: it.Title, Summary: it.Summary,
-		Severity: it.Severity, CVSS: it.CVSS, Published: it.Published, FirstSeen: now,
-		Refs: []model.Ref{{Source: it.SourceID, URL: it.URL}}, Techs: m.Techs(it),
-	}
-	if v.Severity == "" {
-		v.Severity = model.SevUnknown
-	}
-	if v.Published.IsZero() {
-		v.Published = now
-	}
-	res.New++
-
-	hits := map[string][]string{} // project name -> what matched
-	for _, p := range r.Cfg.Projects {
-		if matched := match.Project(p, pkgs[p.Name], v.Techs, it); len(matched) > 0 {
-			hits[p.Name] = matched
+	known, folded, linked := l.Identify(it, verdict.Relevant())
+	c.dropReports(folded)
+	for _, o := range linked {
+		if len(l.FindingsOf(o.ID)) > 0 {
+			c.dirty[o.ID] = true // it gained a link to this article
 		}
 	}
 
-	// A relevant item about an issue we already track joins that record
-	// instead of creating a second one.
-	if len(hits) > 0 {
-		if base := r.similar(v); base != nil {
-			merge(r.Store, base, it)
-			if base.Summary == "" {
-				base.Summary = it.Summary
+	if known != nil {
+		hadFindings := len(l.FindingsOf(known.ID)) > 0
+		change := l.Absorb(known, it)
+		// The same sighting again changes nothing, so a config edit never
+		// re-judges an old item. New information does count: a relevant article
+		// joining a tracked issue, or ranges for a CVE first seen in the news.
+		if change.Any && verdict.Relevant() {
+			if len(known.Techs) == 0 {
+				known.Techs = verdict.Techs
 			}
-			r.addFindings(base.ID, hits, now, dirty, res)
-			dirty[base.ID] = true
-			res.Merged++
+			if known.Summary == "" {
+				known.Summary = it.Summary
+			}
+			c.addFindings(known.ID, verdict.Matches)
+			if hadFindings {
+				c.res.Merged++
+			} else {
+				c.res.New++
+			}
+		}
+		if change.Evidence {
+			c.reassess(known)
+		}
+		if change.Any && (hadFindings || verdict.Relevant()) {
+			c.dirty[known.ID] = true
+		}
+		return
+	}
+
+	v := l.Create(it, c.now, verdict.Techs)
+	c.res.New++
+	if verdict.Relevant() {
+		c.addFindings(v.ID, verdict.Matches)
+		c.dirty[v.ID] = true
+		return
+	}
+	v.Summary, v.Affected, v.Fixes = "", nil, nil // irrelevant: keep only what dedup needs
+}
+
+// reassess re-checks existing findings against affected data that arrived late.
+func (c *cycle) reassess(v *model.Vulnerability) {
+	c.r.Ledger.UpdateFindings(v.ID, func(f *model.Finding) {
+		if len(f.Installed) == 0 {
 			return
 		}
-	}
+		applies, reasons := c.judge.Reassess(f.Installed, v.Affected)
+		if applies != f.Applies {
+			f.Applies, f.Reasons, f.Updated = applies, reasons, c.now
+			c.dirty[v.ID] = true
+		}
+	})
+}
 
-	r.addFindings(v.ID, hits, now, dirty, res)
-	if !dirty[v.ID] {
-		v.Summary = "" // irrelevant: keep only what dedup needs
+func (c *cycle) addFindings(vulnID string, ms []relevance.Match) {
+	n := AddFindings(c.r.Ledger, c.r.Cfg.Projects, vulnID, ms, c.now)
+	c.res.Findings += n
+	if n > 0 {
+		c.res.Fresh[vulnID] = true
 	}
-	r.Store.AddVuln(v)
+}
+
+// AddFindings creates one finding per environment of each matched project. It
+// never touches existing findings, so statuses survive. It returns how many
+// were created.
+func AddFindings(l *ledger.Ledger, projects []model.Project, vulnID string, ms []relevance.Match, now time.Time) int {
+	created := 0
+	for _, m := range ms {
+		i := slices.IndexFunc(projects, func(p model.Project) bool { return p.Name == m.Project })
+		if i < 0 {
+			continue
+		}
+		labels := make([]string, len(m.Installed))
+		for k, in := range m.Installed {
+			labels[k] = in.Label()
+		}
+		for _, env := range projects[i].EffectiveEnvs() {
+			f := model.Finding{
+				VulnID: vulnID, Project: m.Project, Env: env, Status: model.StatusOpen, Matched: labels,
+				Installed: m.Installed, Applies: m.Applies, Reasons: m.Reasons, Updated: now,
+			}
+			if l.AddFinding(f) {
+				created++
+			}
+		}
+	}
+	return created
 }
 
 // safeURL accepts only plain http(s) links. Feed links end up in markdown and
@@ -214,60 +257,23 @@ func safeURL(raw string) bool {
 		!strings.ContainsAny(raw, " \t\r\n<>|\"`\\")
 }
 
-// mergeWindow is how far apart two reports may be dated and still count as one issue.
-const mergeWindow = 14 * 24 * time.Hour
-
-// similar finds a tracked, relevant vulnerability about the same issue.
-func (r *Runner) similar(v *model.Vulnerability) *model.Vulnerability {
-	for _, base := range r.Store.Relevant() {
-		gap := base.Published.Sub(v.Published)
-		if gap < mergeWindow && gap > -mergeWindow && match.Similar(base.Title, v.Title) {
-			return base
+// dropReports removes report files of records that were folded into another.
+func (c *cycle) dropReports(gone []*model.Vulnerability) {
+	for _, g := range gone {
+		delete(c.dirty, g.ID)
+		if g.ReportPath != "" {
+			os.Remove(g.ReportPath)
 		}
 	}
-	return nil
 }
 
-func (r *Runner) addFindings(vulnID string, hits map[string][]string, now time.Time, dirty map[string]bool, res *Result) {
-	for _, p := range r.Cfg.Projects {
-		matched, ok := hits[p.Name]
-		if !ok {
+func (c *cycle) writeReports() error {
+	for id := range c.dirty {
+		v := c.r.Ledger.Vuln(id)
+		if v == nil {
 			continue
 		}
-		for _, env := range p.EffectiveEnvs() {
-			f := model.Finding{VulnID: vulnID, Project: p.Name, Env: env, Status: model.StatusOpen, Matched: matched, Updated: now}
-			if r.Store.AddFinding(f) {
-				res.Findings++
-				res.Fresh[vulnID] = true
-				dirty[vulnID] = true
-			}
-		}
-	}
-}
-
-// merge folds a repeat sighting into the known record. It reports whether anything changed.
-func merge(s *store.Store, v *model.Vulnerability, it model.Item) bool {
-	changed := false
-	if !slices.ContainsFunc(v.Refs, func(r model.Ref) bool { return r.URL == it.URL }) {
-		v.Refs = append(v.Refs, model.Ref{Source: it.SourceID, URL: it.URL})
-		changed = true
-	}
-	before := len(v.Aliases)
-	s.AddAliases(v, it.Keys())
-	if len(v.Aliases) != before {
-		changed = true
-	}
-	if it.Severity.Rank() > v.Severity.Rank() {
-		v.Severity, v.CVSS = it.Severity, it.CVSS
-		changed = true
-	}
-	return changed
-}
-
-func (r *Runner) writeReports(dirty map[string]bool) error {
-	for id := range dirty {
-		v := r.Store.Vuln(id)
-		path, err := report.Write(r.Cfg.AlertsDir, v, r.Store.FindingsOf(id))
+		path, err := report.Write(c.r.Cfg.AlertsDir, v, c.r.Ledger.FindingsOf(id), c.now)
 		if err != nil {
 			return err
 		}
@@ -276,17 +282,34 @@ func (r *Runner) writeReports(dirty map[string]bool) error {
 	return nil
 }
 
+// auditDetected records when each new finding set was first seen.
+func (r *Runner) auditDetected(fresh map[string]bool, now time.Time) error {
+	var events []audit.Event
+	for _, id := range slices.Sorted(maps.Keys(fresh)) {
+		var projects []string
+		for _, f := range r.Ledger.FindingsOf(id) {
+			if !slices.Contains(projects, f.Project) {
+				projects = append(projects, f.Project)
+			}
+		}
+		events = append(events, audit.Event{Time: now, Actor: "cvewatch", Action: "detected", Vuln: id,
+			Project: strings.Join(projects, ",")})
+	}
+	return r.Audit.Append(events...)
+}
+
 // alert sends every open finding that has not been delivered yet, including
-// ones whose delivery failed in an earlier run.
+// ones whose delivery failed in an earlier run. Findings whose version is
+// known to be unaffected are recorded but never alerted.
 func (r *Runner) alert(ctx context.Context, now time.Time) int {
 	if r.Notifier == nil {
 		return 0
 	}
-	floor := r.Cfg.Slack.MinSeverity.Rank()
 	var batch []notify.Alert
-	for _, f := range r.Store.Findings() {
-		v := r.Store.Vuln(f.VulnID)
-		if f.Status != model.StatusOpen || !f.AlertedAt.IsZero() || v == nil || v.Severity.Rank() < floor {
+	for _, f := range r.Ledger.Findings() {
+		v := r.Ledger.Vuln(f.VulnID)
+		if f.Status != model.StatusOpen || !f.AlertedAt.IsZero() || v == nil ||
+			f.Applies == model.AppNotAffected || !v.Severity.AtLeast(r.Cfg.Slack.MinSeverity) {
 			continue
 		}
 		if n := len(batch); n > 0 && batch[n-1].Vuln.ID == v.ID {
@@ -313,7 +336,7 @@ func (r *Runner) alert(ctx context.Context, now time.Time) int {
 		var events []audit.Event
 		for _, a := range chunk {
 			for _, f := range a.Findings {
-				r.Store.MarkAlerted(f.Key(), now)
+				r.Ledger.MarkAlerted(f.Key(), now)
 				sent++
 			}
 			events = append(events, audit.Event{Time: now, Actor: "cvewatch", Action: "alerted", Vuln: a.Vuln.ID, Note: "slack"})
@@ -323,36 +346,4 @@ func (r *Runner) alert(ctx context.Context, now time.Time) int {
 		}
 	}
 	return sent
-}
-
-// Change describes a status update requested by a person or an agent.
-type Change struct {
-	ID, Project string
-	Env         model.Env // empty means every environment of the project
-	Status      model.Status
-	Note        string
-}
-
-// Resolve applies a status change, records it in the audit log, and refreshes
-// the vulnerability's report.
-func Resolve(s *store.Store, alertsDir string, a *audit.Log, actor string, c Change, now time.Time) (int, error) {
-	v := s.Lookup([]string{strings.ToUpper(c.ID)})
-	if v == nil {
-		return 0, fmt.Errorf("unknown vulnerability %s", c.ID)
-	}
-	n, err := s.SetStatus(v.ID, c.Project, c.Env, c.Status, c.Note, now)
-	if err != nil {
-		return 0, err
-	}
-	err = a.Append(audit.Event{Time: now, Actor: actor, Action: "status", Vuln: v.ID, Project: c.Project,
-		Env: string(c.Env), Status: string(c.Status), Note: c.Note})
-	if err != nil {
-		return 0, fmt.Errorf("audit log: %w", err) // never change status without a record
-	}
-	path, err := report.Write(alertsDir, v, s.FindingsOf(v.ID))
-	if err != nil {
-		return n, err
-	}
-	v.ReportPath = path
-	return n, s.Save()
 }

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"cvewatch/src/model"
+	"github.com/b070nd/cvewatch/app/src/model"
 )
 
 // feedDoc covers RSS 2.0, RSS 1.0 (RDF) and Atom in one struct.

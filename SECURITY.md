@@ -4,8 +4,7 @@
 
 Please report security problems privately, not in public issues or pull requests.
 
-- Use GitHub's private reporting: **Security** tab, then **Report a vulnerability** (replace with the repository's advisory page once published).
-- Or write to `<security contact address>`.
+- Use GitHub's private reporting: the repository's **Security** tab, then **Report a vulnerability** (https://github.com/b070nd/cvewatch/security/advisories/new).
 
 Include what you found, how to reproduce it, the version (`cvewatch version`) and what you think the impact is. Do not include real webhook URLs, tokens or internal project names.
 

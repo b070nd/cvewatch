@@ -1,13 +1,6 @@
 // Command cvewatch watches public vulnerability feeds and reports what
-// matters to our projects.
-//
-//	cvewatch update [-min S] [-project P]   refresh all sources now, then list (alias: run)
-//	cvewatch daemon                 cycle every `interval` until stopped
-//	cvewatch list [-min S] [-project P] [-json]   open findings by severity
-//	cvewatch show ID [-json]        one vulnerability: description, links, status, plan
-//	cvewatch mcp [-allow-write]     MCP server on stdio for agents and IDEs
-//	cvewatch check                  validate config
-//	cvewatch fix|ignore|reopen ID --project P [--env E] [--note N]
+// matters to our projects. This file only parses arguments and prints; all
+// behaviour lives in package ops.
 package main
 
 import (
@@ -19,36 +12,43 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"syscall"
+	"strings"
 	"time"
 
-	"cvewatch/src/audit"
-	"cvewatch/src/config"
-	"cvewatch/src/mcpserver"
-	"cvewatch/src/model"
-	"cvewatch/src/pipeline"
-	"cvewatch/src/query"
-	"cvewatch/src/report"
-	"cvewatch/src/store"
+	"github.com/b070nd/cvewatch/app/src/audit"
+	"github.com/b070nd/cvewatch/app/src/calendar"
+	"github.com/b070nd/cvewatch/app/src/config"
+	"github.com/b070nd/cvewatch/app/src/host"
+	"github.com/b070nd/cvewatch/app/src/mcpserver"
+	"github.com/b070nd/cvewatch/app/src/model"
+	"github.com/b070nd/cvewatch/app/src/ops"
+	"github.com/b070nd/cvewatch/app/src/query"
+	"github.com/b070nd/cvewatch/app/src/report"
 )
+
+// version is set at build time: -ldflags "-X main.version=v1.2.3".
+var version = "dev"
 
 const usage = `usage: cvewatch [-root DIR] [-v] <command>
 
-  update [-min S] [-project P]   refresh all sources now, then show open findings
-                                 (run is the same; new items are marked NEW)
-  daemon                         run a cycle every configured interval
-  list   [-min S] [-project P]   show open findings, most severe first
-                                 S is low, medium, high or critical;
-                                 add -json for machine-readable output
-  show   ID [-json]              one vulnerability with plan and per-environment status
-  mcp    [-allow-write]          serve MCP on stdio; read-only unless -allow-write
-  check                          validate configuration
-  audit                          verify the audit log chain
-  version                        print the version
-  fix    ID -project P [-env E] [-note N]   mark a fix as applied
-  ignore ID -project P [-env E] [-note N]   mark as not applicable
-  reopen ID -project P [-env E] [-note N]   put a finding back to open
+  update [-min S] [-project P] [-all] [-json]   refresh all sources now, then show open findings
+                                                (run is the same; new items are marked NEW)
+  daemon                                        refresh every configured interval
+  list   [-min S] [-project P] [-all] [-json]   open findings, most severe first
+  show   ID [-json]                             description, fix, articles, status and plan
+  why    ID [-json]                             why it matched, judged again with today's config
+  rescan [-apply]                               re-judge old items against today's config (dry run unless -apply)
+  calendar [-month YYYY-MM] [-text] [-min S] [-project P] [-all]
+                                                month overview; writes an HTML page unless -text
+  fix    ID -project P [-env E] [-note N]       mark a fix as applied
+  ignore ID -project P [-env E] [-note N]       mark as not applicable
+  reopen ID -project P [-env E] [-note N]       put a finding back to open
+  mcp    [-allow-write]                         MCP server on stdio; read-only unless -allow-write
+  check                                         validate configuration
+  audit                                         verify the audit log chain
+  version                                       print the version
 
+S is low, medium, high or critical. -all also lists versions known to be unaffected.
 -root is the app directory holding config/ and sources/ (default ".").`
 
 func main() {
@@ -66,7 +66,7 @@ func main() {
 		level = slog.LevelDebug
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), host.StopSignals()...)
 	defer stop()
 
 	if err := dispatch(ctx, *root, log, flag.Args()); err != nil {
@@ -76,41 +76,62 @@ func main() {
 }
 
 func dispatch(ctx context.Context, root string, log *slog.Logger, args []string) error {
-	switch cmd := args[0]; cmd {
+	cmd, rest := args[0], args[1:]
+	switch cmd {
 	case "run", "update":
-		o, err := parseOpts(cmd, args[1:])
+		o, err := parseList(cmd, rest)
 		if err != nil {
 			return err
 		}
-		return cycle(ctx, root, log, o)
+		return withSession(root, log, func(s *ops.Session) error { return refresh(ctx, s, o) })
 	case "daemon":
 		return daemon(ctx, root, log)
 	case "list":
-		o, err := parseOpts(cmd, args[1:])
+		o, err := parseList(cmd, rest)
 		if err != nil {
 			return err
 		}
-		return list(root, o)
+		return withSession(root, log, func(s *ops.Session) error { return printOpen(s, o, nil) })
 	case "show":
-		return show(root, args[1:])
+		return withSession(root, log, func(s *ops.Session) error { return show(s, rest) })
+	case "why":
+		return withSession(root, log, func(s *ops.Session) error { return why(s, rest) })
+	case "rescan":
+		return withSession(root, log, func(s *ops.Session) error { return rescan(s, rest) })
+	case "calendar":
+		return withSession(root, log, func(s *ops.Session) error { return showCalendar(s, rest) })
+	case "fix":
+		return withSession(root, log, func(s *ops.Session) error { return resolve(s, rest, model.StatusFixed) })
+	case "ignore":
+		return withSession(root, log, func(s *ops.Session) error { return resolve(s, rest, model.StatusIgnored) })
+	case "reopen":
+		return withSession(root, log, func(s *ops.Session) error { return resolve(s, rest, model.StatusOpen) })
 	case "mcp":
-		return serveMCP(ctx, root, log, args[1:])
+		fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
+		write := fs.Bool("allow-write", false, "also expose set_status and refresh")
+		if err := fs.Parse(rest); err != nil {
+			return err
+		}
+		return mcpserver.Serve(ctx, root, log, *write)
 	case "check":
 		return check(root)
+	case "audit":
+		return verifyAudit(root)
 	case "version":
 		fmt.Println("cvewatch", version)
 		return nil
-	case "audit":
-		return verifyAudit(root)
-	case "fix":
-		return resolve(root, args[1:], model.StatusFixed)
-	case "ignore":
-		return resolve(root, args[1:], model.StatusIgnored)
-	case "reopen":
-		return resolve(root, args[1:], model.StatusOpen)
-	default:
-		return fmt.Errorf("unknown command %q\n%s", cmd, usage)
 	}
+	return fmt.Errorf("unknown command %q\n%s", cmd, usage)
+}
+
+// withSession opens, runs and always closes, releasing the data lock.
+func withSession(root string, log *slog.Logger, fn func(*ops.Session) error) error {
+	s, err := ops.Open(root, log)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	return fn(s)
 }
 
 type listOpts struct {
@@ -118,32 +139,19 @@ type listOpts struct {
 	JSON bool
 }
 
-// parseOpts reads the flags shared by update, run and list.
-func parseOpts(name string, args []string) (listOpts, error) {
+// parseList reads the flags shared by update, run and list.
+func parseList(name string, args []string) (listOpts, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	min := fs.String("min", "", "lowest severity to show: low, medium, high, critical")
 	project := fs.String("project", "", "only this project")
+	all := fs.Bool("all", false, "include versions known to be unaffected")
 	asJSON := fs.Bool("json", false, "print JSON instead of text")
 	if err := fs.Parse(args); err != nil {
 		return listOpts{}, err
 	}
-	o := listOpts{Filter: query.Filter{Project: *project}, JSON: *asJSON}
-	if *min != "" {
-		if o.Min = model.ParseSeverity(*min); o.Min == model.SevUnknown {
-			return o, fmt.Errorf("unknown severity %q (use low, medium, high or critical)", *min)
-		}
-	}
-	return o, nil
-}
-
-// printIssues writes the open list as text, or as JSON for tools and agents.
-func printIssues(st *store.Store, o listOpts, fresh map[string]bool) error {
-	issues := query.Open(st, o.Filter)
-	if !o.JSON {
-		fmt.Print(report.Digest(issues, fresh))
-		return nil
-	}
-	return printJSON(issues)
+	f, err := ops.ParseFilter(*min, *project)
+	f.All = *all
+	return listOpts{Filter: f, JSON: *asJSON}, err
 }
 
 func printJSON(v any) error {
@@ -152,29 +160,23 @@ func printJSON(v any) error {
 	return enc.Encode(v)
 }
 
-// cycle loads config from disk every time, so edits apply on the next run.
-func cycle(ctx context.Context, root string, log *slog.Logger, o listOpts) error {
-	cfg, err := config.Load(root)
+func printOpen(s *ops.Session, o listOpts, fresh map[string]bool) error {
+	issues, err := s.List(o.Filter)
 	if err != nil {
 		return err
 	}
-	for _, w := range cfg.Warnings {
-		log.Warn(w)
+	if o.JSON {
+		return printJSON(issues)
 	}
-	st, err := store.Open(cfg.DataDir)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
+	fmt.Print(report.Digest(issues, fresh))
+	return nil
+}
 
-	runner, err := pipeline.NewRunner(cfg, st, log)
-	if err != nil {
-		return err
-	}
-	res, err := runner.Run(ctx)
-	log.Info("cycle done", "items", res.Items, "new", res.New, "merged", res.Merged, "pruned", res.Pruned, "findings", res.Findings,
-		"alerted", res.Alerted, "failed_sources", len(res.Failed))
-	if perr := printIssues(st, o, res.Fresh); perr != nil {
+func refresh(ctx context.Context, s *ops.Session, o listOpts) error {
+	res, err := s.Refresh(ctx)
+	s.Log.Info("cycle done", "items", res.Items, "new", res.New, "merged", res.Merged, "pruned", res.Pruned,
+		"findings", res.Findings, "alerted", res.Alerted, "failed_sources", len(res.Failed))
+	if perr := printOpen(s, o, res.Fresh); perr != nil {
 		return perr
 	}
 	return err
@@ -182,15 +184,15 @@ func cycle(ctx context.Context, root string, log *slog.Logger, o listOpts) error
 
 func daemon(ctx context.Context, root string, log *slog.Logger) error {
 	for {
-		if err := cycle(ctx, root, log, listOpts{}); err != nil {
+		err := withSession(root, log, func(s *ops.Session) error { return refresh(ctx, s, listOpts{}) })
+		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return nil
 			}
 			log.Error("cycle failed", "err", err) // keep going: the next cycle may succeed
 		}
-		cfg, err := config.Load(root)
 		wait := 4 * time.Hour
-		if err == nil {
+		if cfg, err := config.Load(root); err == nil {
 			wait = cfg.Interval
 		}
 		log.Info("sleeping", "for", wait)
@@ -202,71 +204,135 @@ func daemon(ctx context.Context, root string, log *slog.Logger) error {
 	}
 }
 
-func list(root string, o listOpts) error {
-	cfg, err := config.Load(root)
-	if err != nil {
-		return err
+// idAndFlags splits "ID -flag ..." because Go's flag package stops at the first non-flag.
+func idAndFlags(fs *flag.FlagSet, args []string) (string, error) {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return "", errors.New("missing vulnerability id")
 	}
-	st, err := store.Open(cfg.DataDir)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-	return printIssues(st, o, nil)
+	return args[0], fs.Parse(args[1:])
 }
 
-func show(root string, args []string) error {
-	if len(args) == 0 {
-		return errors.New("missing vulnerability id")
-	}
+func show(s *ops.Session, args []string) error {
 	fs := flag.NewFlagSet("show", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "print JSON instead of markdown")
-	if err := fs.Parse(args[1:]); err != nil {
-		return err
-	}
-	cfg, err := config.Load(root)
+	id, err := idAndFlags(fs, args)
 	if err != nil {
 		return err
 	}
-	st, err := store.Open(cfg.DataDir)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-
-	is, err := query.One(st, args[0])
+	is, md, err := s.Show(id)
 	if err != nil {
 		return err
 	}
 	if *asJSON {
 		return printJSON(is)
 	}
-	fmt.Print(report.Render(st.Vuln(is.ID), st.FindingsOf(is.ID)))
+	fmt.Print(md)
 	return nil
 }
 
-func serveMCP(ctx context.Context, root string, log *slog.Logger, args []string) error {
-	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
-	write := fs.Bool("allow-write", false, "also expose set_status and refresh")
+func why(s *ops.Session, args []string) error {
+	fs := flag.NewFlagSet("why", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "print JSON")
+	id, err := idAndFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	ex, err := s.Explain(id)
+	if err != nil {
+		return err
+	}
+	if *asJSON {
+		return printJSON(ex)
+	}
+	fmt.Printf("%s\n\nDecided when first seen:\n", ex.ID)
+	for _, t := range ex.Stored {
+		fmt.Printf("  %s/%s [%s] %s\n", t.Project, t.Env, t.Applies, strings.Join(t.Reasons, "; "))
+	}
+	fmt.Printf("\nJudged again with today's config (relevant: %v):\n", ex.Relevant)
+	for _, l := range ex.Today {
+		fmt.Printf("  %s\n", l)
+	}
+	for _, n := range ex.Notes {
+		fmt.Printf("  not matched: %s\n", n)
+	}
+	return nil
+}
+
+func rescan(s *ops.Session, args []string) error {
+	fs := flag.NewFlagSet("rescan", flag.ContinueOnError)
+	apply := fs.Bool("apply", false, "create the findings; without it only report them")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	return mcpserver.Serve(ctx, root, log, *write)
-}
-
-// version is set at build time: -ldflags "-X main.version=v1.2.3".
-var version = "dev"
-
-func verifyAudit(root string) error {
-	cfg, err := config.Load(root)
+	r, err := s.Rescan(*apply)
 	if err != nil {
 		return err
 	}
-	n, err := audit.Open(cfg.DataDir).Verify()
-	if err != nil {
-		return fmt.Errorf("audit log damaged: %w", err)
+	for _, c := range r.Candidates {
+		fmt.Printf("%-18s %-30s %s\n", c.ID, strings.Join(c.Projects, ","), c.Title)
 	}
-	fmt.Printf("audit log ok: %d records, chain intact\n", n)
+	switch {
+	case len(r.Candidates) == 0:
+		fmt.Println("Nothing new would match.")
+	case r.Applied:
+		fmt.Printf("%d issue(s) now have findings.\n", len(r.Candidates))
+	default:
+		fmt.Printf("%d issue(s) would get findings. Run again with -apply to create them.\n", len(r.Candidates))
+	}
+	return nil
+}
+
+func showCalendar(s *ops.Session, args []string) error {
+	fs := flag.NewFlagSet("calendar", flag.ContinueOnError)
+	monthFlag := fs.String("month", "", "month as YYYY-MM (default: this month)")
+	text := fs.Bool("text", false, "print to the terminal instead of writing an HTML page")
+	min := fs.String("min", "", "lowest severity to show")
+	project := fs.String("project", "", "only this project")
+	all := fs.Bool("all", false, "include versions known to be unaffected")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	f, err := ops.ParseFilter(*min, *project)
+	if err != nil {
+		return err
+	}
+	f.All = *all
+	month := time.Date(s.Now().Year(), s.Now().Month(), 1, 0, 0, 0, 0, s.Now().Location())
+	if *monthFlag != "" {
+		if month, err = time.ParseInLocation("2006-01", *monthFlag, s.Now().Location()); err != nil {
+			return fmt.Errorf("month must look like 2026-10: %w", err)
+		}
+	}
+	if *text {
+		entries, err := s.Calendar(month, f)
+		if err != nil {
+			return err
+		}
+		fmt.Print(calendar.Text(entries, month))
+		return nil
+	}
+	path, err := s.WriteCalendar(month, f)
+	if err != nil {
+		return err
+	}
+	fmt.Println("calendar written:", path)
+	return nil
+}
+
+func resolve(s *ops.Session, args []string, st model.Status) error {
+	fs := flag.NewFlagSet("resolve", flag.ContinueOnError)
+	project := fs.String("project", "", "project name (required)")
+	env := fs.String("env", "", "environment; empty means all of the project's environments")
+	note := fs.String("note", "", "free text, e.g. ticket or version")
+	id, err := idAndFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	n, err := s.Resolve(ops.Change{ID: id, Project: *project, Env: model.Env(*env), Status: st, Note: *note})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%d finding(s) set to %s\n", n, st)
 	return nil
 }
 
@@ -280,41 +346,21 @@ func check(root string) error {
 	}
 	fmt.Printf("ok: %d techs, %d projects, %d sources, interval %s\n",
 		len(cfg.Techs), len(cfg.Projects), len(cfg.Sources), cfg.Interval)
+	if len(cfg.Access) > 0 {
+		fmt.Printf("access rules: %d actor(s); acting as %q\n", len(cfg.Access), audit.Actor())
+	}
 	return nil
 }
 
-func resolve(root string, args []string, st model.Status) error {
-	if len(args) == 0 {
-		return errors.New("missing vulnerability id")
-	}
-	fs := flag.NewFlagSet("resolve", flag.ContinueOnError)
-	project := fs.String("project", "", "project name (required)")
-	env := fs.String("env", "", "environment; empty means all of the project's environments")
-	note := fs.String("note", "", "free text, e.g. ticket or version")
-	if err := fs.Parse(args[1:]); err != nil {
-		return err
-	}
-	if *project == "" {
-		return errors.New("-project is required")
-	}
-	if e := model.Env(*env); *env != "" && !e.Valid() {
-		return fmt.Errorf("unknown env %q", *env)
-	}
-
+func verifyAudit(root string) error {
 	cfg, err := config.Load(root)
 	if err != nil {
 		return err
 	}
-	s, err := store.Open(cfg.DataDir)
+	n, err := audit.Open(cfg.DataDir).Verify()
 	if err != nil {
-		return err
+		return fmt.Errorf("audit log damaged: %w", err)
 	}
-	defer s.Close()
-	c := pipeline.Change{ID: args[0], Project: *project, Env: model.Env(*env), Status: st, Note: *note}
-	n, err := pipeline.Resolve(s, cfg.AlertsDir, audit.Open(cfg.DataDir), audit.Actor(), c, time.Now())
-	if err != nil {
-		return err
-	}
-	fmt.Printf("%d finding(s) set to %s\n", n, st)
+	fmt.Printf("audit log ok: %d records, chain intact\n", n)
 	return nil
 }

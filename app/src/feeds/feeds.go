@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"cvewatch/src/httpx"
-	"cvewatch/src/model"
+	"github.com/b070nd/cvewatch/app/src/httpx"
+	"github.com/b070nd/cvewatch/app/src/model"
 )
 
 // Getter is the part of httpx.Client that Fetch needs.
@@ -70,7 +70,9 @@ func Fetch(ctx context.Context, g Getter, src model.Source, st model.FeedState, 
 	}
 	items = recent(items, since)
 	for i := range items {
+		items[i].SourceType = src.Type
 		items[i].TitleOnly = src.MatchTitleOnly
+		items[i].StructuredOnly = src.MatchStructured
 	}
 	return items, resp.Validators, nil
 }

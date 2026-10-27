@@ -41,7 +41,8 @@ const (
 	StatusIgnored Status = "ignored"
 )
 
-// Severity is ordered; unknown ranks lowest but is never filtered out.
+// Severity is ordered. Unknown ranks lowest, so once a minimum severity is
+// set, unrated items fall below it.
 type Severity string
 
 const (
@@ -65,6 +66,9 @@ func (s Severity) Rank() int {
 	}
 	return 0
 }
+
+// AtLeast reports whether s meets a minimum; the zero minimum accepts everything.
+func (s Severity) AtLeast(min Severity) bool { return s.Rank() >= min.Rank() }
 
 func ParseSeverity(v string) Severity {
 	switch strings.ToLower(strings.TrimSpace(v)) {
@@ -107,16 +111,26 @@ type Source struct {
 	// MatchTitleOnly limits tech matching to the title. Use it for firehoses
 	// like NVD, whose descriptions mention platforms ("... written in PHP").
 	MatchTitleOnly bool `yaml:"match_title_only"`
+	// MatchStructured makes a tech that has CPE names match only on the
+	// feed's product data. Freshly published NVD entries have none until
+	// NVD analyses them; with this set they wait instead of matching on
+	// words like "PHP" in the description.
+	MatchStructured bool `yaml:"match_structured"`
 }
 
 // Tech is a supported technology. Items are matched on its aliases
 // (whole words, case-insensitive); Name is used when no aliases are given.
 // An item containing any exclude term is not about this tech, which filters
 // advisories that only name it as a platform ("plugin for WordPress ... PHP").
+//
+// CPE lists "vendor:product" names (as in NVD's CPE data, e.g. php:php). When
+// an item carries structured CPE data, those names decide the match instead
+// of free text, which removes most "mentioned in passing" noise.
 type Tech struct {
 	Name     string   `yaml:"name"`
 	Aliases  []string `yaml:"aliases"`
 	Excludes []string `yaml:"excludes"`
+	CPE      []string `yaml:"cpe"`
 }
 
 func (t Tech) Terms() []string {
@@ -157,20 +171,111 @@ type Package struct {
 	Name, Version, Ecosystem string
 }
 
+// ---- affected versions and fixes ----
+
+// Applicability says whether what a project runs falls in the affected range.
+type Applicability string
+
+const (
+	AppUnknown     Applicability = "unknown" // no usable range or version
+	AppAffected    Applicability = "affected"
+	AppNotAffected Applicability = "not_affected"
+)
+
+// Rank orders urgency: affected, then unknown, then not affected. An empty
+// value (older data) counts as unknown.
+func (a Applicability) Rank() int {
+	switch a {
+	case AppAffected:
+		return 2
+	case AppNotAffected:
+		return 0
+	}
+	return 1
+}
+
+// Worse returns the more urgent of two applicabilities.
+func (a Applicability) Worse(b Applicability) Applicability {
+	if b.Rank() > a.Rank() {
+		return b
+	}
+	return a
+}
+
+// Range is one span of affected versions. An empty Min or Max means unbounded,
+// so the zero Range covers every version. Bounds are inclusive unless flagged.
+type Range struct {
+	Min     string `json:"min,omitempty"`
+	Max     string `json:"max,omitempty"`
+	MinExcl bool   `json:"min_excl,omitempty"`
+	MaxExcl bool   `json:"max_excl,omitempty"`
+}
+
+// Affected is what a feed says is vulnerable: a package (Ecosystem composer,
+// npm, ...) or a product (Ecosystem "cpe", Name "vendor:product"), lowercase.
+// No Ranges means the feed gave none; the zero Range means all versions.
+type Affected struct {
+	Ecosystem string  `json:"ecosystem"`
+	Name      string  `json:"name"`
+	Ranges    []Range `json:"ranges,omitempty"`
+	Fixed     string  `json:"fixed,omitempty"` // first patched version, when given
+}
+
+// FixKind says what a fix reference is.
+type FixKind string
+
+const (
+	FixVersion    FixKind = "version"    // a patched version exists
+	FixPatch      FixKind = "patch"      // a patch or commit is linked
+	FixAdvisory   FixKind = "advisory"   // vendor advisory or release notes
+	FixMitigation FixKind = "mitigation" // workaround
+	FixAction     FixKind = "action"     // required action (CISA KEV)
+)
+
+// Fix is evidence that a remedy exists. Official marks vendor or authority
+// sources (reviewed advisories, KEV, NVD "Vendor Advisory"), not news.
+type Fix struct {
+	Kind     FixKind `json:"kind"`
+	Detail   string  `json:"detail,omitempty"` // version number or action text
+	URL      string  `json:"url,omitempty"`
+	Source   string  `json:"source"` // id of the feed that said so
+	Official bool    `json:"official,omitempty"`
+}
+
+// Installed is what a project runs that an item matched: a configured
+// technology (Via "tech") or a lockfile package (Via "package").
+type Installed struct {
+	Name      string `json:"name"`
+	Version   string `json:"version,omitempty"`
+	Ecosystem string `json:"ecosystem,omitempty"`
+	Via       string `json:"via"`
+}
+
+func (i Installed) Label() string {
+	if i.Version == "" {
+		return i.Name
+	}
+	return i.Name + "@" + i.Version
+}
+
 // ---- runtime data ----
 
 // Item is a normalized feed entry before deduplication.
 type Item struct {
-	SourceID  string
-	URL       string
-	Title     string
-	Summary   string   // plain text, no markup
-	IDs       []string // CVE / GHSA ids found; first one is the primary
-	Packages  []string // structured "name" values from the feed (e.g. GHSA), lowercase
-	Published time.Time
-	Severity  Severity
-	CVSS      float64
-	TitleOnly bool // tech matching ignores the summary (set from Source.MatchTitleOnly)
+	SourceID   string
+	SourceType string // the Source.Type that produced it; decides article or advisory
+	URL        string
+	Title      string
+	Summary    string     // plain text, no markup
+	IDs        []string   // CVE / GHSA ids found; first one is the primary
+	Affected   []Affected // structured affected products and packages, if the feed has them
+	Fixes      []Fix      // remedies the feed names
+	Published  time.Time
+	Severity   Severity
+	CVSS       float64
+	TitleOnly  bool // tech matching ignores the summary (set from Source.MatchTitleOnly)
+	// StructuredOnly: techs with CPE names ignore text and need product data (Source.MatchStructured).
+	StructuredOnly bool
 }
 
 // Keys are the identities used for deduplication. Items without any
@@ -241,40 +346,63 @@ type FeedState struct {
 	LastRun    time.Time  `json:"last_run"` // last successful fetch
 }
 
-// Ref links a vulnerability back to a report.
+// Ref kinds: news-style reports versus authoritative advisory databases.
+const (
+	RefArticle  = "article"
+	RefAdvisory = "advisory"
+)
+
+// RefKind maps a source type to the kind of reference it produces.
+func RefKind(sourceType string) string {
+	switch sourceType {
+	case "rss", "hn":
+		return RefArticle
+	}
+	return RefAdvisory
+}
+
+// Ref links a vulnerability back to one report about it.
 type Ref struct {
-	Source string `json:"source"`
-	URL    string `json:"url"`
+	Source    string    `json:"source"`
+	Kind      string    `json:"kind,omitempty"` // RefArticle or RefAdvisory; empty in older data
+	URL       string    `json:"url"`
+	Title     string    `json:"title,omitempty"`
+	Published time.Time `json:"published,omitempty"`
 }
 
 // Vulnerability is the deduplicated record. Techs is frozen at first
 // evaluation: later config changes never rewrite history.
 type Vulnerability struct {
-	ID         string    `json:"id"`
-	Aliases    []string  `json:"aliases,omitempty"`
-	Title      string    `json:"title"`
-	Summary    string    `json:"summary"`
-	Severity   Severity  `json:"severity"`
-	CVSS       float64   `json:"cvss,omitempty"`
-	Published  time.Time `json:"published"`
-	FirstSeen  time.Time `json:"first_seen"`
-	Refs       []Ref     `json:"refs"`
-	Techs      []string  `json:"techs,omitempty"` // matched at evaluation time
-	ReportPath string    `json:"report_path,omitempty"`
+	ID         string     `json:"id"`
+	Aliases    []string   `json:"aliases,omitempty"`
+	Title      string     `json:"title"`
+	Summary    string     `json:"summary"`
+	Severity   Severity   `json:"severity"`
+	CVSS       float64    `json:"cvss,omitempty"`
+	Published  time.Time  `json:"published"`
+	FirstSeen  time.Time  `json:"first_seen"`
+	Refs       []Ref      `json:"refs"`
+	Affected   []Affected `json:"affected,omitempty"`
+	Fixes      []Fix      `json:"fixes,omitempty"`
+	Techs      []string   `json:"techs,omitempty"` // matched at evaluation time
+	ReportPath string     `json:"report_path,omitempty"`
 }
 
 func (v *Vulnerability) Keys() []string { return append([]string{v.ID}, v.Aliases...) }
 
 // Finding is one vulnerability affecting one project in one environment.
 type Finding struct {
-	VulnID    string    `json:"vuln_id"`
-	Project   string    `json:"project"`
-	Env       Env       `json:"env"`
-	Status    Status    `json:"status"`
-	Note      string    `json:"note,omitempty"`
-	Matched   []string  `json:"matched"` // "php@8.2", "symfony/http-kernel@6.4.1"
-	Updated   time.Time `json:"updated"`
-	AlertedAt time.Time `json:"alerted_at,omitempty"` // zero until Slack accepted it
+	VulnID    string        `json:"vuln_id"`
+	Project   string        `json:"project"`
+	Env       Env           `json:"env"`
+	Status    Status        `json:"status"`
+	Note      string        `json:"note,omitempty"`
+	Matched   []string      `json:"matched"` // "php@8.2", "symfony/http-kernel@6.4.1"
+	Installed []Installed   `json:"installed,omitempty"`
+	Applies   Applicability `json:"applies,omitempty"` // whether the installed version is in the affected range
+	Reasons   []string      `json:"reasons,omitempty"` // why this finding exists, in plain words
+	Updated   time.Time     `json:"updated"`
+	AlertedAt time.Time     `json:"alerted_at,omitempty"` // zero until Slack accepted it
 }
 
 func (f Finding) Key() string { return f.VulnID + "|" + f.Project + "|" + string(f.Env) }

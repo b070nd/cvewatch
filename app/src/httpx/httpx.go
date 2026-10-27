@@ -19,7 +19,7 @@ import (
 	"syscall"
 	"time"
 
-	"cvewatch/src/model"
+	"github.com/b070nd/cvewatch/app/src/model"
 )
 
 const (

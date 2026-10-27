@@ -1,0 +1,2 @@
+# Keep line endings identical on every platform so gofmt and diffs agree on Windows.
+* text=auto eol=lf

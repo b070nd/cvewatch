@@ -15,9 +15,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
 	"time"
+
+	"github.com/b070nd/cvewatch/app/src/host"
 )
 
 // Event is one audit record. Actor is a person or system name; with
@@ -46,10 +47,7 @@ func Actor() string {
 	if a := os.Getenv("CVEWATCH_ACTOR"); a != "" {
 		return a
 	}
-	if u, err := user.Current(); err == nil && u.Username != "" {
-		return u.Username
-	}
-	return "unknown"
+	return host.CurrentUser()
 }
 
 // Append adds events in order. The caller must hold the store lock, which
@@ -58,14 +56,11 @@ func (l *Log) Append(events ...Event) error {
 	if l == nil || len(events) == 0 {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(l.path), 0o700); err != nil {
-		return err
-	}
 	prev, err := lastHash(l.path)
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(l.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	f, err := host.OpenAppend(l.path)
 	if err != nil {
 		return err
 	}

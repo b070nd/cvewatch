@@ -31,6 +31,9 @@ What the tool defends against, how, and how to deploy it.
   - State, audit log and reports are created owner-only (0600, directories 0700), because they list your unpatched systems. Writes are atomic.
   - One process may write at a time (lock file).
   - Report file names are built from a fixed alphabet, so feed content cannot choose a path.
+- **Access rules**
+  - Optional per-actor project access and write rights are enforced in one module (`ops`) for the CLI and MCP alike. They rely on the local identity (`CVEWATCH_ACTOR` or the OS user); they are not authentication.
+  - Without rules everyone who can run the tool may do everything.
 - **Agents**
   - The MCP server is read-only unless started with `-allow-write`. Write tools are recorded in the audit log.
 - **Accountability**
@@ -51,6 +54,7 @@ What the tool defends against, how, and how to deploy it.
 
 - Matching by text can miss a vulnerability that no feed describes in the words you configured, and can raise false alarms. It is an early-warning aid, not a scanner.
 - Versions are not compared with affected ranges.
+- On Windows the OS does not enforce the 0600/0700 modes; owner-only access then depends on the profile folder's ACLs.
 - Anyone who can read `data/` can see your exposure; anyone who can write to it can mark findings fixed. Protect the directory with file permissions.
 - The audit chain has the limits described above.
 - Dependencies are few (YAML parser, the MCP SDK). CI runs `govulncheck`, and Dependabot proposes updates.

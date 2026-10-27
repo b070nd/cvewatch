@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"cvewatch/src/model"
+	"github.com/b070nd/cvewatch/app/src/model"
 )
 
 func sample() []Alert {
@@ -23,8 +23,8 @@ func sample() []Alert {
 }
 
 func TestFormat(t *testing.T) {
-	got := Format(sample())
-	for _, want := range []string{"1 new vulnerability", "*CRITICAL* <https://x.test/1|CVE-2026-1>", "RCE &lt;in&gt; PHP", "shop: dev, prod (php@8.2)"} {
+	got := Format(sample(), time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC))
+	for _, want := range []string{"1 new vulnerability", "*CRITICAL* <https://x.test/1|CVE-2026-1>", "RCE &lt;in&gt; PHP", "shop: dev, prod (php@8.2)", "1 article", "no fix known"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}

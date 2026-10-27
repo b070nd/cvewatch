@@ -15,7 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"cvewatch/src/model"
+	"github.com/b070nd/cvewatch/app/src/model"
+	"github.com/b070nd/cvewatch/app/src/query"
 )
 
 // BatchSize is the most alerts sent in one message, to stay under Slack limits.
@@ -49,7 +50,7 @@ func NewSlack(raw string) (*Slack, error) {
 }
 
 func (s *Slack) Send(ctx context.Context, batch []Alert) error {
-	body, err := json.Marshal(map[string]string{"text": Format(batch)})
+	body, err := json.Marshal(map[string]string{"text": Format(batch, time.Now())})
 	if err != nil {
 		return err
 	}
@@ -82,7 +83,11 @@ func (s *Slack) Send(ctx context.Context, batch []Alert) error {
 			return nil
 		case resp.StatusCode == http.StatusTooManyRequests:
 			if secs, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && secs > 0 && secs <= 60 {
-				time.Sleep(time.Duration(secs) * time.Second)
+				select {
+				case <-time.After(time.Duration(secs) * time.Second):
+				case <-ctx.Done():
+					return ctx.Err()
+				}
 			}
 			last = fmt.Errorf("slack: status %d", resp.StatusCode)
 		case resp.StatusCode >= 500:
@@ -95,7 +100,7 @@ func (s *Slack) Send(ctx context.Context, batch []Alert) error {
 }
 
 // Format renders a batch as Slack mrkdwn.
-func Format(batch []Alert) string {
+func Format(batch []Alert, now time.Time) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, ":rotating_light: *%d new vulnerabilit%s*\n", len(batch), plural(len(batch)))
 	for _, a := range batch {
@@ -104,6 +109,7 @@ func Format(batch []Alert) string {
 		if len(v.Techs) > 0 {
 			fmt.Fprintf(&b, "   tech: %s\n", strings.Join(v.Techs, ", "))
 		}
+		fmt.Fprintf(&b, "   %s\n", facts(v, now))
 		for _, p := range groupEnvs(a.Findings) {
 			fmt.Fprintf(&b, "   %s: %s", esc(p.project), p.envs)
 			if len(p.matched) > 0 {
@@ -113,6 +119,25 @@ func Format(batch []Alert) string {
 		}
 	}
 	return b.String()
+}
+
+// facts is the one-line summary: age, article count and fix status.
+func facts(v *model.Vulnerability, now time.Time) string {
+	arts := len(query.Articles(v.Refs))
+	parts := []string{}
+	if age := query.Age(v.Published, now); age != "" {
+		parts = append(parts, "published "+age+" ago")
+	}
+	parts = append(parts, fmt.Sprintf("%d article%s", arts, map[bool]string{true: "", false: "s"}[arts == 1]))
+	fix := "no fix known"
+	for _, f := range v.Fixes {
+		fix = "fix reference"
+		if f.Official {
+			fix = "official fix"
+			break
+		}
+	}
+	return esc(strings.Join(append(parts, fix), " · "))
 }
 
 func plural(n int) string {
