@@ -8,12 +8,14 @@ Register the server once per machine (Claude Code shown; other clients take the 
 claude mcp add cvewatch -- /path/to/cvewatch -root /path/to/repo/app mcp
 ```
 
-It starts read-only with two tools:
+It starts read-only with these tools:
 
 | Tool | Does |
 |---|---|
 | `list_findings` | open issues by severity; optional `min_severity` and `project` |
-| `get_vulnerability` | description, links, status per project and environment, report path |
+| `get_vulnerability` | description, articles in chronological order, fix evidence, status per project and environment, report path |
+| `explain` | why it matched: recorded reasons and what today's config says |
+| `get_calendar` | issues published in a month, with severity, techs, article count and fix availability |
 
 The server inherits the permissions of the local user that starts it and speaks only over stdio; there is no network listener. Add `-allow-write` to the command to also expose `set_status` (fixed, ignored, open) and `refresh` (fetch all sources, alert Slack). Leave it off for shared setups; marking an issue fixed changes what the team believes is patched. Changes made through MCP are recorded in the audit log with the actor `mcp:<user>`.
 
