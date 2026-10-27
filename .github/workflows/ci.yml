@@ -6,7 +6,10 @@ on:
 permissions:
   contents: read
 jobs:
-  test:
+  # The repository ruleset requires one check named "test". The matrix runs
+  # under its own names and the "test" job below reports their combined result.
+  platforms:
+    name: tests (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -26,6 +29,12 @@ jobs:
         run: test -z "$(gofmt -l .)"
       - run: go vet ./...
       - run: go test -race ./...
+  test:
+    needs: platforms
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.platforms.result }}" = "success"
   vulncheck:
     runs-on: ubuntu-latest
     steps:
