@@ -1,0 +1,23 @@
+# Supported technologies. An item is relevant when its title or summary
+# mentions an alias as a whole word. Edit freely: changes apply to items
+# first seen from the next run on; earlier decisions are never rewritten.
+#
+# excludes: if any of these words/phrases also appear, the item is about
+# something built ON the tech (a WordPress plugin, a CMS), not the tech itself.
+# Grow this list when you see noisy findings.
+techs:
+  - name: php
+    aliases: [php, php-fpm]
+    excludes: [wordpress, drupal, joomla, typo3, prestashop, opencart, "plugin for", "theme for", "module for", "extension for"]
+  - name: nodejs
+    aliases: [nodejs, node.js]
+    excludes: [cms, "content management", "plugin for", "module for", "is an open-source node.js", "is a node.js"]
+  - name: nextjs
+    aliases: [next.js, nextjs]
+  - name: vercel
+  - name: gitlab
+  - name: elasticsearch
+  - name: magento
+    aliases: [magento, adobe commerce]
+  - name: nginx
+  - name: redis

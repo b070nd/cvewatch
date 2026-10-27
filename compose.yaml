@@ -1,0 +1,21 @@
+# Example deployment. Put your project configs in ./projects and the lockfiles
+# you want read under ./lockfiles (mounted read-only), then: docker compose up -d
+services:
+  cvewatch:
+    build: .
+    command: ["daemon"]
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}   # optional; keep it in a .env file or a secret store
+      CVEWATCH_ACTOR: team-security               # pseudonym recorded in the audit log
+    volumes:
+      - ./projects:/app/config/projects:ro
+      - ./lockfiles:/lockfiles:ro
+      - cvewatch-data:/data
+      - cvewatch-alerts:/alerts
+volumes:
+  cvewatch-data:
+  cvewatch-alerts:

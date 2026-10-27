@@ -1,0 +1,14 @@
+# generated output and runtime state
+/alerts/
+/data/
+/cvewatch
+
+# real project configs stay local; only the *.example skeletons are tracked
+/app/config/projects/*.yaml
+
+# local tooling and secrets
+/.claude/settings.local.json
+.env
+
+# release artefacts
+/dist/

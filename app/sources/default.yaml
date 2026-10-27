@@ -1,0 +1,28 @@
+# Feeds to poll. type: rss | hn | nvd | kev | ghsa
+# {since}, {since_date}, {since_unix}, {now} become the last successful fetch (or the lookback on first run).
+sources:
+  - id: cisa-kev
+    type: kev
+    url: https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json
+  - id: nvd
+    type: nvd
+    url: https://services.nvd.nist.gov/rest/json/cves/2.0?pubStartDate={since}&pubEndDate={now}
+    match_title_only: true   # NVD descriptions name platforms; the first sentence names the product
+  - id: ghsa
+    type: ghsa
+    url: https://api.github.com/advisories?per_page=100&type=reviewed&published=%3E%3D{since_date}
+  - id: hackernews
+    type: hn
+    url: https://hn.algolia.com/api/v1/search_by_date?query=CVE&tags=story&hitsPerPage=100&numericFilters=created_at_i%3E{since_unix}
+  - id: thehackernews
+    type: rss
+    url: https://feeds.feedburner.com/TheHackersNews
+  - id: bleepingcomputer
+    type: rss
+    url: https://www.bleepingcomputer.com/feed/
+  - id: gitlab-security
+    type: rss
+    url: https://about.gitlab.com/security-releases.xml
+  - id: nodejs-security
+    type: rss
+    url: https://nodejs.org/en/feed/vulnerability.xml

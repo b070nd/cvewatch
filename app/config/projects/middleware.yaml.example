@@ -1,0 +1,6 @@
+name: middleware
+envs: [prod]                      # only one environment
+techs:
+  - {name: nodejs, version: "20"}
+lockfiles:
+  - {type: npm, path: /path/to/middleware/package-lock.json}

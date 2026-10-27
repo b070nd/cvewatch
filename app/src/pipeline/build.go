@@ -1,0 +1,38 @@
+package pipeline
+
+import (
+	"fmt"
+	"log/slog"
+	"os"
+	"time"
+
+	"cvewatch/src/audit"
+	"cvewatch/src/config"
+	"cvewatch/src/httpx"
+	"cvewatch/src/notify"
+	"cvewatch/src/store"
+)
+
+// NewRunner wires the production dependencies: the rate-limited HTTP client
+// and, when the configured environment variable holds a webhook, Slack.
+func NewRunner(cfg *config.Bundle, st *store.Store, log *slog.Logger) (*Runner, error) {
+	h := cfg.HTTP
+	r := &Runner{
+		Cfg: cfg, Store: st, Log: log, Now: time.Now, Audit: audit.Open(cfg.DataDir),
+		Getter: httpx.New(httpx.Options{
+			UserAgent: h.UserAgent, Timeout: h.Timeout, Retries: h.Retries, RetryDelay: h.RetryDelay,
+			Rate: h.Rate, HostRates: h.HostRates, MaxBody: h.MaxBody,
+			Threshold429: h.Threshold429, Cooldown429: h.Cooldown429, AllowPrivate: h.AllowPrivate,
+		}),
+	}
+	if url := os.Getenv(cfg.Slack.WebhookEnv); url != "" {
+		slack, err := notify.NewSlack(url)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", cfg.Slack.WebhookEnv, err)
+		}
+		r.Notifier = slack
+	} else {
+		log.Info("slack disabled", "reason", cfg.Slack.WebhookEnv+" is not set")
+	}
+	return r, nil
+}

@@ -1,0 +1,70 @@
+name: Bug report
+description: Report a problem with cvewatch.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Do not report security issues here. See CONTRIBUTING.md for the private reporting process.
+
+        Do not paste webhook URLs, tokens, or internal project names. Replace them with placeholders such as `<webhook>` or `<project>`.
+
+  - type: input
+    id: version
+    attributes:
+      label: cvewatch version
+      description: Output of `cvewatch version`.
+      placeholder: "e.g. 0.3.1"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: OS name, version, and architecture.
+      placeholder: "e.g. macOS 14.5 arm64"
+    validations:
+      required: true
+
+  - type: textarea
+    id: ran
+    attributes:
+      label: What you ran
+      description: The exact command, with secrets removed.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead. Include error messages if any.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant log output. Remove webhook URLs, tokens, and internal names before pasting.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I removed webhook URLs, tokens, and internal project names from this report.
+          required: true
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
