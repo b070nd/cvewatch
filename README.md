@@ -80,4 +80,4 @@ It makes outbound requests only to the feeds you configure and to your Slack web
 
 ## License
 
-MIT. See the `LICENSE` file.
+[MIT](LICENSE) © 2026 Botond Biro
