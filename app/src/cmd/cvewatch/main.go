@@ -18,6 +18,7 @@ import (
 	"github.com/b070nd/cvewatch/app/src/audit"
 	"github.com/b070nd/cvewatch/app/src/calendar"
 	"github.com/b070nd/cvewatch/app/src/config"
+	"github.com/b070nd/cvewatch/app/src/daemon"
 	"github.com/b070nd/cvewatch/app/src/doctor"
 	"github.com/b070nd/cvewatch/app/src/export"
 	"github.com/b070nd/cvewatch/app/src/host"
@@ -39,11 +40,21 @@ Getting started
   doctor [-online] [-json]                     check configuration, lockfiles, state, channels; -online also checks CPE names and feeds
 
 Everyday
-  update [-min S] [-project P] [-env E] [-all] [-json]   refresh all sources now, then show open findings (run is the same)
-  list   [-min S] [-project P] [-env E] [-all] [-json]   open findings, most urgent first
+  update [-min S] [-project P] [-env E] [-all] [-json] [-fail-on S]   refresh all sources now, then show open findings (run is the same)
+  list   [-min S] [-project P] [-env E] [-all] [-json] [-fail-on S]   open findings, most urgent first; -fail-on exits 1 for a CI gate
   show   ID [-json]                            description, fix, articles, status and plan
   why    ID [-json]                            why it matched, judged again with today's config
   daemon                                       refresh every configured interval
+  status [-json]                               is it working: daemon, feeds, channels, recent cycles
+  dashboard [-out FILE]                        write the static status page now
+
+Projects and technologies
+  catalog [-category C] [-json] [WORDS]        the technologies cvewatch knows (open and closed source)
+  discover DIR [-json]                         what a repository uses, with evidence; changes nothing
+  tui [-dir REPO]                              full-screen findings, projects, setup and status (starts cvewatch-tui)
+  setup [DIR] [-project NAME]                  guided setup or edit of a project, with the evidence for every guess
+  project [list]                               the monitored projects
+  project NAME [-set T=V] [-remove T] [-lock TYPE:PATH] [-unlock TYPE:PATH] [-envs E,E] [-save]   edit a project file (diff only without -save)
 
 Tracking
   fix    ID -project P [-env E] [-note N]      mark a fix as applied
@@ -55,7 +66,7 @@ Tracking
   evidence add ID -project P [-env E] [-note N] [-url U]   attach a note and link as evidence
 
 Reports
-  export [-format json|csv|md] [-min S] [-project P] [-env E] [-all]   open findings with every environment's status
+  export [-format json|csv|md|sarif] [-min S] [-project P] [-env E] [-all]   open findings with every environment's status
   policy                                       findings that break a policy rule or their due date
   digest [-send]                               the "still open" summary, shown or sent now
   inventory [-project P]                       what the tool believes runs in each environment
@@ -98,6 +109,7 @@ func main() {
 func dispatch(ctx context.Context, root string, log *slog.Logger, args []string) error {
 	cmd, rest := args[0], args[1:]
 	with := func(fn func(*ops.Session) error) error { return withSession(root, log, fn) }
+	read := func(fn func(*ops.Session) error) error { return withReadSession(root, log, fn) }
 	switch cmd {
 	case "init":
 		return initCmd(root, rest)
@@ -110,21 +122,21 @@ func dispatch(ctx context.Context, root string, log *slog.Logger, args []string)
 		}
 		return with(func(s *ops.Session) error { return refresh(ctx, s, o) })
 	case "daemon":
-		return daemon(ctx, root, log)
+		return daemon.Run(ctx, root, log)
 	case "list":
 		o, err := parseList(cmd, rest)
 		if err != nil {
 			return err
 		}
-		return with(func(s *ops.Session) error { return printOpen(s, o, nil) })
+		return read(func(s *ops.Session) error { return printOpen(s, o, nil) })
 	case "show":
-		return with(func(s *ops.Session) error { return show(s, rest) })
+		return read(func(s *ops.Session) error { return show(s, rest) })
 	case "why":
-		return with(func(s *ops.Session) error { return why(s, rest) })
+		return read(func(s *ops.Session) error { return why(s, rest) })
 	case "rescan":
 		return with(func(s *ops.Session) error { return rescan(s, rest) })
 	case "calendar":
-		return with(func(s *ops.Session) error { return showCalendar(s, rest) })
+		return read(func(s *ops.Session) error { return showCalendar(s, rest) })
 	case "fix":
 		return with(func(s *ops.Session) error { return resolve(s, cmd, rest, model.StatusFixed) })
 	case "ignore":
@@ -136,15 +148,35 @@ func dispatch(ctx context.Context, root string, log *slog.Logger, args []string)
 	case "assign":
 		return with(func(s *ops.Session) error { return assign(s, rest) })
 	case "evidence":
-		return with(func(s *ops.Session) error { return evidenceCmd(s, rest) })
+		if len(rest) > 0 && rest[0] == "add" {
+			return with(func(s *ops.Session) error { return evidenceCmd(s, rest) })
+		}
+		return read(func(s *ops.Session) error { return evidenceCmd(s, rest) })
+	case "status":
+		return read(func(s *ops.Session) error { return statusCmd(s, rest) })
+	case "dashboard":
+		return read(func(s *ops.Session) error { return dashboardCmd(s, rest) })
+	case "catalog":
+		return read(func(s *ops.Session) error { return catalogCmd(s, rest) })
+	case "discover":
+		return read(func(s *ops.Session) error { return discoverCmd(s, rest) })
+	case "tui":
+		return tuiCmd(ctx, root, rest)
+	case "setup":
+		return with(func(s *ops.Session) error { return setupCmd(s, rest) })
+	case "project":
+		if len(rest) == 0 || rest[0] == "list" {
+			return read(func(s *ops.Session) error { return projectCmd(s, rest) })
+		}
+		return with(func(s *ops.Session) error { return projectCmd(s, rest) })
 	case "export":
-		return with(func(s *ops.Session) error { return exportCmd(s, rest) })
+		return read(func(s *ops.Session) error { return exportCmd(s, rest) })
 	case "policy":
-		return with(func(s *ops.Session) error { return policy(s) })
+		return read(func(s *ops.Session) error { return policy(s) })
 	case "digest":
 		return with(func(s *ops.Session) error { return digest(ctx, s, rest) })
 	case "inventory":
-		return with(func(s *ops.Session) error { return inventoryCmd(s, rest) })
+		return read(func(s *ops.Session) error { return inventoryCmd(s, rest) })
 	case "mcp":
 		fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
 		write := fs.Bool("allow-write", false, "also expose set_status and refresh")
@@ -173,9 +205,21 @@ func withSession(root string, log *slog.Logger, fn func(*ops.Session) error) err
 	return fn(s)
 }
 
+// withReadSession is withSession without the data lock, for commands that
+// only read, so they never wait for the daemon.
+func withReadSession(root string, log *slog.Logger, fn func(*ops.Session) error) error {
+	s, err := ops.OpenReadOnly(root, log)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	return fn(s)
+}
+
 type listOpts struct {
 	query.Filter
-	JSON bool
+	JSON   bool
+	FailOn model.Severity // exit non-zero when an open finding is at least this severe
 }
 
 // parseList reads the flags shared by update, run and list.
@@ -186,12 +230,19 @@ func parseList(name string, args []string) (listOpts, error) {
 	env := fs.String("env", "", "only this environment")
 	all := fs.Bool("all", false, "include versions known to be unaffected")
 	asJSON := fs.Bool("json", false, "print JSON instead of text")
+	failOn := fs.String("fail-on", "", "exit non-zero when an open finding is at least this severe (for CI gates)")
 	if err := fs.Parse(args); err != nil {
 		return listOpts{}, err
 	}
 	f, err := ops.ParseFilter(*min, *project, *env)
 	f.All = *all
-	return listOpts{Filter: f, JSON: *asJSON}, err
+	o := listOpts{Filter: f, JSON: *asJSON}
+	if *failOn != "" {
+		if o.FailOn = model.ParseSeverity(*failOn); o.FailOn == model.SevUnknown {
+			return o, fmt.Errorf("unknown severity %q for -fail-on (use low, medium, high or critical)", *failOn)
+		}
+	}
+	return o, err
 }
 
 func printJSON(v any) error {
@@ -206,9 +257,24 @@ func printOpen(s *ops.Session, o listOpts, fresh map[string]bool) error {
 		return err
 	}
 	if o.JSON {
-		return export.New(issues, s.Now()).WriteJSON(os.Stdout)
+		err = export.New(issues, s.Now()).WriteJSON(os.Stdout)
+	} else {
+		fmt.Print(report.Digest(issues, fresh))
 	}
-	fmt.Print(report.Digest(issues, fresh))
+	if err != nil {
+		return err
+	}
+	if o.FailOn != model.SevUnknown {
+		n := 0
+		for _, is := range issues {
+			if is.Severity.AtLeast(o.FailOn) {
+				n++
+			}
+		}
+		if n > 0 {
+			return fmt.Errorf("%d open finding(s) at or above %s", n, o.FailOn)
+		}
+	}
 	return nil
 }
 
@@ -221,28 +287,6 @@ func refresh(ctx context.Context, s *ops.Session, o listOpts) error {
 		return perr
 	}
 	return err
-}
-
-func daemon(ctx context.Context, root string, log *slog.Logger) error {
-	for {
-		err := withSession(root, log, func(s *ops.Session) error { return refresh(ctx, s, listOpts{}) })
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				return nil
-			}
-			log.Error("cycle failed", "err", err) // keep going: the next cycle may succeed
-		}
-		wait := 4 * time.Hour
-		if cfg, err := config.Load(root); err == nil {
-			wait = cfg.Interval
-		}
-		log.Info("sleeping", "for", wait)
-		select {
-		case <-time.After(wait):
-		case <-ctx.Done():
-			return nil
-		}
-	}
 }
 
 // idAndFlags splits "ID -flag ..." because Go's flag package stops at the first non-flag.

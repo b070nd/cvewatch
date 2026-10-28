@@ -136,3 +136,51 @@ func TestWriteToolsNeedOptIn(t *testing.T) {
 		t.Fatalf("status not persisted: %s", out)
 	}
 }
+
+func TestSetupToolsReadOnlyAndWrite(t *testing.T) {
+	root := fixture(t)
+	repo := t.TempDir()
+	os.WriteFile(filepath.Join(repo, ".tool-versions"), []byte("php 8.2.1\n"), 0o644)
+
+	ro := connect(t, root, false)
+	if names := toolNames(t, ro); !strings.Contains(names, "discover_stack") || !strings.Contains(names, "preview_project_change") || strings.Contains(names, "edit_project") {
+		t.Fatalf("tools: %s", names)
+	}
+	if _, out := call(t, ro, "search_catalog", map[string]any{"query": "php"}); !strings.Contains(out, `"name":"php"`) {
+		t.Fatalf("search: %s", out)
+	}
+	if res, _ := call(t, ro, "search_catalog", map[string]any{}); !res.IsError {
+		t.Fatal("an empty search must be an error")
+	}
+	if _, out := call(t, ro, "discover_stack", map[string]any{"dir": repo}); !strings.Contains(out, `"tech":"php"`) || !strings.Contains(out, `"version":"8.2.1"`) {
+		t.Fatalf("discover: %s", out)
+	}
+	if res, _ := call(t, ro, "discover_stack", map[string]any{"dir": "relative/path"}); !res.IsError {
+		t.Fatal("a relative dir must be rejected")
+	}
+	if _, out := call(t, ro, "get_status", map[string]any{}); !strings.Contains(out, `"daemon"`) {
+		t.Fatalf("status: %s", out)
+	}
+	if _, out := call(t, ro, "list_projects", map[string]any{}); !strings.Contains(out, `"shop"`) {
+		t.Fatalf("projects: %s", out)
+	}
+	change := map[string]any{"project": "blog", "changes": []any{map[string]any{"kind": "set_tech", "tech": "php", "version": "8.2"}}}
+	if _, out := call(t, ro, "preview_project_change", change); !strings.Contains(out, `"created":true`) || !strings.Contains(out, `"saved":false`) {
+		t.Fatalf("preview: %s", out)
+	}
+	if _, err := os.Stat(filepath.Join(root, "config", "projects", "blog.yaml")); err == nil {
+		t.Fatal("preview wrote a file")
+	}
+
+	rw := connect(t, root, true)
+	if _, out := call(t, rw, "edit_project", change); !strings.Contains(out, `"saved":true`) {
+		t.Fatalf("edit: %s", out)
+	}
+	if b, err := os.ReadFile(filepath.Join(root, "config", "projects", "blog.yaml")); err != nil || !strings.Contains(string(b), "php") {
+		t.Fatalf("file: %s %v", b, err)
+	}
+	bad := map[string]any{"project": "blog", "changes": []any{map[string]any{"kind": "teleport"}}}
+	if res, _ := call(t, rw, "edit_project", bad); !res.IsError {
+		t.Fatal("an unknown change kind must be an error")
+	}
+}
