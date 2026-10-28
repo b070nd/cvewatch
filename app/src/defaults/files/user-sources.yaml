@@ -1,0 +1,9 @@
+# Your own feeds, added to the shipped ones (a feed here with the same id
+# replaces the shipped feed). Technology-specific vendor feeds switch on by
+# themselves when a project declares that technology.
+#
+# sources:
+#   - id: vendor-psirt
+#     type: rss
+#     url: https://example.com/security/advisories.xml
+sources: []

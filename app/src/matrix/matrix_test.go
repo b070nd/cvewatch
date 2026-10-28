@@ -408,3 +408,18 @@ func TestLoadErrorsNamePath(t *testing.T) {
 		t.Errorf("read error = %v, want it to name %s", err, missing)
 	}
 }
+
+func TestDetectTypeCoversEveryReader(t *testing.T) {
+	for name, want := range map[string]string{"composer.lock": "composer", "Package-Lock.JSON": "npm", "app.cdx.json": "cyclonedx",
+		"release.spdx.json": "spdx", "go.mod": "go", "pom.xml": "maven", "README.md": ""} {
+		got, ok := DetectType(name)
+		if got != want || ok != (want != "") {
+			t.Errorf("DetectType(%q) = %q %v, want %q", name, got, ok, want)
+		}
+	}
+	for _, typ := range FileNames() {
+		if got, _ := DetectType(typ); !slices.Contains(Types(), got) {
+			t.Errorf("%s maps to %q, which has no parser", typ, got)
+		}
+	}
+}

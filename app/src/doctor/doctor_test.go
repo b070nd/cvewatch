@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -150,13 +151,10 @@ func TestTypoCPEFails(t *testing.T) {
 	if !r.Failed() {
 		t.Fatal("typo CPE passed")
 	}
-	if c := want(t, r, "techs", "php", Fail); !strings.Contains(c.Detail, `"php:php:"`) {
-		t.Errorf("detail = %q", c.Detail)
-	}
-	want(t, r, "techs", "go", Fail)
-	for _, c := range r.Checks {
-		if c.Group == "techs" && c.Name == "names" {
-			t.Errorf("names should not be OK with bad entries: %+v", c)
+	c := want(t, r, "config", "loads", Fail)
+	for _, w := range []string{`"php:php:"`, `"Golang:go"`} {
+		if !strings.Contains(c.Detail, w) {
+			t.Errorf("detail %q misses %s", c.Detail, w)
 		}
 	}
 }
@@ -277,14 +275,16 @@ func TestAuditLog(t *testing.T) {
 
 func TestOnlineCPE(t *testing.T) {
 	root := newRoot(t, map[string]string{
-		"config/techs.yaml": "techs:\n  - {name: php, cpe: [\"php:php\"]}\n  - {name: bad, cpe: [\"nope:nothing\"]}\n",
-		"sources/s.yaml":    "sources:\n  - {id: kev, type: kev, url: \"https://example.com/kev.json\", disabled: true}\n",
+		"config/techs.yaml":      "techs:\n  - {name: php, cpe: [\"php:php\"]}\n  - {name: bad, cpe: [\"nope:nothing\"]}\n",
+		"sources/s.yaml":         "sources:\n  - {id: kev, type: kev, url: \"https://example.com/kev.json\", disabled: true}\n",
+		"config/projects/a.yaml": "name: a\ntechs:\n  - {name: php, version: \"8.2\"}\n  - {name: bad, version: \"1\"}\n",
 	})
 	g := &fakeGetter{cpe: `{"totalResults":3}`}
 	r := Run(context.Background(), root, Options{Online: true, Getter: g})
 	want(t, r, "techs", "php:php", OK)
 	want(t, r, "techs", "nope:nothing", OK)
-	if len(g.urls) != 2 || !strings.Contains(g.urls[0], "cpeMatchString=cpe:2.3:a:php:php:*") || !strings.Contains(g.urls[0], "resultsPerPage=1") {
+	cpeURLs := slices.DeleteFunc(slices.Clone(g.urls), func(u string) bool { return !strings.Contains(u, "cpeMatchString") })
+	if len(cpeURLs) != 2 || !strings.Contains(g.urls[0], "cpeMatchString=cpe:2.3:a:php:php:*") || !strings.Contains(g.urls[0], "resultsPerPage=1") {
 		t.Errorf("urls = %v", g.urls)
 	}
 
@@ -321,7 +321,13 @@ func TestOnlineSources(t *testing.T) {
 	if c := want(t, r, "sources", "kev", OK); !strings.Contains(c.Detail, "0 items") {
 		t.Errorf("detail = %q", c.Detail)
 	}
-	if len(g.urls) != 1 {
+	own := 0
+	for _, u := range g.urls {
+		if strings.Contains(u, "example.com") {
+			own++
+		}
+	}
+	if own != 1 {
 		t.Errorf("urls = %v", g.urls)
 	}
 

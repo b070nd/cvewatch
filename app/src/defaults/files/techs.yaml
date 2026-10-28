@@ -3,40 +3,1500 @@
 # first seen from the next run on; earlier decisions are never rewritten
 # (use `cvewatch rescan` to look back deliberately).
 #
+# Each entry has catalog metadata (title, category, vendor, source) so setup
+# can offer it, plus how to recognise it in a repository (detect) and,
+# for some vendors, an advisory feed that switches on with the technology.
+# Entries are grouped by category; source says whether the code is open,
+# closed or mixed (open core, source-available or open with a commercial edition).
+#
+# aliases: whole-word, case-insensitive matches in advisory text. Kept
+# specific: a generic word ("go", "java", "windows") would match everything.
+#
 # excludes: if any of these words/phrases also appear, the item is about
 # something built ON the tech (a WordPress plugin, a CMS), not the tech itself.
 #
 # cpe: "vendor:product" names from NVD's CPE data. When an NVD item carries
 # product data, it decides the match and free text is ignored, which also
-# gives version ranges. Check names in the NVD CPE dictionary before relying
-# on them: a wrong name hides real advisories. Without cpe, text decides.
+# gives version ranges. Every name here was checked against the NVD CPE
+# dictionary and is listed in src/golden/testdata/cpe-known-good.txt: a wrong
+# name hides real advisories. Without cpe, text decides.
+#
+# detect: files are marker file base names, images are container image
+# repositories without registry or tag, packages are lockfile packages that
+# imply the tech, versions say where its version can be read (a regular
+# expression with exactly one capture group).
 techs:
+  # ---- languages ----
   - name: php
+    title: PHP
+    category: language
+    vendor: The PHP Group
+    source: open
     aliases: [php, php-fpm]
-    cpe: [php:php]
     excludes: [wordpress, drupal, joomla, typo3, prestashop, opencart, "plugin for", "theme for", "module for", "extension for"]
-  - name: nodejs
-    aliases: [nodejs, node.js]
-    cpe: [nodejs:node.js]
-    excludes: [cms, "content management", "plugin for", "module for", "is an open-source node.js", "is a node.js"]
-  - name: nextjs
-    aliases: [next.js, nextjs]
-    cpe: [vercel:next.js]
-  - name: vercel
-  - name: gitlab
-    cpe: [gitlab:gitlab]
-  - name: elasticsearch
-    cpe: [elastic:elasticsearch]
-  - name: magento
-    aliases: [magento, adobe commerce]
-    cpe: [magento:magento, adobe:commerce]
-  - name: nginx
-    cpe: [nginx:nginx]
-  - name: redis
-    cpe: [redis:redis]
-  - name: go
-    aliases: [golang]
-    cpe: [golang:go]
+    cpe: [php:php]
+    detect:
+      files: [composer.json, composer.lock, php.ini, .php-version]
+      images: [php]
+      versions:
+        - {file: .php-version, pattern: '^v?(\d+(?:\.\d+)*)'}
+        - {file: .tool-versions, pattern: '(?m)^php\s+v?(\d+(?:\.\d+)*)'}
   - name: python
+    title: Python
+    category: language
+    vendor: Python Software Foundation
+    source: open
     aliases: [python, cpython]
     cpe: [python:python]
+    detect:
+      files: [requirements.txt, pyproject.toml, Pipfile, Pipfile.lock, poetry.lock, .python-version]
+      images: [python]
+      versions:
+        - {file: .python-version, pattern: '^v?(\d+(?:\.\d+)*)'}
+        - {file: .tool-versions, pattern: '(?m)^python\s+v?(\d+(?:\.\d+)*)'}
+  - name: go
+    title: Go
+    category: language
+    vendor: Google
+    source: open
+    aliases: [golang]
+    cpe: [golang:go]
+    detect:
+      files: [go.mod, go.sum, go.work]
+      images: [golang]
+      versions:
+        - {file: go.mod, pattern: '(?m)^go\s+v?(\d+(?:\.\d+)*)'}
+        - {file: .tool-versions, pattern: '(?m)^golang\s+v?(\d+(?:\.\d+)*)'}
+  - name: ruby
+    title: Ruby
+    category: language
+    vendor: Ruby Core Team
+    source: open
+    aliases: [ruby, cruby]
+    excludes: ["ruby on rails", rails, "ruby gem", rubygem, "gem for"]
+    cpe: [ruby-lang:ruby]
+    detect:
+      files: [Gemfile, Gemfile.lock, .ruby-version]
+      images: [ruby]
+      versions:
+        - {file: .ruby-version, pattern: '^(?:ruby-)?v?(\d+(?:\.\d+)*)'}
+        - {file: .tool-versions, pattern: '(?m)^ruby\s+v?(\d+(?:\.\d+)*)'}
+  - name: rust
+    title: Rust
+    category: language
+    vendor: Rust Foundation
+    source: open
+    aliases: [rust, rustc, rust-lang]
+    excludes: ["rust crate", "crate for", "written in rust"]
+    cpe: [rust-lang:rust]
+    detect:
+      files: [Cargo.toml, Cargo.lock, rust-toolchain, rust-toolchain.toml]
+      images: [rust]
+      versions:
+        - {file: rust-toolchain.toml, pattern: '(?m)^channel\s*=\s*"v?(\d+(?:\.\d+)*)"'}
+        - {file: .tool-versions, pattern: '(?m)^rust\s+v?(\d+(?:\.\d+)*)'}
+  - name: dotnet
+    title: Microsoft .NET
+    category: language
+    vendor: Microsoft
+    source: open
+    aliases: [dotnet, ".net core", ".net framework", "microsoft .net", "asp.net core", "asp.net"]
+    excludes: ["plugin for", "sdk for"]
+    cpe: [microsoft:.net, microsoft:.net_core, microsoft:.net_framework, microsoft:asp.net_core]
+    detect:
+      files: [global.json, nuget.config, Directory.Build.props]
+      images: [dotnet/sdk, dotnet/aspnet, dotnet/runtime, dotnet/runtime-deps]
+      versions:
+        - {file: global.json, pattern: '"version"\s*:\s*"(\d+(?:\.\d+)*)'}
+    feeds:
+      - {id: msrc, type: rss, url: "https://api.msrc.microsoft.com/update-guide/rss"}
+  - name: openjdk
+    title: Java (OpenJDK)
+    category: language
+    vendor: Eclipse Adoptium and OpenJDK community
+    source: open
+    aliases: [openjdk, "open jdk", "eclipse temurin", "amazon corretto"]
+    cpe: [oracle:openjdk]
+    detect:
+      files: [.java-version, .sdkmanrc]
+      images: [openjdk, eclipse-temurin, amazoncorretto]
+      versions:
+        - {file: .java-version, pattern: '^v?(\d+(?:\.\d+)*)'}
+        - {file: .tool-versions, pattern: '(?m)^java\s+(?:[a-z]+-)*v?(\d+(?:\.\d+)*)'}
+  - name: oracle-jdk
+    title: Oracle Java SE (JDK and JRE)
+    category: language
+    vendor: Oracle
+    source: closed
+    aliases: ["oracle jdk", "oracle java se", "java se", "oracle jre", "graalvm"]
+    cpe: [oracle:jdk, oracle:jre, oracle:graalvm]
+    detect:
+      images: [oracle/jdk, oracle/graalvm-ce]
+    feeds:
+      - {id: oracle-security, type: rss, url: "https://www.oracle.com/ocom/groups/public/@otn/documents/webcontent/rss-otn-sec.xml"}
+
+  # ---- runtimes and application servers ----
+  - name: nodejs
+    title: Node.js
+    category: runtime
+    vendor: OpenJS Foundation
+    source: open
+    aliases: [nodejs, node.js]
+    excludes: [cms, "content management", "plugin for", "module for", "is an open-source node.js", "is a node.js"]
+    cpe: [nodejs:node.js]
+    detect:
+      files: [package.json, package-lock.json, .nvmrc, .node-version]
+      images: [node]
+      versions:
+        - {file: .nvmrc, pattern: '^v?(\d+(?:\.\d+)*)'}
+        - {file: .node-version, pattern: '^v?(\d+(?:\.\d+)*)'}
+        - {file: .tool-versions, pattern: '(?m)^nodejs\s+v?(\d+(?:\.\d+)*)'}
+    feeds:
+      - {id: nodejs-security, type: rss, url: "https://nodejs.org/en/feed/vulnerability.xml"}
+  - name: tomcat
+    title: Apache Tomcat
+    category: runtime
+    vendor: Apache Software Foundation
+    source: open
+    aliases: ["apache tomcat", tomcat]
+    excludes: ["plugin for", "tomcat-embed"]
+    cpe: [apache:tomcat]
+    detect:
+      files: [catalina.sh, catalina.properties, tomcat-users.xml]
+      images: [tomcat]
+  - name: jetty
+    title: Eclipse Jetty
+    category: runtime
+    vendor: Eclipse Foundation
+    source: open
+    aliases: ["eclipse jetty", jetty]
+    cpe: [eclipse:jetty]
+    detect:
+      images: [jetty]
+      packages:
+        - {ecosystem: maven, name: "org.eclipse.jetty:jetty-server"}
+  - name: wildfly
+    title: WildFly and JBoss EAP
+    category: runtime
+    vendor: Red Hat
+    source: mixed
+    aliases: [wildfly, jboss, "jboss eap", "jboss enterprise application platform"]
+    cpe: [redhat:jboss_enterprise_application_platform, redhat:wildfly]
+    detect:
+      images: [jboss/wildfly, quay.io/wildfly/wildfly]
+  - name: weblogic
+    title: Oracle WebLogic Server
+    category: runtime
+    vendor: Oracle
+    source: closed
+    aliases: [weblogic, "weblogic server", "oracle weblogic"]
+    cpe: [oracle:weblogic_server]
+    detect:
+      files: [weblogic.xml, weblogic-application.xml]
+  - name: websphere
+    title: IBM WebSphere Application Server
+    category: runtime
+    vendor: IBM
+    source: closed
+    aliases: ["websphere application server", "ibm websphere", "websphere liberty"]
+    cpe: [ibm:websphere_application_server]
+    detect:
+      files: [ibm-web-bnd.xml, ibm-web-ext.xml]
+      images: [ibmcom/websphere-traditional, ibmcom/websphere-liberty, websphere-liberty]
+  - name: coldfusion
+    title: Adobe ColdFusion
+    category: runtime
+    vendor: Adobe
+    source: closed
+    aliases: [coldfusion, "adobe coldfusion"]
+    cpe: [adobe:coldfusion]
+    detect:
+      files: [Application.cfc, Application.cfm, box.json]
+      images: [ortussolutions/commandbox, adobecoldfusion/coldfusion]
+  - name: fusion-middleware
+    title: Oracle Fusion Middleware
+    category: runtime
+    vendor: Oracle
+    source: closed
+    aliases: ["oracle fusion middleware", "oracle access manager", "oracle identity manager", "oracle http server"]
+    cpe: [oracle:fusion_middleware]
+
+  # ---- frameworks and libraries ----
+  - name: nextjs
+    title: Next.js
+    category: framework
+    vendor: Vercel
+    source: open
+    aliases: [next.js, nextjs]
+    cpe: [vercel:next.js]
+    detect:
+      files: [next.config.js, next.config.mjs, next.config.ts]
+      packages:
+        - {ecosystem: npm, name: next}
+  - name: vercel
+    title: Vercel
+    category: devops
+    vendor: Vercel
+    source: closed
+    detect:
+      files: [vercel.json, .vercelignore]
+      packages:
+        - {ecosystem: npm, name: vercel}
+  - name: react
+    title: React
+    category: framework
+    vendor: Meta
+    source: open
+    aliases: ["react.js", reactjs, react-dom, "react server components"]
+    excludes: ["react native"]
+    cpe: [facebook:react]
+    detect:
+      packages:
+        - {ecosystem: npm, name: react}
+        - {ecosystem: npm, name: react-dom}
+  - name: vue
+    title: Vue.js
+    category: framework
+    vendor: Vue.js team
+    source: open
+    aliases: ["vue.js", vuejs]
+    excludes: ["plugin for", "vue-element-admin"]
+    detect:
+      files: [vue.config.js]
+      packages:
+        - {ecosystem: npm, name: vue}
+  - name: laravel
+    title: Laravel
+    category: framework
+    vendor: Laravel LLC
+    source: open
+    aliases: [laravel]
+    excludes: ["package for", "plugin for", "laravel-"]
+    cpe: [laravel:laravel]
+    detect:
+      files: [artisan]
+      packages:
+        - {ecosystem: composer, name: laravel/framework}
+  - name: symfony
+    title: Symfony
+    category: framework
+    vendor: Symfony SAS
+    source: open
+    aliases: [symfony]
+    excludes: ["bundle for", "plugin for"]
+    cpe: [sensiolabs:symfony]
+    detect:
+      files: [symfony.lock]
+      packages:
+        - {ecosystem: composer, name: symfony/symfony}
+        - {ecosystem: composer, name: symfony/framework-bundle}
+        - {ecosystem: composer, name: symfony/http-kernel}
+  - name: rails
+    title: Ruby on Rails
+    category: framework
+    vendor: Rails core team
+    source: open
+    aliases: ["ruby on rails", rubyonrails, "action pack", "active storage", "action view", "active record"]
+    cpe: [rubyonrails:rails]
+    detect:
+      files: [config.ru]
+    feeds:
+      - {id: rails-security, type: rss, url: "https://discuss.rubyonrails.org/c/security-announcements/9.rss"}
+  - name: django
+    title: Django
+    category: framework
+    vendor: Django Software Foundation
+    source: open
+    aliases: [django]
+    excludes: ["django cms", "plugin for", "package for", "django-"]
+    cpe: [djangoproject:django]
+    detect:
+      files: [manage.py]
+      packages:
+        - {ecosystem: pypi, name: django}
+  - name: spring-framework
+    title: Spring Framework
+    category: framework
+    vendor: VMware (Broadcom)
+    source: open
+    aliases: ["spring framework", "spring mvc", "spring webflux"]
+    cpe: [vmware:spring_framework, pivotal_software:spring_framework]
+    detect:
+      packages:
+        - {ecosystem: maven, name: "org.springframework:spring-core"}
+        - {ecosystem: maven, name: "org.springframework:spring-web"}
+    feeds:
+      - {id: spring-security, type: rss, url: "https://spring.io/security.atom"}
+  - name: spring-boot
+    title: Spring Boot
+    category: framework
+    vendor: VMware (Broadcom)
+    source: open
+    aliases: ["spring boot"]
+    cpe: [vmware:spring_boot, pivotal_software:spring_boot]
+    detect:
+      packages:
+        - {ecosystem: maven, name: "org.springframework.boot:spring-boot"}
+  - name: struts
+    title: Apache Struts
+    category: framework
+    vendor: Apache Software Foundation
+    source: open
+    aliases: [struts, "apache struts", struts2]
+    cpe: [apache:struts]
+    detect:
+      files: [struts.xml, struts-config.xml]
+      packages:
+        - {ecosystem: maven, name: "org.apache.struts:struts2-core"}
+  - name: log4j
+    title: Apache Log4j
+    category: framework
+    vendor: Apache Software Foundation
+    source: open
+    aliases: [log4j, log4j2, log4shell]
+    cpe: [apache:log4j]
+    detect:
+      files: [log4j2.xml, log4j.properties, log4j2.properties]
+      packages:
+        - {ecosystem: maven, name: "org.apache.logging.log4j:log4j-core"}
+        - {ecosystem: maven, name: "log4j:log4j"}
+
+  # ---- databases ----
+  - name: postgresql
+    title: PostgreSQL
+    category: database
+    vendor: PostgreSQL Global Development Group
+    source: open
+    aliases: [postgresql, postgres]
+    excludes: ["extension for", "plugin for", "driver for"]
+    cpe: [postgresql:postgresql]
+    detect:
+      files: [pg_hba.conf, postgresql.conf]
+      images: [postgres, bitnami/postgresql, postgis/postgis]
+      versions:
+        - {file: .tool-versions, pattern: '(?m)^postgres(?:ql)?\s+v?(\d+(?:\.\d+)*)'}
+  - name: mysql
+    title: MySQL
+    category: database
+    vendor: Oracle
+    source: mixed
+    aliases: [mysql]
+    excludes: ["plugin for", "extension for", "connector for"]
+    cpe: [oracle:mysql, mysql:mysql]
+    detect:
+      files: [my.cnf]
+      images: [mysql, mysql/mysql-server, bitnami/mysql]
+      versions:
+        - {file: .tool-versions, pattern: '(?m)^mysql\s+v?(\d+(?:\.\d+)*)'}
+  - name: mariadb
+    title: MariaDB
+    category: database
+    vendor: MariaDB Foundation
+    source: open
+    aliases: [mariadb]
+    cpe: [mariadb:mariadb]
+    detect:
+      images: [mariadb, bitnami/mariadb]
+  - name: mongodb
+    title: MongoDB
+    category: database
+    vendor: MongoDB Inc.
+    source: mixed
+    aliases: [mongodb]
+    excludes: [mongoose, "plugin for", "extension for"]
+    cpe: [mongodb:mongodb]
+    detect:
+      images: [mongo, mongodb/mongodb-community-server, bitnami/mongodb]
+  - name: sqlite
+    title: SQLite
+    category: database
+    vendor: SQLite Consortium
+    source: open
+    aliases: [sqlite]
+    excludes: ["sqlite-", "wrapper for", "driver for"]
+    cpe: [sqlite:sqlite]
+    detect:
+      files: [sqlite3.dll]
+  - name: sql-server
+    title: Microsoft SQL Server
+    category: database
+    vendor: Microsoft
+    source: closed
+    aliases: ["sql server", "microsoft sql server", mssql]
+    cpe: [microsoft:sql_server]
+    detect:
+      images: [mssql/server]
+  - name: oracle-database
+    title: Oracle Database
+    category: database
+    vendor: Oracle
+    source: closed
+    aliases: ["oracle database", "oracle database server"]
+    cpe: [oracle:database_server]
+    detect:
+      images: [oracle/database, gvenzl/oracle-xe, gvenzl/oracle-free]
+  - name: clickhouse
+    title: ClickHouse
+    category: database
+    vendor: ClickHouse Inc.
+    source: open
+    aliases: [clickhouse]
+    cpe: [clickhouse:clickhouse]
+    detect:
+      images: [clickhouse/clickhouse-server, yandex/clickhouse-server]
+  - name: neo4j
+    title: Neo4j
+    category: database
+    vendor: Neo4j Inc.
+    source: mixed
+    aliases: [neo4j]
+    cpe: [neo4j:neo4j]
+    detect:
+      images: [neo4j]
+  - name: influxdb
+    title: InfluxDB
+    category: database
+    vendor: InfluxData
+    source: mixed
+    aliases: [influxdb]
+    cpe: [influxdata:influxdb]
+    detect:
+      images: [influxdb]
+  - name: cassandra
+    title: Apache Cassandra
+    category: database
+    vendor: Apache Software Foundation
+    source: open
+    aliases: [cassandra, "apache cassandra"]
+    cpe: [apache:cassandra]
+    detect:
+      images: [cassandra]
+  - name: phpmyadmin
+    title: phpMyAdmin
+    category: database
+    vendor: phpMyAdmin project
+    source: open
+    aliases: [phpmyadmin]
+    cpe: [phpmyadmin:phpmyadmin]
+    detect:
+      images: [phpmyadmin, phpmyadmin/phpmyadmin]
+      packages:
+        - {ecosystem: composer, name: phpmyadmin/phpmyadmin}
+
+  # ---- caches ----
+  - name: redis
+    title: Redis
+    category: cache
+    vendor: Redis Ltd.
+    source: mixed
+    cpe: [redis:redis]
+    detect:
+      files: [redis.conf]
+      images: [redis, redis/redis-stack, bitnami/redis]
+  - name: memcached
+    title: Memcached
+    category: cache
+    vendor: Memcached project
+    source: open
+    aliases: [memcached]
+    cpe: [memcached:memcached]
+    detect:
+      images: [memcached]
+  - name: varnish
+    title: Varnish Cache
+    category: cache
+    vendor: Varnish Software
+    source: mixed
+    aliases: ["varnish cache", varnish]
+    cpe: [varnish-cache:varnish, varnish-software:varnish_cache]
+    detect:
+      files: [default.vcl]
+      images: [varnish]
+
+  # ---- search ----
+  - name: elasticsearch
+    title: Elasticsearch
+    category: search
+    vendor: Elastic
+    source: mixed
+    cpe: [elastic:elasticsearch]
+    detect:
+      images: [elasticsearch, elasticsearch/elasticsearch, bitnami/elasticsearch]
+    feeds:
+      - {id: elastic-security, type: rss, url: "https://discuss.elastic.co/c/announcements/security-announcements/31.rss"}
+  - name: kibana
+    title: Kibana
+    category: search
+    vendor: Elastic
+    source: mixed
+    aliases: [kibana]
+    cpe: [elastic:kibana]
+    detect:
+      images: [kibana, kibana/kibana]
+  - name: opensearch
+    title: OpenSearch
+    category: search
+    vendor: OpenSearch project (Linux Foundation)
+    source: open
+    aliases: [opensearch]
+    cpe: [amazon:opensearch]
+    detect:
+      images: [opensearchproject/opensearch, opensearchproject/opensearch-dashboards]
+  - name: solr
+    title: Apache Solr
+    category: search
+    vendor: Apache Software Foundation
+    source: open
+    aliases: ["apache solr", solr]
+    cpe: [apache:solr]
+    detect:
+      files: [solrconfig.xml]
+      images: [solr]
+
+  # ---- messaging and data processing ----
+  - name: kafka
+    title: Apache Kafka
+    category: messaging
+    vendor: Apache Software Foundation
+    source: open
+    aliases: ["apache kafka", kafka]
+    excludes: ["kafka-ui", "kafka ui"]
+    cpe: [apache:kafka]
+    detect:
+      images: [apache/kafka, confluentinc/cp-kafka, bitnami/kafka]
+  - name: activemq
+    title: Apache ActiveMQ
+    category: messaging
+    vendor: Apache Software Foundation
+    source: open
+    aliases: [activemq, "apache activemq", "active mq"]
+    cpe: [apache:activemq]
+    detect:
+      images: [apache/activemq-classic, apache/activemq-artemis, rmohr/activemq]
+  - name: rabbitmq
+    title: RabbitMQ
+    category: messaging
+    vendor: Broadcom (VMware)
+    source: open
+    aliases: [rabbitmq]
+    cpe: [vmware:rabbitmq, pivotal_software:rabbitmq]
+    detect:
+      files: [rabbitmq.conf]
+      images: [rabbitmq, bitnami/rabbitmq]
+  - name: zookeeper
+    title: Apache ZooKeeper
+    category: messaging
+    vendor: Apache Software Foundation
+    source: open
+    aliases: [zookeeper, "apache zookeeper"]
+    cpe: [apache:zookeeper]
+    detect:
+      images: [zookeeper, bitnami/zookeeper]
+  - name: airflow
+    title: Apache Airflow
+    category: devops
+    vendor: Apache Software Foundation
+    source: open
+    aliases: ["apache airflow", airflow]
+    excludes: ["provider for"]
+    cpe: [apache:airflow]
+    detect:
+      images: [apache/airflow]
+      packages:
+        - {ecosystem: pypi, name: apache-airflow}
+
+  # ---- web servers ----
+  - name: nginx
+    title: nginx
+    category: web-server
+    vendor: F5
+    source: open
+    cpe: [nginx:nginx]
+    detect:
+      files: [nginx.conf]
+      images: [nginx, nginxinc/nginx-unprivileged, bitnami/nginx]
+  - name: apache-httpd
+    title: Apache HTTP Server
+    category: web-server
+    vendor: Apache Software Foundation
+    source: open
+    aliases: ["apache http server", "apache httpd", httpd]
+    excludes: ["mod_"]
+    cpe: [apache:http_server]
+    detect:
+      files: [httpd.conf, apache2.conf, .htaccess]
+      images: [httpd]
+  - name: iis
+    title: Microsoft Internet Information Services (IIS)
+    category: web-server
+    vendor: Microsoft
+    source: closed
+    aliases: ["internet information services", "microsoft iis", "iis web server"]
+    cpe: [microsoft:internet_information_services]
+    detect:
+      files: [web.config, applicationHost.config]
+  - name: caddy
+    title: Caddy
+    category: web-server
+    vendor: Caddy project
+    source: open
+    aliases: [caddy]
+    cpe: [caddyserver:caddy]
+    detect:
+      files: [Caddyfile]
+      images: [caddy]
+
+  # ---- proxies and gateways ----
+  - name: haproxy
+    title: HAProxy
+    category: proxy
+    vendor: HAProxy Technologies
+    source: mixed
+    aliases: [haproxy]
+    cpe: [haproxy:haproxy]
+    detect:
+      files: [haproxy.cfg]
+      images: [haproxy]
+  - name: traefik
+    title: Traefik
+    category: proxy
+    vendor: Traefik Labs
+    source: open
+    aliases: [traefik]
+    cpe: [traefik:traefik]
+    detect:
+      files: [traefik.yml, traefik.toml]
+      images: [traefik]
+  - name: envoy
+    title: Envoy Proxy
+    category: proxy
+    vendor: Cloud Native Computing Foundation
+    source: open
+    aliases: ["envoy proxy", envoyproxy]
+    cpe: [envoyproxy:envoy]
+    detect:
+      images: [envoyproxy/envoy]
+
+  # ---- CMS ----
+  - name: wordpress
+    title: WordPress
+    category: cms
+    vendor: WordPress.org
+    source: open
+    aliases: [wordpress]
+    excludes: ["plugin for", "theme for", "wordpress plugin", "wordpress theme", plugin, theme, woocommerce]
+    cpe: [wordpress:wordpress]
+    detect:
+      files: [wp-config.php, wp-config-sample.php, wp-login.php]
+      images: [wordpress]
+      packages:
+        - {ecosystem: composer, name: johnpbloch/wordpress}
+        - {ecosystem: composer, name: roots/wordpress}
+    feeds:
+      - {id: wordpress-security, type: rss, url: "https://wordpress.org/news/category/security/feed/"}
+  - name: drupal
+    title: Drupal
+    category: cms
+    vendor: Drupal Association
+    source: open
+    aliases: [drupal]
+    excludes: ["module for", "plugin for", "contributed module", "drupal module", "theme for"]
+    cpe: [drupal:drupal]
+    detect:
+      files: [core.services.yml, drush.yml]
+      images: [drupal]
+      packages:
+        - {ecosystem: composer, name: drupal/core}
+        - {ecosystem: composer, name: drupal/core-recommended}
+    feeds:
+      - {id: drupal-security, type: rss, url: "https://www.drupal.org/security/rss.xml"}
+  - name: joomla
+    title: Joomla
+    category: cms
+    vendor: Open Source Matters
+    source: open
+    aliases: [joomla]
+    excludes: ["extension for", "component for", "plugin for", "module for", "joomla component", "joomla extension"]
+    detect:
+      files: [joomla.xml]
+      images: [joomla]
+  - name: typo3
+    title: TYPO3
+    category: cms
+    vendor: TYPO3 Association
+    source: open
+    aliases: [typo3]
+    excludes: ["extension for", "typo3 extension"]
+    cpe: [typo3:typo3]
+    detect:
+      packages:
+        - {ecosystem: composer, name: typo3/cms-core}
+  - name: nextcloud
+    title: Nextcloud
+    category: collaboration
+    vendor: Nextcloud GmbH
+    source: mixed
+    aliases: [nextcloud]
+    excludes: ["app for", "nextcloud app"]
+    cpe: [nextcloud:nextcloud_server, nextcloud:nextcloud]
+    detect:
+      images: [nextcloud]
+
+  # ---- e-commerce ----
+  - name: magento
+    title: Magento / Adobe Commerce
+    category: ecommerce
+    vendor: Adobe
+    source: mixed
+    aliases: [magento, adobe commerce]
+    cpe: [magento:magento, adobe:commerce]
+    detect:
+      files: [.magento.app.yaml, magento]
+      packages:
+        - {ecosystem: composer, name: magento/product-community-edition}
+        - {ecosystem: composer, name: magento/product-enterprise-edition}
+        - {ecosystem: composer, name: magento/magento2-base}
+  - name: prestashop
+    title: PrestaShop
+    category: ecommerce
+    vendor: PrestaShop SA
+    source: open
+    aliases: [prestashop]
+    excludes: ["module for", "prestashop module", "theme for"]
+    cpe: [prestashop:prestashop]
+    detect:
+      images: [prestashop/prestashop]
+      packages:
+        - {ecosystem: composer, name: prestashop/prestashop}
+  - name: shopware
+    title: Shopware
+    category: ecommerce
+    vendor: shopware AG
+    source: open
+    aliases: [shopware]
+    excludes: ["plugin for", "shopware plugin", "app for"]
+    cpe: [shopware:shopware]
+    detect:
+      files: [shopware.yaml]
+      packages:
+        - {ecosystem: composer, name: shopware/core}
+        - {ecosystem: composer, name: shopware/platform}
+
+  # ---- operating systems ----
+  - name: linux-kernel
+    title: Linux kernel
+    category: os
+    vendor: Linux kernel community
+    source: open
+    aliases: ["linux kernel"]
+    cpe: [linux:linux_kernel]
+  - name: ubuntu
+    title: Ubuntu
+    category: os
+    vendor: Canonical
+    source: open
+    aliases: ["ubuntu linux", ubuntu]
+    cpe: [canonical:ubuntu_linux]
+    detect:
+      images: [ubuntu]
+  - name: debian
+    title: Debian
+    category: os
+    vendor: Debian Project
+    source: open
+    aliases: ["debian linux", debian]
+    cpe: [debian:debian_linux]
+    detect:
+      images: [debian]
+  - name: alpine
+    title: Alpine Linux
+    category: os
+    vendor: Alpine Linux Development Team
+    source: open
+    aliases: ["alpine linux"]
+    cpe: [alpinelinux:alpine_linux]
+    detect:
+      images: [alpine]
+  - name: rhel
+    title: Red Hat Enterprise Linux
+    category: os
+    vendor: Red Hat
+    source: mixed
+    aliases: ["red hat enterprise linux", rhel]
+    cpe: [redhat:enterprise_linux]
+    detect:
+      images: [ubi8, ubi9, redhat/ubi8, redhat/ubi9]
+  - name: windows-server
+    title: Microsoft Windows Server
+    category: os
+    vendor: Microsoft
+    source: closed
+    aliases: ["windows server", "microsoft windows server"]
+    cpe: [microsoft:windows_server_2012, microsoft:windows_server_2016, microsoft:windows_server_2019, microsoft:windows_server_2022, microsoft:windows_server_2025]
+    detect:
+      images: [windows/servercore, windows/nanoserver]
+
+  # ---- hypervisors ----
+  - name: vcenter
+    title: VMware vCenter Server
+    category: hypervisor
+    vendor: Broadcom (VMware)
+    source: closed
+    aliases: ["vcenter server", vcenter]
+    cpe: [vmware:vcenter_server]
+  - name: esxi
+    title: VMware ESXi
+    category: hypervisor
+    vendor: Broadcom (VMware)
+    source: closed
+    aliases: [esxi, "vmware esxi"]
+    cpe: [vmware:esxi]
+
+  # ---- containers and orchestration ----
+  - name: kubernetes
+    title: Kubernetes
+    category: container
+    vendor: Cloud Native Computing Foundation
+    source: open
+    aliases: [kubernetes, k8s, kubelet, kube-apiserver]
+    cpe: [kubernetes:kubernetes]
+    detect:
+      files: [kubeconfig, kustomization.yaml]
+    feeds:
+      - {id: kubernetes-cve, type: rss, url: "https://kubernetes.io/docs/reference/issues-security/official-cve-feed/feed.xml"}
+  - name: docker
+    title: Docker Engine (Moby)
+    category: container
+    vendor: Docker Inc.
+    source: open
+    aliases: ["docker engine", moby, "docker desktop", "docker compose"]
+    cpe: [docker:docker, docker:desktop, mobyproject:moby]
+    detect:
+      files: [Dockerfile, docker-compose.yml, docker-compose.yaml, compose.yaml, compose.yml, .dockerignore]
+      images: [docker]
+    feeds:
+      - {id: docker-security, type: rss, url: "https://docs.docker.com/security/security-announcements/index.xml"}
+  - name: containerd
+    title: containerd
+    category: container
+    vendor: Cloud Native Computing Foundation
+    source: open
+    aliases: [containerd]
+    cpe: [linuxfoundation:containerd]
+  - name: helm
+    title: Helm
+    category: container
+    vendor: Cloud Native Computing Foundation
+    source: open
+    aliases: [helm]
+    excludes: ["helm chart", "chart for"]
+    cpe: [helm:helm]
+    detect:
+      files: [Chart.yaml, helmfile.yaml]
+      images: [alpine/helm]
+
+  # ---- devops and infrastructure as code ----
+  - name: gitlab
+    title: GitLab
+    category: devops
+    vendor: GitLab Inc.
+    source: mixed
+    cpe: [gitlab:gitlab]
+    detect:
+      files: [.gitlab-ci.yml]
+      images: [gitlab/gitlab-ce, gitlab/gitlab-ee, gitlab/gitlab-runner]
+    feeds:
+      - {id: gitlab-releases, type: rss, url: "https://about.gitlab.com/security-releases.xml"}
+  - name: gitea
+    title: Gitea
+    category: devops
+    vendor: Gitea project
+    source: open
+    aliases: [gitea]
+    cpe: [gitea:gitea]
+    detect:
+      images: [gitea/gitea]
+  - name: github-enterprise-server
+    title: GitHub Enterprise Server
+    category: devops
+    vendor: GitHub (Microsoft)
+    source: closed
+    aliases: ["github enterprise server", "github enterprise"]
+    cpe: [github:enterprise_server]
+  - name: bitbucket
+    title: Atlassian Bitbucket (Server and Data Center)
+    category: devops
+    vendor: Atlassian
+    source: closed
+    aliases: ["bitbucket server", "bitbucket data center", "atlassian bitbucket"]
+    cpe: [atlassian:bitbucket, atlassian:bitbucket_server, atlassian:bitbucket_data_center]
+    detect:
+      files: [bitbucket-pipelines.yml]
+      images: [atlassian/bitbucket, atlassian/bitbucket-server]
+  - name: artifactory
+    title: JFrog Artifactory
+    category: devops
+    vendor: JFrog
+    source: mixed
+    aliases: [artifactory, "jfrog artifactory"]
+    cpe: [jfrog:artifactory]
+    detect:
+      images: [jfrog/artifactory-oss, jfrog/artifactory-pro, jfrog/artifactory-jcr]
+  - name: nexus
+    title: Sonatype Nexus Repository
+    category: devops
+    vendor: Sonatype
+    source: mixed
+    aliases: ["nexus repository", "sonatype nexus", "nexus repository manager"]
+    cpe: [sonatype:nexus, sonatype:nexus_repository_manager]
+    detect:
+      images: [sonatype/nexus3]
+  - name: sonarqube
+    title: SonarQube
+    category: devops
+    vendor: SonarSource
+    source: mixed
+    aliases: [sonarqube]
+    excludes: ["plugin for"]
+    cpe: [sonarsource:sonarqube]
+    detect:
+      files: [sonar-project.properties]
+      images: [sonarqube]
+  - name: terraform
+    title: Terraform
+    category: devops
+    vendor: HashiCorp
+    source: mixed
+    aliases: [terraform]
+    excludes: ["terraform provider", "provider for", "terraform module", "module for"]
+    cpe: [hashicorp:terraform]
+    detect:
+      files: [main.tf, versions.tf, .terraform.lock.hcl, terraform.tfstate]
+      images: [hashicorp/terraform]
+      versions:
+        - {file: .terraform-version, pattern: '^v?(\d+(?:\.\d+)*)'}
+        - {file: .tool-versions, pattern: '(?m)^terraform\s+v?(\d+(?:\.\d+)*)'}
+    feeds:
+      - {id: hashicorp-security, type: rss, url: "https://discuss.hashicorp.com/c/security/52.rss"}
+  - name: ansible
+    title: Ansible
+    category: devops
+    vendor: Red Hat
+    source: open
+    aliases: [ansible, "ansible core", "ansible-core", "ansible tower", "ansible automation platform"]
+    excludes: ["ansible collection", "collection for"]
+    cpe: [redhat:ansible, redhat:ansible_automation_platform]
+    detect:
+      files: [ansible.cfg]
+      packages:
+        - {ecosystem: pypi, name: ansible}
+        - {ecosystem: pypi, name: ansible-core}
+  - name: vault
+    title: HashiCorp Vault
+    category: security
+    vendor: HashiCorp
+    source: mixed
+    aliases: ["hashicorp vault", "vault enterprise"]
+    cpe: [hashicorp:vault]
+    detect:
+      images: [hashicorp/vault, vault]
+  - name: consul
+    title: HashiCorp Consul
+    category: network
+    vendor: HashiCorp
+    source: mixed
+    aliases: [consul, "hashicorp consul"]
+    cpe: [hashicorp:consul]
+    detect:
+      images: [hashicorp/consul, consul]
+  - name: argocd
+    title: Argo CD
+    category: ci-cd
+    vendor: Cloud Native Computing Foundation
+    source: open
+    aliases: ["argo cd", argocd, argo-cd]
+    cpe: [argoproj:argo_cd]
+    detect:
+      images: [argoproj/argocd]
+      packages:
+        - {ecosystem: go, name: github.com/argoproj/argo-cd}
+  - name: minio
+    title: MinIO
+    category: storage
+    vendor: MinIO Inc.
+    source: open
+    aliases: [minio]
+    cpe: [minio:minio]
+    detect:
+      images: [minio/minio]
+
+  # ---- CI/CD ----
+  - name: jenkins
+    title: Jenkins
+    category: ci-cd
+    vendor: Jenkins project
+    source: open
+    aliases: [jenkins]
+    excludes: ["plugin for", "jenkins plugin"]
+    cpe: [jenkins:jenkins]
+    detect:
+      files: [Jenkinsfile]
+      images: [jenkins/jenkins, jenkins/inbound-agent, jenkins/jnlp-slave]
+    feeds:
+      - {id: jenkins-security, type: rss, url: "https://www.jenkins.io/security/advisories/rss.xml"}
+  - name: teamcity
+    title: JetBrains TeamCity
+    category: ci-cd
+    vendor: JetBrains
+    source: closed
+    aliases: [teamcity]
+    excludes: ["plugin for"]
+    cpe: [jetbrains:teamcity]
+    detect:
+      images: [jetbrains/teamcity-server, jetbrains/teamcity-agent]
+    feeds:
+      - {id: teamcity-security, type: rss, url: "https://blog.jetbrains.com/teamcity/category/security/feed/"}
+  - name: bamboo
+    title: Atlassian Bamboo
+    category: ci-cd
+    vendor: Atlassian
+    source: closed
+    aliases: ["atlassian bamboo", "bamboo data center", "bamboo server"]
+    cpe: [atlassian:bamboo]
+    detect:
+      images: [atlassian/bamboo, atlassian/bamboo-server]
+
+  # ---- monitoring ----
+  - name: grafana
+    title: Grafana
+    category: monitoring
+    vendor: Grafana Labs
+    source: mixed
+    aliases: [grafana]
+    excludes: ["plugin for", "grafana plugin"]
+    cpe: [grafana:grafana]
+    detect:
+      images: [grafana/grafana, grafana/grafana-oss, grafana/grafana-enterprise]
+  - name: prometheus
+    title: Prometheus
+    category: monitoring
+    vendor: Cloud Native Computing Foundation
+    source: open
+    aliases: [prometheus]
+    excludes: [exporter]
+    cpe: [prometheus:prometheus]
+    detect:
+      files: [prometheus.yml]
+      images: [prom/prometheus]
+  - name: zabbix
+    title: Zabbix
+    category: monitoring
+    vendor: Zabbix SIA
+    source: open
+    aliases: [zabbix]
+    cpe: [zabbix:zabbix]
+    detect:
+      images: [zabbix/zabbix-server-mysql, zabbix/zabbix-server-pgsql, zabbix/zabbix-web-nginx-mysql, zabbix/zabbix-agent]
+  - name: nagios
+    title: Nagios
+    category: monitoring
+    vendor: Nagios Enterprises
+    source: mixed
+    aliases: ["nagios xi", "nagios core", nagios]
+    excludes: ["plugin for", "nagios plugin"]
+    cpe: [nagios:nagios_xi, nagios:nagios]
+    detect:
+      images: [jasonrivers/nagios]
+  - name: splunk
+    title: Splunk Enterprise
+    category: monitoring
+    vendor: Splunk (Cisco)
+    source: closed
+    aliases: [splunk, "splunk enterprise", "splunk cloud"]
+    excludes: ["add-on", "app for"]
+    cpe: [splunk:splunk]
+    detect:
+      images: [splunk/splunk]
+    feeds:
+      - {id: splunk-security, type: rss, url: "https://advisory.splunk.com/feed.xml"}
+  - name: solarwinds-orion
+    title: SolarWinds Orion Platform
+    category: monitoring
+    vendor: SolarWinds
+    source: closed
+    aliases: ["solarwinds orion", "orion platform", "solarwinds web help desk"]
+    cpe: [solarwinds:orion_platform, solarwinds:web_help_desk]
+
+  # ---- identity ----
+  - name: keycloak
+    title: Keycloak
+    category: identity
+    vendor: Red Hat
+    source: open
+    aliases: [keycloak]
+    cpe: [redhat:keycloak]
+    detect:
+      images: [keycloak/keycloak, jboss/keycloak]
+      packages:
+        - {ecosystem: maven, name: "org.keycloak:keycloak-core"}
+  - name: openldap
+    title: OpenLDAP
+    category: identity
+    vendor: OpenLDAP Foundation
+    source: open
+    aliases: [openldap, slapd]
+    cpe: [openldap:openldap]
+    detect:
+      files: [slapd.conf]
+      images: [osixia/openldap, bitnami/openldap]
+  - name: active-directory
+    title: Microsoft Active Directory
+    category: identity
+    vendor: Microsoft
+    source: closed
+    aliases: ["active directory", "active directory federation services", "active directory certificate services"]
+    cpe: [microsoft:active_directory_federation_services, microsoft:active_directory]
+
+  # ---- collaboration ----
+  - name: confluence
+    title: Atlassian Confluence
+    category: collaboration
+    vendor: Atlassian
+    source: closed
+    aliases: [confluence, "confluence server", "confluence data center"]
+    excludes: ["macro for", "app for", "plugin for"]
+    cpe: [atlassian:confluence_data_center, atlassian:confluence_server, atlassian:confluence]
+    detect:
+      images: [atlassian/confluence, atlassian/confluence-server]
+  - name: jira
+    title: Atlassian Jira
+    category: collaboration
+    vendor: Atlassian
+    source: closed
+    aliases: ["jira software", "jira service management", "jira service desk", "atlassian jira", "jira data center", "jira server"]
+    excludes: ["app for", "plugin for"]
+    cpe: [atlassian:jira, atlassian:jira_data_center, atlassian:jira_server, atlassian:jira_service_management]
+    detect:
+      images: [atlassian/jira-software, atlassian/jira-servicemanagement]
+  - name: sharepoint
+    title: Microsoft SharePoint Server
+    category: collaboration
+    vendor: Microsoft
+    source: closed
+    aliases: ["sharepoint server", "microsoft sharepoint", sharepoint]
+    excludes: ["web part for", "app for"]
+    cpe: [microsoft:sharepoint_server, microsoft:sharepoint_enterprise_server, microsoft:sharepoint_foundation]
+  - name: microsoft-office
+    title: Microsoft Office
+    category: collaboration
+    vendor: Microsoft
+    source: closed
+    aliases: ["microsoft office", "microsoft word", "microsoft excel", "microsoft outlook"]
+    cpe: [microsoft:office, microsoft:outlook, microsoft:word, microsoft:excel]
+  - name: manageengine
+    title: Zoho ManageEngine
+    category: other
+    vendor: Zoho
+    source: closed
+    aliases: [manageengine]
+
+  # ---- mail ----
+  - name: exchange
+    title: Microsoft Exchange Server
+    category: mail
+    vendor: Microsoft
+    source: closed
+    aliases: ["exchange server", "microsoft exchange", "microsoft exchange server"]
+    cpe: [microsoft:exchange_server]
+  - name: zimbra
+    title: Zimbra Collaboration Suite
+    category: mail
+    vendor: Synacor (Zimbra)
+    source: mixed
+    aliases: [zimbra, "zimbra collaboration suite"]
+    excludes: ["zimlet"]
+    cpe: [synacor:zimbra_collaboration_suite, zimbra:zimbra_collaboration_suite]
+  - name: postfix
+    title: Postfix
+    category: mail
+    vendor: Wietse Venema
+    source: open
+    aliases: [postfix]
+    cpe: [postfix:postfix]
+    detect:
+      files: [main.cf]
+      images: [boky/postfix]
+  - name: exim
+    title: Exim
+    category: mail
+    vendor: University of Cambridge
+    source: open
+    aliases: [exim]
+    cpe: [exim:exim]
+    detect:
+      files: [exim4.conf]
+  - name: dovecot
+    title: Dovecot
+    category: mail
+    vendor: Open-Xchange
+    source: mixed
+    aliases: [dovecot]
+    cpe: [dovecot:dovecot]
+    detect:
+      files: [dovecot.conf]
+      images: [dovecot/dovecot]
+  - name: roundcube
+    title: Roundcube Webmail
+    category: mail
+    vendor: Roundcube project
+    source: open
+    aliases: [roundcube, "roundcube webmail"]
+    excludes: ["plugin for"]
+    cpe: [roundcube:webmail]
+    detect:
+      images: [roundcube/roundcubemail]
+      packages:
+        - {ecosystem: composer, name: roundcube/roundcubemail}
+
+  # ---- ERP ----
+  - name: sap-netweaver
+    title: SAP NetWeaver
+    category: erp
+    vendor: SAP
+    source: closed
+    aliases: ["sap netweaver", "netweaver application server", "netweaver as java", "netweaver as abap", "netweaver visual composer"]
+    cpe: [sap:netweaver, sap:netweaver_application_server_java, sap:netweaver_application_server_abap, sap:netweaver_as_abap]
+  - name: oracle-ebs
+    title: Oracle E-Business Suite
+    category: erp
+    vendor: Oracle
+    source: closed
+    aliases: ["oracle e-business suite", "e-business suite"]
+    cpe: [oracle:e-business_suite]
+  - name: odoo
+    title: Odoo
+    category: erp
+    vendor: Odoo SA
+    source: mixed
+    aliases: [odoo]
+    excludes: ["module for", "odoo module"]
+    cpe: [odoo:odoo]
+    detect:
+      files: [odoo.conf]
+      images: [odoo]
+  - name: ofbiz
+    title: Apache OFBiz
+    category: erp
+    vendor: Apache Software Foundation
+    source: open
+    aliases: [ofbiz, "apache ofbiz"]
+    cpe: [apache:ofbiz]
+
+  # ---- storage and file transfer ----
+  - name: samba
+    title: Samba
+    category: storage
+    vendor: Samba Team
+    source: open
+    aliases: [samba]
+    cpe: [samba:samba]
+    detect:
+      files: [smb.conf]
+      images: [dperson/samba, servercontainers/samba]
+  - name: veeam
+    title: Veeam Backup & Replication
+    category: storage
+    vendor: Veeam Software
+    source: closed
+    aliases: ["veeam backup & replication", "veeam backup and replication", "veeam backup", "veeam one", "veeam service provider console"]
+    cpe: [veeam:backup_and_replication, veeam:one]
+  - name: moveit
+    title: Progress MOVEit
+    category: storage
+    vendor: Progress Software
+    source: closed
+    aliases: ["moveit transfer", "moveit automation", "progress moveit", moveit]
+    cpe: [progress:moveit_transfer, ipswitch:moveit_transfer, progress:moveit_automation]
+
+  # ---- network and DNS ----
+  - name: bind
+    title: ISC BIND
+    category: network
+    vendor: Internet Systems Consortium
+    source: open
+    aliases: ["isc bind", bind9, "bind 9"]
+    cpe: [isc:bind]
+    detect:
+      files: [named.conf]
+      images: [internetsystemsconsortium/bind9]
+  - name: cisco-ios-xe
+    title: Cisco IOS XE
+    category: network
+    vendor: Cisco
+    source: closed
+    aliases: ["ios xe", "cisco ios xe"]
+    cpe: [cisco:ios_xe]
+    feeds:
+      - {id: cisco-psirt, type: rss, url: "https://sec.cloudapps.cisco.com/security/center/psirtrss20/CiscoSecurityAdvisory.xml"}
+  - name: cisco-ios
+    title: Cisco IOS
+    category: network
+    vendor: Cisco
+    source: closed
+    aliases: ["cisco ios software"]
+    cpe: [cisco:ios]
+  - name: cisco-nxos
+    title: Cisco NX-OS
+    category: network
+    vendor: Cisco
+    source: closed
+    aliases: [nx-os, "cisco nx-os"]
+    cpe: [cisco:nx-os]
+  - name: junos
+    title: Juniper Junos OS
+    category: network
+    vendor: Juniper Networks
+    source: closed
+    aliases: [junos, "junos os", "junos os evolved"]
+    cpe: [juniper:junos, juniper:junos_os_evolved]
+  - name: f5-bigip
+    title: F5 BIG-IP
+    category: network
+    vendor: F5
+    source: closed
+    aliases: [big-ip, "f5 big-ip", bigip]
+    cpe: [f5:big-ip, f5:big-ip_local_traffic_manager, f5:big-ip_access_policy_manager, f5:big-ip_advanced_firewall_manager, f5:big-ip_application_security_manager, f5:big-ip_advanced_web_application_firewall, f5:big-ip_domain_name_system, f5:big-ip_global_traffic_manager, f5:big-ip_next]
+  - name: netscaler
+    title: Citrix NetScaler (ADC and Gateway)
+    category: network
+    vendor: Cloud Software Group (Citrix)
+    source: closed
+    aliases: [netscaler, "citrix adc", "citrix gateway", "netscaler adc", "netscaler gateway"]
+    cpe: [citrix:netscaler_application_delivery_controller, citrix:application_delivery_controller, citrix:netscaler_gateway, citrix:gateway]
+
+  # ---- firewalls ----
+  - name: fortios
+    title: Fortinet FortiOS
+    category: firewall
+    vendor: Fortinet
+    source: closed
+    aliases: [fortios, fortigate]
+    cpe: [fortinet:fortios]
+    feeds:
+      - {id: fortinet-psirt, type: rss, url: "https://filestore.fortinet.com/fortiguard/rss/ir.xml"}
+  - name: fortiweb
+    title: Fortinet FortiWeb
+    category: firewall
+    vendor: Fortinet
+    source: closed
+    aliases: [fortiweb]
+    cpe: [fortinet:fortiweb]
+  - name: fortimanager
+    title: Fortinet FortiManager
+    category: firewall
+    vendor: Fortinet
+    source: closed
+    aliases: [fortimanager, fortianalyzer]
+    cpe: [fortinet:fortimanager, fortinet:fortianalyzer]
+  - name: forticlient-ems
+    title: Fortinet FortiClient EMS
+    category: security
+    vendor: Fortinet
+    source: closed
+    aliases: [forticlientems, "forticlient ems", "forticlient enterprise management server"]
+    cpe: [fortinet:forticlient_enterprise_management_server, fortinet:forticlientems]
+  - name: pan-os
+    title: Palo Alto Networks PAN-OS
+    category: firewall
+    vendor: Palo Alto Networks
+    source: closed
+    aliases: [pan-os, panos, globalprotect]
+    cpe: [paloaltonetworks:pan-os]
+    feeds:
+      - {id: palo-alto, type: rss, url: "https://security.paloaltonetworks.com/rss.xml"}
+  - name: cisco-asa
+    title: Cisco ASA
+    category: firewall
+    vendor: Cisco
+    source: closed
+    aliases: ["cisco asa", "adaptive security appliance", "cisco adaptive security appliance"]
+    cpe: [cisco:adaptive_security_appliance_software, cisco:adaptive_security_appliance]
+  - name: cisco-ftd
+    title: Cisco Secure Firewall Threat Defense (FTD)
+    category: firewall
+    vendor: Cisco
+    source: closed
+    aliases: ["firepower threat defense", "secure firewall threat defense", "cisco ftd"]
+    cpe: [cisco:firepower_threat_defense, cisco:secure_firewall_threat_defense]
+  - name: sonicwall
+    title: SonicWall SonicOS and SMA
+    category: firewall
+    vendor: SonicWall
+    source: closed
+    aliases: [sonicos, "sonicwall sonicos", sonicwall, "sonicwall sma"]
+    cpe: [sonicwall:sonicos, sonicwall:sma100_firmware, sonicwall:sma_100_firmware, sonicwall:sma_100]
+  - name: checkpoint
+    title: Check Point Security Gateway
+    category: firewall
+    vendor: Check Point Software Technologies
+    source: closed
+    aliases: ["check point", "check point security gateway", "quantum security gateway", "checkpoint security gateway"]
+    cpe: [checkpoint:quantum_security_gateway, checkpoint:security_gateway, checkpoint:gaia_os, checkpoint:quantum_security_gateway_firmware]
+  - name: sophos-firewall
+    title: Sophos Firewall
+    category: firewall
+    vendor: Sophos
+    source: closed
+    aliases: ["sophos firewall", "sophos xg firewall", "sophos xg"]
+    cpe: [sophos:firewall, sophos:xg_firewall, sophos:sfos]
+
+  # ---- VPN and remote access ----
+  - name: ivanti-connect-secure
+    title: Ivanti Connect Secure
+    category: vpn
+    vendor: Ivanti
+    source: closed
+    aliases: ["ivanti connect secure", "pulse connect secure", "ivanti policy secure", "pulse secure"]
+    cpe: [ivanti:connect_secure, pulsesecure:pulse_connect_secure, ivanti:policy_secure]
+    feeds:
+      - {id: ivanti-security, type: rss, url: "https://www.ivanti.com/blog/topics/security-advisory/feed"}
+  - name: ivanti-epmm
+    title: Ivanti Endpoint Manager Mobile (EPMM)
+    category: security
+    vendor: Ivanti
+    source: closed
+    aliases: ["ivanti endpoint manager mobile", "ivanti epmm", "mobileiron core", mobileiron]
+    cpe: [ivanti:endpoint_manager_mobile, mobileiron:core]
+  - name: openvpn
+    title: OpenVPN
+    category: vpn
+    vendor: OpenVPN Inc.
+    source: open
+    aliases: [openvpn]
+    cpe: [openvpn:openvpn]
+    detect:
+      images: [kylemanna/openvpn]
+
+  # ---- security tooling ----
+  - name: openssl
+    title: OpenSSL
+    category: security
+    vendor: OpenSSL Software Foundation
+    source: open
+    aliases: [openssl]
+    cpe: [openssl:openssl]
+  - name: openssh
+    title: OpenSSH
+    category: security
+    vendor: OpenBSD Project
+    source: open
+    aliases: [openssh]
+    cpe: [openbsd:openssh]
+  - name: curl
+    title: curl and libcurl
+    category: other
+    vendor: Daniel Stenberg
+    source: open
+    aliases: [curl, libcurl]
+    excludes: ["php-curl", "pycurl"]
+    cpe: [haxx:curl, haxx:libcurl, curl:curl]

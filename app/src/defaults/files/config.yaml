@@ -29,3 +29,9 @@ slack:
 # access:
 #   alice: {projects: [shop], write: true}
 #   bob:   {projects: ["*"], write: false}
+
+# A static status page (no scripts, no external requests) the daemon rewrites
+# after every cycle. It lists your exposure: keep it where only your team reads.
+# dashboard:
+#   enabled: true
+#   file: dashboard.html     # default: inside alerts_dir

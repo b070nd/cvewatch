@@ -87,46 +87,70 @@ func pick(first bool, a, b string) string {
 	return b
 }
 
-func newClient(cfg *config.Bundle) *httpx.Client {
-	h := cfg.HTTP
-	return httpx.New(httpx.Options{
-		UserAgent: h.UserAgent, Timeout: h.Timeout, Retries: h.Retries, RetryDelay: h.RetryDelay,
-		Rate: h.Rate, HostRates: h.HostRates, MaxBody: h.MaxBody,
-		Threshold429: h.Threshold429, Cooldown429: h.Cooldown429, AllowPrivate: h.AllowPrivate,
-	})
-}
+func newClient(cfg *config.Bundle) *httpx.Client { return cfg.HTTP.Client() }
 
 // cpeName is a lowercase vendor:product pair as NVD spells it.
 var cpeName = regexp.MustCompile(`^[a-z0-9._+~\-]+:[a-z0-9._+~\-]+$`)
+
+// declaredTechs lists, sorted, the technologies any project or environment
+// declares. Only these are judged, so only these are worth checking: the
+// shipped catalog is verified by the project's own tests.
+func declaredTechs(cfg *config.Bundle) []model.Tech {
+	seen := map[string]bool{}
+	for _, p := range cfg.Projects {
+		for _, t := range p.Techs {
+			seen[strings.ToLower(t.Name)] = true
+		}
+		for _, ec := range p.Environments {
+			for name := range ec.Techs {
+				seen[strings.ToLower(name)] = true
+			}
+		}
+	}
+	var out []model.Tech
+	for _, t := range cfg.Techs {
+		if seen[strings.ToLower(t.Name)] {
+			out = append(out, t)
+		}
+	}
+	return out
+}
 
 func checkTechs(ctx context.Context, r *Report, cfg *config.Bundle, g feeds.Getter) {
 	if len(cfg.Techs) == 0 {
 		r.add(gTechs, "techs", Warn, "no techs are configured, so nothing can match")
 		return
 	}
-	var textOnly, distinct []string
 	bad, names := 0, 0
 	for _, t := range cfg.Techs {
-		if len(t.CPE) == 0 {
-			textOnly = append(textOnly, t.Name)
-		}
 		for _, c := range t.CPE {
 			names++
 			if !cpeName.MatchString(c) {
 				bad++
 				r.add(gTechs, t.Name, Fail, "cpe %q must look like vendor:product, lowercase, with no wildcards", c)
-				continue
-			}
-			if !slices.Contains(distinct, c) {
-				distinct = append(distinct, c)
 			}
 		}
 	}
 	if bad == 0 {
 		r.add(gTechs, "names", OK, "%d techs, %d cpe names are well formed", len(cfg.Techs), names)
 	}
+	declared := declaredTechs(cfg)
+	if len(declared) == 0 {
+		r.add(gTechs, "declared", Warn, "no project declares a technology, so only package lockfiles can match")
+	}
+	var textOnly, distinct []string
+	for _, t := range declared {
+		if len(t.CPE) == 0 {
+			textOnly = append(textOnly, t.Name)
+		}
+		for _, c := range t.CPE {
+			if cpeName.MatchString(c) && !slices.Contains(distinct, c) {
+				distinct = append(distinct, c)
+			}
+		}
+	}
 	if len(textOnly) > 0 {
-		r.add(gTechs, "text-only techs", Skip, "no cpe names, matched by words only: %s", strings.Join(textOnly, ", "))
+		r.add(gTechs, "text-only techs", Skip, "declared techs with no cpe names, matched by words only: %s", strings.Join(textOnly, ", "))
 	}
 	if g == nil {
 		r.add(gTechs, "NVD product names", Skip, "not checked in an offline run")
@@ -282,21 +306,17 @@ func checkAudit(r *Report, cfg *config.Bundle) {
 
 func checkNotify(r *Report, cfg *config.Bundle) {
 	active := 0
-	channel := func(name string, c channelState) {
+	for _, e := range notify.FromConfig(cfg) {
 		switch {
-		case !c.configured:
-			r.add(gNotify, name, Skip, "not configured%s", c.hint)
-		case c.err != nil:
-			r.add(gNotify, name, Fail, "%s", c.err)
+		case !e.Configured:
+			r.add(gNotify, e.Name, Skip, "not configured%s", e.Hint)
+		case e.Err != nil:
+			r.add(gNotify, e.Name, Fail, "%s", e.Err)
 		default:
 			active++
-			r.add(gNotify, name, OK, "active")
+			r.add(gNotify, e.Name, OK, "active")
 		}
 	}
-
-	channel("slack", slackState(cfg))
-	channel("webhook", webhookState(cfg))
-	channel("email", emailState(cfg))
 
 	if active == 0 {
 		r.add(gNotify, "channels", Warn, "no notification channel is active: findings are only listed, nobody is alerted")
@@ -304,61 +324,6 @@ func checkNotify(r *Report, cfg *config.Bundle) {
 			r.add(gNotify, "digest", Warn, "a digest is set for %s but no channel is active to send it", at)
 		}
 	}
-}
-
-// channelState is what one channel's configuration amounts to. Its error never
-// holds a URL or secret: the notify constructors keep those out of messages.
-type channelState struct {
-	configured bool
-	hint       string
-	err        error
-}
-
-func slackState(cfg *config.Bundle) channelState {
-	name := cfg.Slack.WebhookEnv
-	raw := os.Getenv(name)
-	if name == "" || raw == "" {
-		return channelState{hint: envHint(name)}
-	}
-	_, err := notify.NewSlack(raw)
-	return channelState{configured: true, err: err}
-}
-
-func webhookState(cfg *config.Bundle) channelState {
-	w := cfg.Notify.Webhook
-	raw := os.Getenv(w.URLEnv)
-	if w.URLEnv == "" || raw == "" {
-		return channelState{hint: envHint(w.URLEnv)}
-	}
-	secret := ""
-	if w.SecretEnv != "" {
-		secret = os.Getenv(w.SecretEnv)
-	}
-	_, err := notify.NewWebhook(raw, secret, w.AllowPrivate)
-	return channelState{configured: true, err: err}
-}
-
-func emailState(cfg *config.Bundle) channelState {
-	e := cfg.Notify.Email
-	if e.Host == "" {
-		return channelState{hint: " (notify.email.host is empty)"}
-	}
-	c := notify.EmailConfig{Host: e.Host, Port: e.Port, From: e.From, To: e.To}
-	if e.UsernameEnv != "" {
-		c.Username = os.Getenv(e.UsernameEnv)
-	}
-	if e.PasswordEnv != "" {
-		c.Password = os.Getenv(e.PasswordEnv)
-	}
-	_, err := notify.NewEmail(c)
-	return channelState{configured: true, err: err}
-}
-
-func envHint(name string) string {
-	if name == "" {
-		return ""
-	}
-	return fmt.Sprintf(" (environment variable %s is not set)", name)
 }
 
 func checkPolicy(r *Report, cfg *config.Bundle) {

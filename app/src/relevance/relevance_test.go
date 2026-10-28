@@ -8,7 +8,17 @@ import (
 	"github.com/b070nd/cvewatch/app/src/model"
 )
 
-func techsOf(j *Judge, it model.Item) []string { return j.Judge(it, nil).Techs }
+// declaring gives a judge one target that runs every technology it knows, so
+// tests about matching are not filtered by "who runs it".
+func declaring(j *Judge) []Target {
+	var techs []model.ProjectTech
+	for _, n := range j.Names() {
+		techs = append(techs, model.ProjectTech{Name: n})
+	}
+	return []Target{{Project: "p", Env: model.EnvProd, Techs: techs}}
+}
+
+func techsOf(j *Judge, it model.Item) []string { return j.Judge(it, declaring(j)).Techs }
 
 func TestWholeWordOnly(t *testing.T) {
 	j := New([]model.Tech{
@@ -33,7 +43,7 @@ func TestWholeWordOnly(t *testing.T) {
 
 func TestExcludesAndTitleOnlyExplainThemselves(t *testing.T) {
 	j := New([]model.Tech{{Name: "php", Excludes: []string{"wordpress", "plugin for"}}})
-	v := j.Judge(model.Item{Title: "Gallery plugin for WordPress, PHP code injection"}, nil)
+	v := j.Judge(model.Item{Title: "Gallery plugin for WordPress, PHP code injection"}, declaring(j))
 	if v.Relevant() || len(v.Notes) != 1 || !strings.Contains(v.Notes[0], "excluded") {
 		t.Fatalf("exclude must block and say why: %+v", v)
 	}
@@ -88,7 +98,7 @@ func TestCPEDataBeatsTextMentions(t *testing.T) {
 func TestStructuredOnlyWaitsForProductData(t *testing.T) {
 	j := New([]model.Tech{{Name: "php", CPE: []string{"php:php"}}, {Name: "nginx"}})
 	fresh := model.Item{Title: "CVE-2026-1: flaw in a CMS written in PHP and served by nginx", StructuredOnly: true}
-	v := j.Judge(fresh, nil)
+	v := j.Judge(fresh, declaring(j))
 	if len(v.Techs) != 1 || v.Techs[0] != "nginx" || len(v.Notes) != 1 {
 		t.Fatalf("php (has cpe) must wait, nginx (no cpe) still matches by text: %+v", v)
 	}
@@ -192,5 +202,27 @@ func TestTargetFindFollowsInventoryChanges(t *testing.T) {
 	}
 	if _, ok := tg.Find(model.Installed{Name: "gone", Ecosystem: "npm", Via: "package"}); ok {
 		t.Fatal("removed packages are not found")
+	}
+}
+
+func TestOnlyDeclaredTechnologiesAreJudged(t *testing.T) {
+	j := New([]model.Tech{{Name: "php"}, {Name: "redis"}})
+	it := model.Item{Title: "PHP and Redis flaws"}
+	run := []Target{{Project: "shop", Env: model.EnvProd, Techs: []model.ProjectTech{{Name: "redis", Version: "7.2"}}}}
+	if v := j.Judge(it, run); len(v.Techs) != 1 || v.Techs[0] != "redis" {
+		t.Fatalf("php is in the catalog but nobody runs it: %+v", v.Techs)
+	}
+	if v := j.Judge(it, nil); v.Relevant() {
+		t.Fatal("with nothing declared nothing can be relevant")
+	}
+}
+
+func TestTechSchemeOrdersItsVersions(t *testing.T) {
+	j := New([]model.Tech{{Name: "pyapp", Scheme: "pypi", CPE: []string{"acme:pyapp"}}})
+	it := nvdItem("acme:pyapp", model.Range{Max: "1.0", MaxExcl: true})
+	tg := []Target{{Project: "p", Env: model.EnvProd, Techs: []model.ProjectTech{{Name: "pyapp", Version: "1.0.post1"}}}}
+	// PEP 440: 1.0.post1 is after 1.0, so it is outside "< 1.0"; the default scheme would call it a pre-release.
+	if v := j.Judge(it, tg); len(v.Matches) != 1 || v.Matches[0].Applies != model.AppNotAffected || v.Matches[0].Installed[0].Ecosystem != "pypi" {
+		t.Fatalf("scheme must be used for tech versions: %+v", v.Matches)
 	}
 }

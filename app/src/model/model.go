@@ -131,10 +131,40 @@ type Source struct {
 // an item carries structured CPE data, those names decide the match instead
 // of free text, which removes most "mentioned in passing" noise.
 type Tech struct {
-	Name     string   `yaml:"name"`
+	Name     string   `yaml:"name"` // short key used in project files: php, fortios
 	Aliases  []string `yaml:"aliases"`
 	Excludes []string `yaml:"excludes"`
 	CPE      []string `yaml:"cpe"`
+
+	// Catalog metadata. Only Name is needed for matching; the rest lets
+	// setup offer the technology, recognise it in a repository and attach
+	// its vendor's advisory feed.
+	Title    string   `yaml:"title"`    // display name: "Fortinet FortiOS"
+	Category string   `yaml:"category"` // see package catalog for the values
+	Vendor   string   `yaml:"vendor"`
+	Source   string   `yaml:"source"`   // open, closed or mixed
+	Scheme   string   `yaml:"scheme"`   // version ordering: empty (dotted numbers, semver-like), pypi, maven or go
+	Detect   Detect   `yaml:"detect"`   // how to recognise it in a repository
+	Feeds    []Source `yaml:"feeds"`    // vendor advisory feeds that switch on with the technology
+	Disabled bool     `yaml:"disabled"` // in a user catalog: drop the shipped entry of this name
+}
+
+// Detect says how a technology shows up in a repository.
+type Detect struct {
+	Files    []string      `yaml:"files"`    // marker file names, e.g. wp-config.php
+	Images   []string      `yaml:"images"`   // container image names without registry or tag, e.g. postgres
+	Packages []PackageHint `yaml:"packages"` // lockfile packages that imply it, e.g. composer magento/product-community-edition
+	Versions []VersionHint `yaml:"versions"` // where its version can be read
+}
+
+type PackageHint struct {
+	Ecosystem string `yaml:"ecosystem"`
+	Name      string `yaml:"name"`
+}
+
+type VersionHint struct {
+	File    string `yaml:"file"`    // base name, e.g. .nvmrc
+	Pattern string `yaml:"pattern"` // regular expression with one capture group holding the version
 }
 
 func (t Tech) Terms() []string {
@@ -495,3 +525,49 @@ func (f Finding) Delivered(channel string) bool {
 }
 
 func (f Finding) Key() string { return f.VulnID + "|" + f.Project + "|" + string(f.Env) }
+
+// ---- health of the tool itself ----
+
+// CycleRecord is what one refresh cycle did.
+type CycleRecord struct {
+	Started    time.Time `json:"started"`
+	Finished   time.Time `json:"finished"`
+	Items      int       `json:"items"`
+	New        int       `json:"new"`
+	Merged     int       `json:"merged"`
+	Findings   int       `json:"findings"`
+	Reconciled int       `json:"reconciled"`
+	Alerted    int       `json:"alerted"`
+	Digests    int       `json:"digests"`
+	Failed     int       `json:"failed_sources"`
+	Err        string    `json:"err,omitempty"`
+}
+
+// SourceHealth is what we know about one feed's recent attempts.
+type SourceHealth struct {
+	Type        string    `json:"type,omitempty"`
+	LastAttempt time.Time `json:"last_attempt"`
+	LastSuccess time.Time `json:"last_success,omitempty"`
+	Failures    int       `json:"failures"` // consecutive failed attempts
+	LastError   string    `json:"last_error,omitempty"`
+	Items       int       `json:"items"`
+}
+
+// ChannelHealth is the same for a notification channel.
+type ChannelHealth struct {
+	LastAttempt time.Time `json:"last_attempt"`
+	LastSuccess time.Time `json:"last_success,omitempty"`
+	Failures    int       `json:"failures"`
+	LastError   string    `json:"last_error,omitempty"`
+}
+
+// Heartbeat is written by the daemon after every cycle, so any other process
+// can tell whether it is still alive and when it should run next.
+type Heartbeat struct {
+	Mode      string        `json:"mode"` // daemon
+	Started   time.Time     `json:"started"`
+	LastCycle time.Time     `json:"last_cycle"`
+	NextRun   time.Time     `json:"next_run"`
+	Interval  time.Duration `json:"interval"`
+	PID       int           `json:"pid"`
+}
