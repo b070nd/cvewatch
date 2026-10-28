@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,7 +40,10 @@ type fake struct {
 	st     store.Storage
 	reads  int
 	writes int
+	active atomic.Int32 // backend calls started and not yet finished
 }
+
+func (f *fake) busy() bool { return f.active.Load() > 0 }
 
 func (f *fake) session(write bool) (*ops.Session, error) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -58,6 +62,8 @@ func (f *fake) session(write bool) (*ops.Session, error) {
 }
 
 func (f *fake) Read(fn func(*ops.Session) error) error {
+	f.active.Add(1)
+	defer f.active.Add(-1)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reads++
@@ -70,6 +76,8 @@ func (f *fake) Read(fn func(*ops.Session) error) error {
 }
 
 func (f *fake) Write(fn func(*ops.Session) error) error {
+	f.active.Add(1)
+	defer f.active.Add(-1)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.writes++
@@ -166,20 +174,32 @@ func (d *driver) run(cmd tea.Cmd) {
 	}
 	ch := make(chan tea.Msg, 1)
 	go func() { ch <- cmd() }()
-	select {
-	case msg := <-ch:
-		switch msg := msg.(type) {
-		case nil:
-		case tea.BatchMsg:
-			for _, c := range msg {
-				d.run(c)
+	start := time.Now()
+	for {
+		select {
+		case msg := <-ch:
+			switch msg := msg.(type) {
+			case nil:
+			case tea.BatchMsg:
+				for _, c := range msg {
+					d.run(c)
+				}
+			case tea.QuitMsg:
+				d.quit = true
+			default:
+				d.send(msg)
 			}
-		case tea.QuitMsg:
-			d.quit = true
-		default:
-			d.send(msg)
+			return
+		case <-time.After(20 * time.Millisecond):
+			// A backend call still running is real work on a slow machine;
+			// anything else that takes this long is a timer.
+			if f, ok := d.b.(*fake); ok && f.busy() {
+				continue
+			}
+			if time.Since(start) > 400*time.Millisecond {
+				return
+			}
 		}
-	case <-time.After(400 * time.Millisecond):
 	}
 }
 

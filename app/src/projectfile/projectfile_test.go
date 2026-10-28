@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -539,7 +540,7 @@ func TestWrite(t *testing.T) {
 			}
 		}
 	}
-	if info, err := os.Stat(backups); err != nil || info.Mode().Perm() != 0o700 {
+	if info, err := os.Stat(backups); err != nil || runtime.GOOS != "windows" && info.Mode().Perm() != 0o700 { // Windows has no owner-only modes
 		t.Errorf("backup dir should be private: %v %v", info, err)
 	}
 }

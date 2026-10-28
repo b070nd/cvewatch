@@ -241,7 +241,7 @@ func TestOptionsDirStartsTheSetupFlowOnTheFolder(t *testing.T) {
 }
 
 func TestRelativize(t *testing.T) {
-	root := filepath.Join(string(filepath.Separator), "srv", "app")
+	root, _ := filepath.Abs(filepath.Join(string(filepath.Separator), "srv", "app"))
 	in := []projectfile.Op{
 		{Kind: "add_lockfile", Lockfile: lock(filepath.Join(root, "web", "composer.lock"))},
 		{Kind: "add_lockfile", Lockfile: lock("already/relative.lock")},

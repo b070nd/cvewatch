@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -328,7 +329,7 @@ func TestScanErrors(t *testing.T) {
 			t.Errorf("Scan(%s) should fail", dir)
 		}
 	}
-	if os.Getuid() != 0 {
+	if os.Getuid() != 0 && runtime.GOOS != "windows" { // modes do not lock a folder on Windows
 		locked := filepath.Join(root, "locked")
 		if err := os.Mkdir(locked, 0o000); err != nil {
 			t.Fatal(err)

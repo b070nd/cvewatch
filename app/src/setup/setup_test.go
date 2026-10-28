@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -10,6 +11,10 @@ import (
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/projectfile"
 )
+
+// repoDir is an absolute folder on every platform ("/repo/my-app" has no
+// drive letter on Windows).
+var repoDir, _ = filepath.Abs("/repo/my-app")
 
 func testCatalog() *catalog.Catalog {
 	return catalog.New([]model.Tech{
@@ -23,7 +28,7 @@ func testCatalog() *catalog.Catalog {
 
 func scan() discovery.Result {
 	return discovery.Result{
-		Root: "/repo/my-app",
+		Root: repoDir,
 		Techs: []discovery.TechProposal{
 			{Tech: "php", Title: "PHP", Version: "8.2", Confidence: discovery.High,
 				Evidence: []discovery.Evidence{{File: "composer.lock", Detail: "package php in composer.lock"}, {File: "Dockerfile"}}},
@@ -50,7 +55,7 @@ func answer(t *testing.T, f *Flow, id, v string) {
 
 func TestCreateFlowEndToEnd(t *testing.T) {
 	f := NewFlow(testCatalog(), nil)
-	f.UseDiscovery("/repo/my-app", scan())
+	f.UseDiscovery(repoDir, scan())
 
 	if st := f.Current(); st.ID != "name" || st.Default != "my-app" || st.Kind != KindText {
 		t.Fatalf("name step = %+v", st)
@@ -114,12 +119,12 @@ func TestCreateFlowEndToEnd(t *testing.T) {
 		{Kind: "set_tech", Tech: "php", Version: "8.2"},
 		{Kind: "set_tech", Tech: "nginx", Version: "1.25"},
 		{Kind: "set_tech", Tech: "postgresql", Version: "16"},
-		{Kind: "add_lockfile", Lockfile: model.Lockfile{Type: "composer", Path: "/repo/my-app/composer.lock"}},
+		{Kind: "add_lockfile", Lockfile: model.Lockfile{Type: "composer", Path: filepath.Join(repoDir, "composer.lock")}},
 	}
 	if got := f.Ops(); !reflect.DeepEqual(got, wantOps) {
 		t.Fatalf("ops = %+v\nwant %+v", got, wantOps)
 	}
-	if d := f.Draft(); d.Project.Name != "shop" || d.Dir != "/repo/my-app" || len(d.Evidence["php"]) != 2 || d.Existing != nil {
+	if d := f.Draft(); d.Project.Name != "shop" || d.Dir != repoDir || len(d.Evidence["php"]) != 2 || d.Existing != nil {
 		t.Errorf("draft = %+v", d)
 	}
 }
@@ -230,7 +235,7 @@ func TestEditEnvs(t *testing.T) {
 
 func TestBackKeepsAnswers(t *testing.T) {
 	f := NewFlow(testCatalog(), nil)
-	f.UseDiscovery("/repo/my-app", scan())
+	f.UseDiscovery(repoDir, scan())
 	f.Back() // first step: no-op
 	answer(t, f, "name", "shop")
 	answer(t, f, "techs", "php")
@@ -438,7 +443,7 @@ func TestEnvTechAndImageOps(t *testing.T) {
 
 func TestReviewCreated(t *testing.T) {
 	f := NewFlow(testCatalog(), nil)
-	f.UseDiscovery("/repo/my-app", scan())
+	f.UseDiscovery(repoDir, scan())
 	answer(t, f, "name", "shop")
 	answer(t, f, "techs", "php,nginx")
 	answer(t, f, "add-techs", "")
@@ -449,7 +454,7 @@ func TestReviewCreated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, w := range []string{"+ ", "php", "8.2", "nginx", "/repo/my-app/composer.lock", "dev"} {
+	for _, w := range []string{"+ ", "php", "8.2", "nginx", filepath.Join(repoDir, "composer.lock"), "dev"} {
 		if !strings.Contains(diff, w) {
 			t.Errorf("diff lacks %q:\n%s", w, diff)
 		}
@@ -526,7 +531,7 @@ func TestEditLockfileRemoval(t *testing.T) {
 func TestEditLockfileMatchesDiscoveryRelative(t *testing.T) {
 	ex := &model.Project{Name: "shop", Lockfiles: []model.Lockfile{{Type: "composer", Path: "composer.lock"}}}
 	f := NewFlow(testCatalog(), ex)
-	f.UseDiscovery("/repo/my-app", scan())
+	f.UseDiscovery(repoDir, scan())
 	// The scan found the same file the project already lists by a relative path: no duplicate.
 	if got := f.Draft().Project.Lockfiles; len(got) != 1 {
 		t.Fatalf("lockfiles = %+v", got)
