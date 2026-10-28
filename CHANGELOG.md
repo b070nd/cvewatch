@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-28
+
 ### Added
 - Project `since` date in a project file: vulnerabilities published before that day create no findings for that project. Other projects are not affected.
 - `cvewatch search`, the `search_findings` MCP tool and the `/` filter in the TUI: find issues by ID, words, phrases and fields such as `severity:high+`. `cvewatch show` suggests close IDs for an unknown one.
