@@ -11,7 +11,7 @@ builds:
     ldflags: ["-s -w -X main.version={{ .Version }}"]
 archives:
   - formats: [tar.gz]
-    files: [README.md, docs/**/*, app/config/**/*, app/sources/**/*]
+    files: [README.md, docs/**/*]
 checksum:
   name_template: checksums.txt
 changelog:
