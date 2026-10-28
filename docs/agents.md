@@ -13,6 +13,7 @@ It starts read-only with these tools:
 | Tool | Does |
 |---|---|
 | `list_findings` | open issues, most urgent first (KEV, severity, prod, EPSS, age); filters `min_severity`, `project`, `env`, `include_unaffected`, `include_closed`; returns the versioned export document |
+| `search_findings` | findings matching a query in the [search syntax](search.md): words, `"phrases"`, `-exclude`, `A OR B` and fields such as `severity:high+`; filters `open_only`, `min_severity`, `project`, `env`; closed findings are included unless `open_only` is set |
 | `get_vulnerability` | description, articles in chronological order, fix evidence, status per project and environment, report path |
 | `explain` | why it matched: recorded reasons and what today's config says |
 | `get_evidence` | evidence pack: facts, per-environment status, timeline of detection, alerts, changes and evidence |
@@ -49,6 +50,7 @@ The same data is on the command line:
 ```bash
 cvewatch list -min high -json        # the versioned export document
 cvewatch show CVE-2026-1234 -json
+cvewatch search -json -open -min high "php OR openssl"   # flags go before the query
 cvewatch fix CVE-2026-1234 -project shop -env dev -note "MR 123"
 ```
 

@@ -147,6 +147,8 @@ The technology catalog and the feeds are built in, so one binary is enough. `set
 - **Puts the urgent things first.** Order: actively exploited (CISA KEV), then severity, open in prod, exploit probability (EPSS, optional), age. Every issue says why it ranks where it does.
 - **Merges the duplicates.** The NVD entry, the GitHub advisory, the CISA listing and two news stories become one record with all links, the articles in order, and the known fix.
 - **Tells you where you already look.** Slack, a signed webhook or email, plus a daily "still open in prod" digest.
+- **Starts each project when you say.** A `since` date skips advisories published before it, for that project only. Other projects are not affected.
+- **Searches what you track.** `cvewatch search` finds issues by ID, part of an ID, words or fields such as `severity:high+` and `project:shop`, in every status.
 
 ```text
   What comes first
@@ -375,6 +377,7 @@ Outbound requests go only to the feeds and channels you configure, plus FIRST's 
 ## Documentation
 
 - [docs/overview.md](docs/overview.md): how it works, inventory, matching, tracking, policy, channels, storage
+- [docs/search.md](docs/search.md): look up one issue, search syntax and fields
 - [docs/architecture.md](docs/architecture.md): modules and seams
 - [docs/agents.md](docs/agents.md): MCP tools, JSON contract, a `CLAUDE.md` snippet
 - [docs/compliance.md](docs/compliance.md): NIS2 and GDPR support, evidence an auditor can ask for
