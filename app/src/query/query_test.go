@@ -125,3 +125,37 @@ func TestClipKeepsRunesAndDropsEscapes(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestAnyStatusListsFixedFindingsAndDefaultHidesThem(t *testing.T) {
+	l := seed()
+	l.Create(model.Item{Title: "DONE title", URL: "https://a.test/DONE", IDs: []string{"DONE"}, Severity: model.SevHigh, Published: day, SourceID: "feed", SourceType: "rss"}, day, []string{"php"})
+	l.AddFinding(model.Finding{VulnID: "DONE", Project: "shop", Env: model.EnvProd, Status: model.StatusFixed})
+
+	if got := ids(Open(l, Filter{}, now)); strings.Contains(got, "DONE") {
+		t.Fatalf("a fixed-only issue must stay hidden by default: %s", got)
+	}
+	byID := map[string]Issue{}
+	for _, is := range Open(l, Filter{AnyStatus: true}, now) {
+		byID[is.ID] = is
+	}
+	done, ok := byID["DONE"]
+	if !ok || len(done.Targets) != 1 || done.Targets[0].Status != model.StatusFixed || done.ProdOpen {
+		t.Fatalf("fixed-only issue: %+v", done)
+	}
+	old := byID["OLD"]
+	if len(old.Targets) != 2 || old.Targets[0].Env != model.EnvDev || old.Targets[1].Env != model.EnvProd || !old.ProdOpen {
+		t.Fatalf("every finding once, sorted by project and environment: %+v", old.Targets)
+	}
+	if both := Open(l, Filter{AnyStatus: true, Closed: true}, now); len(both) != 5 {
+		t.Fatalf("Closed must not add duplicates: %s", ids(both))
+	} else {
+		for _, is := range both {
+			if is.ID == "OLD" && len(is.Targets) != 2 {
+				t.Fatalf("duplicated targets: %+v", is.Targets)
+			}
+		}
+	}
+	if got := Open(l, Filter{AnyStatus: true, Env: model.EnvDev}, now); ids(got) != "OLD" {
+		t.Fatalf("other filters still apply: %s", ids(got))
+	}
+}

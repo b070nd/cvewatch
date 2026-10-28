@@ -254,13 +254,21 @@ func Digest(issues []query.Issue, fresh map[string]bool) string {
 	if len(issues) == 0 {
 		return "No open findings.\n"
 	}
+	return list("Open findings", issues, fresh, where)
+}
+
+func Matches(issues []query.Issue) string {
+	return list("Matches", issues, nil, statuses)
+}
+
+func list(heading string, issues []query.Issue, fresh map[string]bool, targets func(query.Issue) string) string {
 	counts := map[model.Severity]int{}
 	for _, is := range issues {
 		counts[is.Severity]++
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "Open findings: %d\n", len(issues))
+	fmt.Fprintf(&b, "%s: %d\n", heading, len(issues))
 	var current model.Severity
 	for i, is := range issues {
 		if i == 0 || is.Severity != current {
@@ -271,7 +279,7 @@ func Digest(issues []query.Issue, fresh map[string]bool) string {
 		if fresh[is.ID] {
 			mark = "NEW "
 		}
-		fmt.Fprintf(&b, "  %s%-18s %s\n", mark, is.ID, where(is))
+		fmt.Fprintf(&b, "  %s%-18s %s\n", mark, is.ID, targets(is))
 		fmt.Fprintf(&b, "      %s\n", query.Clip(is.Untrusted.Title, 100))
 		fmt.Fprintf(&b, "      %s\n", facts(is))
 		if len(is.Untrusted.Articles) > 0 {
@@ -355,6 +363,18 @@ func where(is query.Issue) string {
 		parts[i] = p + ": " + strings.Join(envs[p], ",")
 	}
 	out := strings.Join(parts, "; ") + "  [" + applies(is.Applies) + "]"
+	if n := len(is.Aliases); n > 0 {
+		out += fmt.Sprintf("  (+%d ids)", n)
+	}
+	return out
+}
+
+func statuses(is query.Issue) string {
+	parts := make([]string, len(is.Targets))
+	for i, t := range is.Targets {
+		parts[i] = fmt.Sprintf("%s/%s %s", t.Project, t.Env, t.Status)
+	}
+	out := strings.Join(parts, ", ") + "  [" + applies(is.Applies) + "]"
 	if n := len(is.Aliases); n > 0 {
 		out += fmt.Sprintf("  (+%d ids)", n)
 	}

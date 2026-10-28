@@ -19,7 +19,7 @@ func helpView(scr screen, inForm bool) []string {
 		add("up/down", "move (pgup/pgdn, g/G for the ends)")
 		add("enter", "open the selected issue")
 		add("s", "cycle the minimum severity: all, low+, medium+, high+, critical+")
-		add("/", "filter by id, title, project, environment, owner or tech; esc clears")
+		add("/", "filter by words or fields such as severity:high; esc clears")
 		add("in an issue", "up/down pick an environment; f fixed, i ignore, n not-affected,")
 		add("", "o reopen, a assign owner, due date and ticket; capitals (F I N O A)")
 		add("", "act on every environment of the project; esc goes back")

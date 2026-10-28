@@ -180,6 +180,7 @@ type Project struct {
 	Envs      []Env         `yaml:"envs"` // defaults to AllEnvs
 	Techs     []ProjectTech `yaml:"techs"`
 	Lockfiles []Lockfile    `yaml:"lockfiles"`
+	Since     time.Time     `yaml:"since"` // vulnerabilities published before this day are not checked
 	// Environments holds what differs per environment: the runtime versions
 	// actually deployed and the image reference. Anything not listed falls
 	// back to the project-level techs.

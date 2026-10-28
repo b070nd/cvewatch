@@ -33,15 +33,23 @@ func minLabel(s model.Severity) string {
 	return string(s) + "+"
 }
 
-// filterIssues keeps issues at or above min whose id, title, techs,
-// projects or owners contain every word of text.
+// filterIssues keeps issues at or above min that match the search text (see
+// query.ParseSearch); text that does not parse is matched as plain words.
 func filterIssues(all []query.Issue, min model.Severity, text string) []query.Issue {
+	search, perr := query.ParseSearch(text)
 	words := strings.Fields(strings.ToLower(text))
 	var out []query.Issue
 	for _, is := range all {
 		if !is.Severity.AtLeast(min) {
 			continue
 		}
+		if perr == nil {
+			if search.Match(is) {
+				out = append(out, is)
+			}
+			continue
+		}
+		// A field still being typed, such as "severity:", does not parse yet; match words until it does.
 		if len(words) > 0 {
 			hay := strings.ToLower(strings.Join(append([]string{is.ID, is.Untrusted.Title, strings.Join(is.Techs, " "), strings.Join(is.Aliases, " ")}, targetWords(is)...), " "))
 			if !slices.ContainsFunc(words, func(w string) bool { return !strings.Contains(hay, w) }) {

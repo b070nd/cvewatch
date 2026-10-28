@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/b070nd/cvewatch/app/src/model"
 )
@@ -224,5 +225,44 @@ func TestTechSchemeOrdersItsVersions(t *testing.T) {
 	// PEP 440: 1.0.post1 is after 1.0, so it is outside "< 1.0"; the default scheme would call it a pre-release.
 	if v := j.Judge(it, tg); len(v.Matches) != 1 || v.Matches[0].Applies != model.AppNotAffected || v.Matches[0].Installed[0].Ecosystem != "pypi" {
 		t.Fatalf("scheme must be used for tech versions: %+v", v.Matches)
+	}
+}
+
+func TestProjectSinceDecidesByPublicationDate(t *testing.T) {
+	j := New([]model.Tech{{Name: "php"}})
+	since := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	techs := []model.ProjectTech{{Name: "php", Version: "8.2"}}
+	targets := []Target{
+		{Project: "shop", Env: model.EnvDev, Techs: techs, Since: since},
+		{Project: "shop", Env: model.EnvProd, Techs: techs, Since: since},
+		{Project: "other", Env: model.EnvProd, Techs: techs},
+	}
+	cases := map[string]struct {
+		published time.Time
+		matched   []string
+		notes     int
+	}{
+		"the day before":  {since.AddDate(0, 0, -1), []string{"other"}, 1},
+		"the start day":   {since, []string{"shop", "shop", "other"}, 0},
+		"after the start": {since.AddDate(0, 1, 0), []string{"shop", "shop", "other"}, 0},
+		"no date":         {time.Time{}, []string{"shop", "shop", "other"}, 0},
+	}
+	for name, c := range cases {
+		v := j.Judge(model.Item{Title: "PHP flaw", Published: c.published}, targets)
+		var got []string
+		for _, m := range v.Matches {
+			got = append(got, m.Project)
+		}
+		if !slices.Equal(got, c.matched) || len(v.Notes) != c.notes {
+			t.Errorf("%s: matched %v, notes %v", name, got, v.Notes)
+		}
+	}
+	v := j.Judge(model.Item{Title: "PHP flaw", Published: since.AddDate(0, 0, -1)}, targets)
+	if len(v.Notes) != 1 || v.Notes[0] != "shop: published 2025-12-31, before the project's start date 2026-01-01" {
+		t.Errorf("one note per project: %v", v.Notes)
+	}
+	only := j.Judge(model.Item{Title: "PHP flaw", Published: since.AddDate(0, 0, -1)}, targets[:2])
+	if only.Relevant() || len(only.Notes) != 1 {
+		t.Errorf("skipped by every project must not be relevant: techs %v, matches %d", only.Techs, len(only.Matches))
 	}
 }

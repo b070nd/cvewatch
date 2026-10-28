@@ -73,7 +73,7 @@ func Load(cfg *config.Bundle) *Inventory {
 		}
 
 		for _, env := range p.EffectiveEnvs() {
-			tg := relevance.Target{Project: p.Name, Env: env, Techs: techsFor(p, env), Image: p.Environments[env].Image}
+			tg := relevance.Target{Project: p.Name, Env: env, Techs: techsFor(p, env), Image: p.Environments[env].Image, Since: p.Since}
 			seen := map[string]bool{}
 			for _, f := range files {
 				if f.lf.Env != "" && f.lf.Env != env {

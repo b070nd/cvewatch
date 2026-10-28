@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Project `since` date in a project file: vulnerabilities published before that day create no findings for that project. Other projects are not affected.
+- `cvewatch search`, the `search_findings` MCP tool and the `/` filter in the TUI: find issues by ID, words, phrases and fields such as `severity:high+`. `cvewatch show` suggests close IDs for an unknown one.
+
 ## [1.0.0] - 2026-10-28
 
 First stable release. The JSON export contract (`schema_version` 1) and the project and config file formats are stable from here on.

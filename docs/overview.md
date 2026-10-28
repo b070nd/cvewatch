@@ -43,6 +43,31 @@ Three front ends share one setup flow, so the questions and checks are the same:
 
 Project edits keep the file's comments, are checked before saving, back up the old file in `data/project-backups/` and go to the audit log. For scripts, `cvewatch project NAME -set php=8.2 -lock composer:PATH` shows the diff and `-save` writes it.
 
+## Start date per project
+
+A project file can set `since`, the first day its items count:
+
+```yaml
+name: middleware
+since: 2026-01-01              # vulnerabilities published before this day are not checked for this project
+techs: [{name: php, version: "8.2"}]
+```
+
+- A vulnerability published before `since` creates no findings for that project. The day itself counts, from 00:00 UTC. Other projects are not affected.
+- Items with no publish date are still checked.
+- A later article about an old CVE uses the earliest publish date already known for that CVE. So a new article does not bring an old CVE into a project that starts later.
+- Findings that already exist stay. To close one, use `cvewatch ignore ID -project middleware -env prod -note "before the start date"`.
+- `cvewatch why ID` shows each project that skipped the item for this reason:
+
+  ```text
+    not matched: middleware: published 2025-12-31, before the project's start date 2026-01-01
+  ```
+
+- `cvewatch check` warns when `since` is in the future. Until that day, the project gets only items that have no publish date.
+- `cvewatch rescan` applies the same rule.
+- An item that every project skips is kept as a bare record: its title and IDs, with no summary, no findings and no report.
+- A value that is not a `YYYY-MM-DD` date stops the configuration from loading.
+
 ## Is it working?
 
 `cvewatch status` shows the daemon (running, overdue, or only manual runs), each feed (last success, failures in a row), each channel and the last cycles. It exits non-zero when something fails. `cvewatch dashboard` writes a static HTML page with the same plus open findings. Set `dashboard: {enabled: true}` in `config.yaml` and the daemon refreshes it every cycle. The page has no scripts and makes no external requests.
@@ -106,6 +131,8 @@ cvewatch fix CVE-2026-1234 -project shop -env dev -note "php 8.2.30"
 cvewatch not-affected CVE-2026-1234 -project shop -env dev -note "feature disabled, no network exposure"
 cvewatch evidence CVE-2026-1234          # timeline: detection, alerts, status, owners, evidence, per-environment matrix
 ```
+
+`cvewatch show ID` opens one issue. `cvewatch search` finds issues by words, IDs and fields such as `project:shop`. See [search.md](search.md).
 
 ## Priority and policy
 

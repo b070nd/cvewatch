@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/b070nd/cvewatch/app/src/ecosystem"
 	"github.com/b070nd/cvewatch/app/src/model"
@@ -67,7 +68,8 @@ type Target struct {
 	Env      model.Env
 	Techs    []model.ProjectTech // declared techs with this environment's versions
 	Packages []model.Package
-	Image    string // image tag or digest, recorded only
+	Image    string    // image tag or digest, recorded only
+	Since    time.Time // items published before this are not judged; zero judges all
 }
 
 // Find returns what the target currently runs for an earlier match, so a
@@ -152,6 +154,7 @@ func (j *Judge) Judge(it model.Item, targets []Target) Verdict {
 		}
 	}
 
+	noted := map[string]bool{}
 	for _, tg := range targets {
 		m := Match{Project: tg.Project, Env: tg.Env, Applies: model.AppNotAffected}
 		for _, pt := range tg.Techs {
@@ -172,9 +175,21 @@ func (j *Judge) Judge(it model.Item, targets []Target) Verdict {
 				m.add(in, applies(in, rs, structured), why)
 			}
 		}
-		if len(m.Installed) > 0 {
-			v.Matches = append(v.Matches, m)
+		if len(m.Installed) == 0 {
+			continue
 		}
+		if before := !tg.Since.IsZero() && !it.Published.IsZero() && it.Published.Before(tg.Since); before {
+			if !noted[tg.Project] {
+				noted[tg.Project] = true
+				v.Notes = append(v.Notes, fmt.Sprintf("%s: published %s, before the project's start date %s",
+					tg.Project, it.Published.UTC().Format("2006-01-02"), tg.Since.UTC().Format("2006-01-02")))
+			}
+			continue
+		}
+		v.Matches = append(v.Matches, m)
+	}
+	if len(v.Matches) == 0 && len(noted) > 0 {
+		v.Techs = nil
 	}
 	return v
 }

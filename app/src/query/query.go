@@ -18,12 +18,13 @@ import (
 
 // Filter narrows a listing. Zero values mean no restriction.
 type Filter struct {
-	Min      model.Severity // hide anything below this severity
-	Project  string         // only this project
-	Env      model.Env      // only this environment
-	Projects []string       // only these projects (access control); empty means all
-	All      bool           // include targets whose version is not affected
-	Closed   bool           // also list the fixed, ignored and not-affected targets of issues that still have an open one
+	Min       model.Severity // hide anything below this severity
+	Project   string         // only this project
+	Env       model.Env      // only this environment
+	Projects  []string       // only these projects (access control); empty means all
+	All       bool           // include targets whose version is not affected
+	Closed    bool           // also list the fixed, ignored and not-affected targets of issues that still have an open one
+	AnyStatus bool           // list issues whose findings are in any status, with all their targets
 }
 
 func (f Filter) allows(project string) bool {
@@ -118,7 +119,7 @@ func Open(l *ledger.Ledger, f Filter, now time.Time) []Issue {
 	all := l.Findings()
 	for _, fd := range all {
 		v := l.Vuln(fd.VulnID)
-		if fd.Status != model.StatusOpen || v == nil || !v.Severity.AtLeast(f.Min) || !f.allows(fd.Project) || !f.allowsEnv(fd.Env) ||
+		if (fd.Status != model.StatusOpen && !f.AnyStatus) || v == nil || !v.Severity.AtLeast(f.Min) || !f.allows(fd.Project) || !f.allowsEnv(fd.Env) ||
 			(!f.All && fd.Applies == model.AppNotAffected) {
 			continue
 		}
@@ -131,11 +132,11 @@ func Open(l *ledger.Ledger, f Filter, now time.Time) []Issue {
 		}
 		is.Targets = append(is.Targets, target(fd, now))
 		is.Applies = worst(is.Applies, fd.Applies, len(is.Targets) == 1)
-		is.ProdOpen = is.ProdOpen || fd.Env == model.EnvProd
+		is.ProdOpen = is.ProdOpen || (fd.Env == model.EnvProd && fd.Status == model.StatusOpen)
 	}
-	if f.Closed {
+	if f.Closed || f.AnyStatus {
 		for _, fd := range all {
-			if is := byID[fd.VulnID]; is != nil && fd.Status != model.StatusOpen && f.allows(fd.Project) && f.allowsEnv(fd.Env) {
+			if is := byID[fd.VulnID]; !f.AnyStatus && is != nil && fd.Status != model.StatusOpen && f.allows(fd.Project) && f.allowsEnv(fd.Env) {
 				is.Targets = append(is.Targets, target(fd, now))
 			}
 		}
