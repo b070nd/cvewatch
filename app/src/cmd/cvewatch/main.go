@@ -44,6 +44,7 @@ Everyday
   list   [-min S] [-project P] [-env E] [-all] [-json] [-fail-on S]   open findings, most urgent first; -fail-on exits 1 for a CI gate
   show   ID [-json]                            description, fix, articles, status and plan
   why    ID [-json]                            why it matched, judged again with today's config
+  search [-open] [-min S] [-project P] [-env E] [-json] QUERY...   find issues by id, words or fields such as severity:high; for a query starting with -, put -- before it
   daemon                                       refresh every configured interval
   status [-json]                               is it working: daemon, feeds, channels, recent cycles
   dashboard [-out FILE]                        write the static status page now
@@ -131,6 +132,8 @@ func dispatch(ctx context.Context, root string, log *slog.Logger, args []string)
 		return read(func(s *ops.Session) error { return printOpen(s, o, nil) })
 	case "show":
 		return read(func(s *ops.Session) error { return show(s, rest) })
+	case "search":
+		return read(func(s *ops.Session) error { return searchCmd(s, rest) })
 	case "why":
 		return read(func(s *ops.Session) error { return why(s, rest) })
 	case "rescan":
@@ -306,12 +309,60 @@ func show(s *ops.Session, args []string) error {
 	}
 	is, md, err := s.Show(id)
 	if err != nil {
-		return err
+		return withSuggestions(s, id, err)
 	}
 	if *asJSON {
 		return export.New([]query.Issue{is}, s.Now()).WriteJSON(os.Stdout)
 	}
 	fmt.Print(md)
+	return nil
+}
+
+func withSuggestions(s *ops.Session, id string, err error) error {
+	if !strings.HasPrefix(err.Error(), "unknown vulnerability") {
+		return err
+	}
+	found, serr := s.Search(id, query.Filter{}, false)
+	if serr != nil || len(found) == 0 {
+		return err
+	}
+	var ids []string
+	for _, is := range found[:min(len(found), 5)] {
+		ids = append(ids, is.ID)
+	}
+	return fmt.Errorf("%w; did you mean: %s", err, strings.Join(ids, ", "))
+}
+
+func searchCmd(s *ops.Session, args []string) error {
+	fs := flag.NewFlagSet("search", flag.ContinueOnError)
+	openOnly := fs.Bool("open", false, "only findings that are still open")
+	min := fs.String("min", "", "lowest severity to show: low, medium, high, critical")
+	project := fs.String("project", "", "only this project")
+	env := fs.String("env", "", "only this environment")
+	asJSON := fs.Bool("json", false, "print JSON instead of text")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	text := strings.Join(fs.Args(), " ")
+	if strings.TrimSpace(text) == "" {
+		return errors.New("give a search text, for example: cvewatch search cve-2026-1234")
+	}
+	f, err := ops.ParseFilter(*min, *project, *env)
+	if err != nil {
+		return err
+	}
+	issues, err := s.Search(text, f, *openOnly)
+	if err != nil {
+		return err
+	}
+	if *asJSON {
+		return export.New(issues, s.Now()).WriteJSON(os.Stdout)
+	}
+	if len(issues) == 0 {
+		fmt.Printf("No issue matches %q.\n", text)
+		return nil
+	}
+	fmt.Print(report.Matches(issues))
 	return nil
 }
 

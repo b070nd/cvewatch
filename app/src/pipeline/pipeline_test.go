@@ -303,3 +303,31 @@ func TestCycleRecordsFeedAndChannelHealth(t *testing.T) {
 		t.Errorf("a success must reset the failure count: %+v", channels["email"])
 	}
 }
+
+func TestSinceKeepsOlderVulnerabilitiesOutOfProjectsThatStartLater(t *testing.T) {
+	old := `<?xml version="1.0"?><rss version="2.0"><channel>
+<item><title>CVE-2026-4141: PHP-FPM remote code execution</title><link>https://ex.test/old</link><pubDate>Thu, 22 Oct 2026 00:00:00 +0000</pubDate><description>Reported.</description></item>
+</channel></rss>`
+	later := `<?xml version="1.0"?><rss version="2.0"><channel>
+<item><title>PHP-FPM remote code execution flaw CVE-2026-4141 is being exploited</title><link>https://ex.test/news</link><pubDate>{{RSS_NOW}}</pubDate><description>News.</description></item>
+</channel></rss>`
+	g := rig(t, phpTech, map[string]string{
+		"shop":       "name: shop\nenvs: [prod]\ntechs: [{name: php}]\nsince: 2026-10-24\n",
+		"middleware": "name: middleware\nenvs: [prod]\ntechs: [{name: php}]\n"},
+		map[string]string{feedURL: old})
+
+	if res := g.Run(); res.Findings != 1 {
+		t.Fatalf("only the project without a start date gets a finding: %+v", res)
+	}
+	if f := g.Findings("CVE-2026-4141"); len(f) != 1 || f[0].Project != "middleware" {
+		t.Fatalf("findings = %+v", f)
+	}
+
+	g.Serve(feedURL, later)
+	if res := g.Run(); res.Findings != 0 {
+		t.Fatalf("a later article about the same CVE must keep its first publication date: %+v", res)
+	}
+	if f := g.Findings("CVE-2026-4141"); len(f) != 1 || f[0].Project != "middleware" {
+		t.Fatalf("findings after the later article = %+v", f)
+	}
+}

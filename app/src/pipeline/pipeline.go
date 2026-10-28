@@ -163,7 +163,12 @@ func (c *cycle) process(it model.Item) {
 		return
 	}
 	l := c.r.Ledger
-	verdict := c.judge.Judge(it, c.inv.Targets())
+	judged := it
+	// A later article about a known CVE keeps the date the CVE was first published.
+	if prior := l.Lookup(it.Keys()); prior != nil && !prior.Published.IsZero() && (judged.Published.IsZero() || prior.Published.Before(judged.Published)) {
+		judged.Published = prior.Published
+	}
+	verdict := c.judge.Judge(judged, c.inv.Targets())
 
 	known, folded, linked := l.Identify(it, verdict.Relevant())
 	for _, g := range folded {

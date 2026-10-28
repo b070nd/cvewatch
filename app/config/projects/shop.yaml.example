@@ -2,6 +2,7 @@
 # or let `cvewatch init -repo /path/to/repo` write one for you.
 name: shop
 envs: [dev, int, staging, prod]   # omit for all four
+# since: 2026-01-01              # vulnerabilities published before this day are not checked
 techs:                            # names must exist in techs.yaml
   - {name: php, version: "8.2"}
   - {name: elasticsearch, version: "8.11"}

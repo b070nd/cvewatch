@@ -118,6 +118,22 @@ func TestReadOnlyByDefault(t *testing.T) {
 	}
 }
 
+func TestSearchFindingsIsReadOnlyAndUsesTheQueryLanguage(t *testing.T) {
+	cs := connect(t, fixture(t), false)
+	if names := toolNames(t, cs); !strings.Contains(names, "search_findings") {
+		t.Fatalf("tools: %s", names)
+	}
+	if _, out := call(t, cs, "search_findings", map[string]any{"query": "cve-2026-1"}); !strings.Contains(out, `"count":1`) || !strings.Contains(out, "CVE-2026-1") {
+		t.Fatalf("partial code: %s", out)
+	}
+	if _, out := call(t, cs, "search_findings", map[string]any{"query": "severity:low"}); !strings.Contains(out, `"count":0`) {
+		t.Fatalf("field filter: %s", out)
+	}
+	if res, _ := call(t, cs, "search_findings", map[string]any{"query": "severity:urgent"}); !res.IsError {
+		t.Fatal("a bad query must be a tool error")
+	}
+}
+
 func TestWriteToolsNeedOptIn(t *testing.T) {
 	root := fixture(t)
 	cs := connect(t, root, true)

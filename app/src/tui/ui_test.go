@@ -85,6 +85,24 @@ func TestFilterInputDoesNotTriggerKeys(t *testing.T) {
 	d.want("3 of 3")
 }
 
+func TestFindingsFilterAcceptsFieldQueries(t *testing.T) {
+	d := start(t, newFake(t, nil), Options{})
+	d.press("2", "/")
+	d.typ("severity:critical")
+	d.want("1 of 3 open issues", "CVE-2026-3")
+	d.wantNot("CVE-2026-1", "CVE-2026-4")
+}
+
+func TestFindingsFilterFallsBackToWordsOnBadQuery(t *testing.T) {
+	all := []query.Issue{
+		{ID: "CVE-1", Severity: model.SevHigh, Untrusted: query.Untrusted{Title: "Bug: heap overflow"}},
+		{ID: "CVE-2", Severity: model.SevHigh, Untrusted: query.Untrusted{Title: "Other"}},
+	}
+	if got := filterIssues(all, model.SevUnknown, "bug: heap"); len(got) != 1 || got[0].ID != "CVE-1" {
+		t.Fatalf("text that does not parse as a query must still filter by words: %+v", got)
+	}
+}
+
 func TestDetailView(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
 	d.press("2", "down", "enter")

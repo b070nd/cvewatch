@@ -266,6 +266,9 @@ func (b *Bundle) validate() error {
 			fail("project name %q is empty or duplicated", p.Name)
 		}
 		names[p.Name] = true
+		if !p.Since.IsZero() && p.Since.After(time.Now()) {
+			b.Warnings = append(b.Warnings, fmt.Sprintf("project %s: since %s is in the future, so every dated vulnerability is skipped for now", p.Name, p.Since.Format("2006-01-02")))
+		}
 		for _, e := range p.Envs {
 			if !e.Valid() {
 				fail("project %s: unknown env %q (use dev, int, staging, prod)", p.Name, e)
