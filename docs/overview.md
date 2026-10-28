@@ -29,17 +29,23 @@ A failed source keeps its cursor and is retried next cycle. A finding counts as 
 
 ## Technologies and discovery
 
-The built-in catalog covers open and closed source technologies (runtimes, frameworks, databases, servers, platforms, appliances and so on); `cvewatch catalog WORDS` searches it. A technology is only judged when a project declares it, so the size of the catalog adds no noise. Add or change entries in `config/techs.yaml` (an entry with the same name replaces the built-in one; `disabled: true` removes it). A technology can carry its vendor's advisory feed (for example a CSAF provider), which switches on when a project declares it.
+The built-in catalog lists open and closed source technologies: runtimes, frameworks, databases, servers, platforms, appliances and more. Search it with `cvewatch catalog WORDS`. A technology is judged only when a project declares it, so a big catalog adds no noise. Add your own in `config/techs.yaml`: an entry with the same name replaces the built-in one, and `disabled: true` removes it. A technology can bring its vendor's advisory feed (for example CSAF), which turns on when a project declares it.
 
-`cvewatch discover DIR` proposes what a repository uses and why: lockfiles and the packages in them, `.tool-versions`, `go.mod`, `package.json` engines, Dockerfile and compose images, Kubernetes manifests, Terraform, and marker files. Every proposal has evidence and a confidence (high, medium, low); low ones are offered, never declared silently. It reads files only, does not follow symlinks, and is bounded in depth, count and size.
+`cvewatch discover DIR` shows what a repository uses and why. It reads lockfiles and their packages, `.tool-versions`, `go.mod`, `package.json`, Dockerfiles, compose files, Kubernetes manifests, Terraform and marker files. Each proposal has evidence and a confidence (high, medium, low). Low ones are asked about, never declared silently. It only reads files, never follows symlinks, and limits depth, file count and file size.
 
 ## Setting up and changing projects
 
-`cvewatch setup [DIR]` is a guided prompt, `cvewatch tui` the same flow in a full-screen interface (a separate program, `cvewatch-tui`, shipped next to `cvewatch`, so its terminal library does not touch every other command), and the MCP tools and skills in `skills/` give an agent the same steps. All three use one setup flow, so the questions and checks are identical. Changes to a project file keep its comments, are validated before saving, back the old file up under `data/project-backups/`, and are written to the audit log. For scripts: `cvewatch project NAME -set php=8.2 -lock composer:PATH` shows the diff, and `-save` writes it.
+Three front ends share one setup flow, so the questions and checks are the same:
+
+- `cvewatch setup [DIR]`: guided prompt.
+- `cvewatch tui`: full-screen interface. It runs `cvewatch-tui`, a separate program shipped next to `cvewatch`, so other commands start fast.
+- MCP tools and the skills in `skills/`: the same steps for an agent.
+
+Project edits keep the file's comments, are checked before saving, back up the old file in `data/project-backups/` and go to the audit log. For scripts, `cvewatch project NAME -set php=8.2 -lock composer:PATH` shows the diff and `-save` writes it.
 
 ## Is it working?
 
-`cvewatch status` shows the daemon (alive, overdue, or only one-off runs seen), every feed (last success, failures in a row) and channel, and the last cycles. It exits non-zero when something is failing. `cvewatch dashboard` writes a static HTML page with the same plus the open findings; set `dashboard: {enabled: true}` in `config.yaml` and the daemon refreshes it each cycle. The page has no scripts and no external requests.
+`cvewatch status` shows the daemon (running, overdue, or only manual runs), each feed (last success, failures in a row), each channel and the last cycles. It exits non-zero when something fails. `cvewatch dashboard` writes a static HTML page with the same plus open findings. Set `dashboard: {enabled: true}` in `config.yaml` and the daemon refreshes it every cycle. The page has no scripts and makes no external requests.
 
 ## Inventory
 
