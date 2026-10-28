@@ -1,113 +1,144 @@
 # cvewatch
 
-Polls public vulnerability feeds every few hours, keeps what matters to your projects, tells Slack about new findings, and tracks whether each environment has been fixed.
+Exposure and fix tracking for software factories. It watches the feeds that matter to your stack, tracks open, fixed and ignored per project and environment, and keeps the evidence local.
+
+It is a companion to scanners (Trivy, Grype, OSV-Scanner) and SBOM platforms (Dependency-Track), not a replacement: it does not scan images or hosts. Its job is the one they leave open: *which of our projects and environments are still exposed to which known issue, who owns it, and what happened so far.*
+
+## First run
+
+```bash
+cvewatch init -repo /path/to/your/repo      # starter config; detects lockfiles and runtime versions
+cvewatch doctor                              # checks config, lockfiles, state, channels (add -online for CPE names and feeds)
+cvewatch update                              # fetch now, then list
+```
+
+One binary is enough: the technology list and the feeds are built in, and `init` writes editable copies. `-root DIR` points at the folder with `config/` and `sources/` (default: the current folder).
 
 ## How a cycle works
 
-1. Load config again from disk (edits apply from this cycle on) and read each project's lockfiles.
-2. Fetch all sources. Per-host rate limits, retries, `Retry-After` and 429 cooldowns apply. Unchanged feeds answer `304`.
-3. Judge each item once (module `relevance`): which technologies it is about, which projects run them, and whether the installed version falls in the affected range.
-4. Fold it into the ledger (module `ledger`): the same issue reported again, by another feed or a news site, joins the existing record instead of creating a new one.
-5. Write `alerts/YYYY/yyyy-mm-dd-tech-slug.md`, save, then alert Slack.
-6. Print every open finding, so nothing is forgotten between alerts.
+1. Load the configuration again from disk and build the **inventory**: what runs in every project environment, from declared techs, per-environment versions, lockfiles and SBOMs.
+2. Fetch all sources (per-host rate limits, retries, `Retry-After`, 429 cooldowns; unchanged feeds answer `304`).
+3. Judge each item once (`relevance`): which technologies it is about, which environments run them, and whether the installed version falls in the affected range.
+4. Fold it into the ledger (`ledger`): the same issue reported again joins the existing record.
+5. Re-check findings whose inventory changed (an upgraded lockfile, a new declared version, a removed package).
+6. Optionally add EPSS scores, write reports, save, then alert every channel and send the daily digest.
 
-A failed source keeps its cursor and is retried next cycle. A finding counts as alerted only after Slack accepted it.
+A failed source keeps its cursor and is retried next cycle. A finding counts as alerted per channel only after that channel accepted it.
 
-## What you get per issue
+## Inventory
 
-- **Age:** time since publication ("2d 4h").
-- **Articles:** how many news-style reports were found, collected in chronological order with title, source and link. Advisory databases (NVD, GitHub, CISA KEV) are listed separately.
-- **Fix:** whether a remedy is known and where it comes from. Patched versions come from GitHub advisories, linked patches, vendor advisories and mitigations from NVD references, and the required action from CISA KEV. `official` means a vendor or authority source said it, not a news site. The tool reads what feeds say; it does not look for container images or packages in registries.
-- **Version verdict per project:** `affected`, `not affected` or `unchecked` (see below).
-- **Calendar:** `cvewatch calendar` writes a month page with severity colors, technology tags and a legend, or prints a text grid with `-text`.
+| Source | `type:` | Notes |
+|---|---|---|
+| Declared techs | `techs:` | `php: "8.2.30"`; per environment under `environments:` |
+| composer.lock | `composer` | `packages-dev` counts as development |
+| package-lock.json | `npm` | v1, v2 and v3; `"dev": true` counts as development |
+| go.mod | `go` | `replace` applied; indirect requirements included |
+| requirements.txt | `pip` | only exactly pinned lines; the rest is reported as skipped |
+| poetry.lock, Pipfile.lock | `poetry`, `pipfile` | |
+| gradle.lockfile, pom.xml | `gradle`, `maven` | pom properties resolved; parent poms are not read |
+| CycloneDX / SPDX JSON | `cyclonedx`, `spdx` | packages by purl: npm, composer, go, pypi, maven |
+
+Lockfiles can be limited to one environment (`env: prod`, so a prod SBOM differs from dev) and read every cycle. Development-only packages count in `dev` and `int` unless the lockfile sets `dev: true`. Per environment you can also record the deployed versions and an image reference (`image:` is recorded only; no registry is queried).
+
+```yaml
+name: shop
+envs: [dev, prod]
+techs: [{name: php, version: "8.3"}]
+lockfiles:
+  - {type: composer, path: /repos/shop/composer.lock}
+  - {type: cyclonedx, path: /releases/shop-prod.cdx.json, env: prod}
+environments:
+  prod: {techs: {php: "8.2.30"}, image: "registry.example/shop@sha256:..."}
+```
+
+`cvewatch inventory` shows what the tool believes runs where, and what could not be read. Package names and versions are compared per ecosystem: `pip` equals `PyPI`, PyPI names are normalized (PEP 503), Maven uses `group:artifact`, and each ecosystem orders versions by its own rules (PEP 440, Maven, semver for Go, npm and Composer).
+
+## Matching, versions and noise
+
+An item matches an environment when it is about a technology it runs, or names a package it has installed.
+
+- **By structured data, which wins when present.** NVD names affected products as CPE names. A technology with `cpe: [php:php]` then matches only when the advisory names that product, so "a Moodle plugin written in PHP" no longer matches PHP. GitHub advisories list packages with ecosystem and ranges; those match installed packages exactly and the word "PHP" in them is ignored.
+- **By text, when there is no structured data.** An alias as a whole word in the title or summary (`excludes` veto it; `match_title_only` limits a source to the title; `match_structured` on the NVD source makes technologies with CPE names wait for NVD's product data).
+- **Versions.** When the feed gives affected ranges, the installed version is compared: `affected`, `not affected`, or `unchecked` when no range or version is available, or a declared series such as `8.2` cannot be decided against a patch-level bound. Findings known to be `not affected` are kept but hidden and never alerted (`-all` shows them). News and Hacker News carry no versions, so those findings stay `unchecked`.
+- **Late data.** If ranges arrive later (a CVE first seen in the news, then analysed by NVD), existing findings are re-checked. If your inventory changes, open findings are re-checked too, and the finding's history says what changed.
+- **Check the CPE names** in `techs.yaml`. The repository's CI compares them with an independent list of NVD product names, and `cvewatch doctor -online` asks NVD. A wrong name hides real advisories.
+
+`techs.yaml` can change at any time. A change affects items first seen from the next cycle on; earlier decisions are never rewritten. To look back on purpose, `cvewatch rescan` (a dry run), then `cvewatch rescan -apply`. `cvewatch why ID` shows the recorded reasons next to what today's config says.
+
+## Same issue, one record
+
+- Items sharing an advisory id belong to the same record. An advisory naming one CVE and one GHSA id unifies two records into one.
+- An article naming several CVEs (a roundup) never merges them; it is linked to each.
+- A relevant report without a shared id joins a tracked, relevant record when their titles share at least 60% of their distinctive words and are dated within 14 days. Irrelevant items never merge.
+
+Each issue keeps its age since publication, the articles in chronological order, fix evidence (patched version, patch, vendor advisory, mitigation, CISA required action; `official` means a vendor or authority said it), the CISA KEV listing with its due date, and optionally the EPSS score.
+
+## Tracking per environment
+
+Status lives per vulnerability, project and environment: `open`, `fixed`, `ignored`, or `not_affected` (a human VEX-style statement that needs a reason). Every change records who, when and why in the finding's history and in the audit log.
+
+```bash
+cvewatch assign CVE-2026-1234 -project shop -env prod -owner alice -due 2026-11-30 -ticket https://tickets.example/SEC-12
+cvewatch evidence add CVE-2026-1234 -project shop -env prod -note "patched image deployed" -url https://ci.example/run/77
+cvewatch fix CVE-2026-1234 -project shop -env dev -note "php 8.2.30"
+cvewatch not-affected CVE-2026-1234 -project shop -env dev -note "feature disabled, no network exposure"
+cvewatch evidence CVE-2026-1234          # timeline: detection, alerts, status, owners, evidence, per-environment matrix
+```
+
+## Priority and policy
+
+The default order is: known exploited (CISA KEV) first, then severity, then open in prod, then EPSS, then age. The list, alerts, digest and exports all use it; each issue carries the reasons for its position. No proprietary score is computed.
+
+Policy rules in `config.yaml` define deadlines; `cvewatch policy` lists the findings that break them (and exits non-zero, so CI or cron can notice):
+
+```yaml
+policy:
+  rules:
+    - {name: kev-prod, env: prod, kev: true, owner_within: 24h, fix_within: 168h}
+```
+
+A finding's own due date is always checked.
+
+## Notifications
+
+Channels switch on when their secret is in the environment, so one config file is safe to share: Slack (`SLACK_WEBHOOK_URL`), a signed JSON webhook (`notify.webhook`, HMAC-SHA256 in `X-Cvewatch-Signature`; works for Teams, Jira or GitLab bridges) and email (`notify.email`, SMTP with STARTTLS). Delivery is tracked per channel, so one failing channel never repeats alerts on the others. A daily digest of what is still open (`notify.digest`, e.g. prod only) goes out in the first cycle after its time; `cvewatch digest -send` sends it now.
+
+## Exports and the JSON contract
+
+`cvewatch export -format json|csv|md` lists open issues with the status of every environment. JSON from `export`, `list -json` and MCP is one versioned document (`schema_version`, `generated_at`, `count`, `issues`); the schema is in [schema/export-v1.schema.json](schema/export-v1.schema.json). Feed text sits under `untrusted`. CSV cells that could be read as spreadsheet formulas are neutralized.
 
 ## Layout
 
 | Path | Purpose |
 |---|---|
-| `app/config/config.yaml` | interval, HTTP limits, Slack, optional access rules |
-| `app/config/techs.yaml` | supported technologies: aliases, excludes, CPE names |
-| `app/config/projects/*.yaml` | one file per project: environments, techs, lockfiles |
-| `app/sources/*.yaml` | feeds to poll |
-| `app/src/` | Go code, one package per concern, see [architecture.md](architecture.md) |
-| `data/state.json` | state: seen vulnerabilities, fix status, feed cursors |
-| `data/audit.log` | append-only, hash-chained record of detections, alerts and status changes |
+| `config/config.yaml` | interval, HTTP limits, Slack, notify, policy, enrich, storage, access |
+| `config/techs.yaml` | supported technologies: aliases, excludes, CPE names (built in unless you provide one) |
+| `config/projects/*.yaml` | one file per project |
+| `sources/*.yaml` | feeds (built in unless you provide any) |
+| `data/` | state (`state.json`, or `state.db` with the SQLite backend) and `audit.log` |
 | `alerts/` | generated markdown reports and calendar pages |
 
-Examples to copy: `app/config/projects/*.yaml.example`. Relative lockfile paths are resolved against the app directory, not the working directory.
+## Storage
 
-## Matching, versions and noise
+State is one JSON file by default (diffable; one process at a time, enforced by a lock). Set `storage: {backend: sqlite}` for a SQLite file: several processes can use it, and a stale write is refused instead of overwriting newer data. Both sit behind the same `store.Storage` interface.
 
-An item matches a project when it is about a technology the project declares, or names a package in the project's lockfile.
+## Enrichment and privacy
 
-- **By text:** an alias as a whole word in the title or summary (`excludes` veto it; `match_title_only` on a source limits it to the title).
-- **By structured data, which wins when present:** NVD publishes affected products as CPE names. A technology with `cpe: [php:php]` then matches only when the advisory names that product, so "a Moodle plugin written in PHP" no longer matches PHP. Set `match_structured: true` on the NVD source to also wait for that data instead of falling back to words. GitHub advisories list packages with their ecosystem; a package advisory matches a lockfile package exactly, and the word "PHP" in it is ignored.
-- **Versions:** when the feed gives affected ranges, the version the project runs (declared tech version or lockfile version) is compared: `affected`, `not affected`, or `unchecked` when no range or version is available, or a declared series such as `8.2` cannot be decided against a patch-level bound. Findings known to be `not affected` are kept but hidden from lists and never alerted (`list -all` shows them). If ranges arrive later (a CVE first seen in the news, then analysed by NVD), existing findings are re-checked.
-- **Check the CPE names** in `techs.yaml` against the NVD CPE dictionary. A wrong name hides real advisories.
-
-`techs.yaml` can change at any time. A change affects items first seen from the next cycle on; earlier decisions are never rewritten. To look back on purpose, run `cvewatch rescan` (a dry run) and then `cvewatch rescan -apply`. Rescan only adds findings, and for records that matched nothing it can only use the stored title. `cvewatch why ID` shows the recorded reasons next to what today's config says.
-
-Min severity (`-min`, `slack.min_severity`) hides unrated items too: unrated ranks below every named severity.
-
-## Same issue, one record
-
-- Items sharing an advisory id belong to the same record.
-- An advisory that names one CVE and one GHSA id unifies two records into one (they are two names for the same flaw).
-- An article naming several CVEs, a roundup, never merges them: it is linked to each record instead.
-- A relevant report without a shared id joins a tracked, relevant record when their titles share at least 60% of their distinctive words and are dated within 14 days. Irrelevant items never merge.
-
-## Environments and tracking fixes
-
-Projects list their own environments from `dev`, `int`, `staging`, `prod`; leave the list out for all four. A project such as a middleware can have just `prod`. Plans promote in that order.
-
-Status lives per vulnerability, project and environment: `open`, `fixed` or `ignored`. The report's checkboxes show it.
-
-```bash
-cvewatch fix CVE-2026-1234 -project shop -env dev -note "php 8.2.30"
-cvewatch fix CVE-2026-1234 -project shop          # all environments
-cvewatch ignore CVE-2026-1234 -project shop -note "feature disabled"
-cvewatch reopen CVE-2026-1234 -project shop -env prod
-```
-
-## Running
-
-```bash
-cd app
-go build -o ../cvewatch ./src/cmd/cvewatch
-export SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...   # optional
-../cvewatch check                      # validate config
-../cvewatch update                     # refresh all sources now, then list (run is the same)
-../cvewatch update -min high           # only high and critical
-../cvewatch list -min medium -project shop
-../cvewatch list -all                  # also versions known to be unaffected
-../cvewatch show CVE-2026-1234         # description, fix, articles, status, plan (add -json)
-../cvewatch why CVE-2026-1234          # why it matched
-../cvewatch calendar                   # writes alerts/calendar-YYYY-MM.html
-../cvewatch calendar -month 2026-09 -text
-../cvewatch rescan                     # dry run; -apply to create findings
-../cvewatch daemon                     # refresh every `interval`
-../cvewatch mcp                        # MCP server for agents, see agents.md
-../cvewatch audit                      # verify the audit log chain
-../cvewatch version
-```
-
-The list groups open findings by severity (critical first, unrated last) and puts the newest last within each group. Items that arrived in the latest `update` are marked `NEW`.
-
-Only one process may use `data/` at a time. A second one stops with an error instead of corrupting state, so run `fix` between cycles, not during.
+`enrich: {epss: true}` asks FIRST's public EPSS service for the CVE ids you track. It is off by default because the list of CVEs you care about reveals your stack. Nothing else leaves the machine except the configured feeds and channels.
 
 ## Several people
 
-By default everyone who can run the tool may do everything. To limit that, add `access` to `config.yaml`: per actor name (`CVEWATCH_ACTOR`, else the OS user), the projects visible and whether changes are allowed. Reads are filtered, writes need write access to the project, and `update` needs write access to all projects. This is authorization on top of a local identity, not authentication; it is right for a shared server where people have their own accounts, not for exposing the tool to strangers.
+By default everyone who can run the tool may do everything. To limit that, add `access` to `config.yaml`: per actor (`CVEWATCH_ACTOR`, else the OS user), the projects visible and whether changes are allowed. Reads are filtered, writes need write access to the project, and `update` needs write access to all projects. This is authorization on top of a local identity, not authentication.
 
 ## Platforms
 
-Linux, macOS and Windows build and are tested in CI. Platform differences (file locking, owner-only files, atomic replace, stop signals) are isolated in `app/src/host`. On Windows owner-only file modes are not enforced by the OS; the files rely on the permissions of the user profile folder, so keep `data/` and `alerts/` there or restrict them with ACLs.
+Linux, macOS and Windows are built and tested in CI. Platform differences (file locking, owner-only files, atomic replace, stop signals) are isolated in `src/host`. On Windows owner-only modes are not enforced by the OS; keep `data/` and `alerts/` in the user profile or restrict them with ACLs.
 
-## Limits and next steps
+## Limits
 
-- State is one JSON file behind a `store.Storage` seam. A database adapter fits there when several people write at once.
-- Slack is the only notifier. Add another by implementing `notify.Notifier`.
-- Adding a feed type is one parser file in `app/src/feeds`, registered by name.
-- Free-text feeds (news, Hacker News) give no versions: those findings stay `unchecked`.
-- Fixes are what feeds say. Registries and container images are not queried.
-- Security and privacy: see `security.md` and `compliance.md`.
+- Fixes are what feeds say; no package or image registry is queried.
+- Free-text feeds give no versions, so those findings stay `unchecked`.
+- Images and SBOMs are inventory you provide; cvewatch does not scan them.
+- Lockfile support is listed above; yarn.lock, pnpm-lock and Pipfile without a lock are not read.
+- Authorization relies on the local identity; do not expose the tool to people you cannot identify otherwise.
+- Security and privacy: see [security.md](security.md) and [compliance.md](compliance.md). Architecture: [architecture.md](architecture.md).

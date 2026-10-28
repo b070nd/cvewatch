@@ -27,13 +27,14 @@ import (
 type Event struct {
 	Time    time.Time `json:"time"`
 	Actor   string    `json:"actor"`
-	Action  string    `json:"action"` // detected | alerted | status
+	Action  string    `json:"action"` // detected | alerted | status | assign | evidence | inventory | unified | digest
 	Vuln    string    `json:"vuln,omitempty"`
 	Project string    `json:"project,omitempty"`
 	Env     string    `json:"env,omitempty"`
 	Status  string    `json:"status,omitempty"`
 	Note    string    `json:"note,omitempty"`
-	Prev    string    `json:"prev"` // hash of the previous line; empty on the first
+	URL     string    `json:"url,omitempty"` // link attached as evidence
+	Prev    string    `json:"prev"`          // hash of the previous line; empty on the first
 }
 
 // Log is a file in the data directory. A nil *Log discards events, which
@@ -130,4 +131,35 @@ func lastHash(path string) (string, error) {
 		raw = raw[i+1:]
 	}
 	return hash(raw), nil
+}
+
+// Events returns every record in order after checking the chain. On a broken
+// chain it returns the records read so far together with the error, so
+// callers can show what they have and say it is not trustworthy.
+func (l *Log) Events() ([]Event, error) {
+	f, err := os.Open(l.path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
+	var out []Event
+	prev := ""
+	for sc.Scan() {
+		var e Event
+		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
+			return out, fmt.Errorf("line %d: not valid JSON", len(out)+1)
+		}
+		if e.Prev != prev {
+			return out, fmt.Errorf("line %d: chain broken, a record before it was changed or removed", len(out)+1)
+		}
+		prev = hash(sc.Bytes())
+		out = append(out, e)
+	}
+	return out, sc.Err()
 }

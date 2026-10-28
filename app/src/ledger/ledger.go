@@ -18,10 +18,21 @@ import (
 
 // State is everything that is persisted.
 type State struct {
+	// SchemaVersion says which layout the data has; New migrates older data.
+	SchemaVersion int `json:"schema_version"`
+	// Rev counts saves. Storage adapters use it to refuse a stale write.
+	Rev      int64                           `json:"rev"`
 	Vulns    map[string]*model.Vulnerability `json:"vulns"`
 	Findings map[string]*model.Finding       `json:"findings"`
 	Feeds    map[string]model.FeedState      `json:"feeds"`
+	// Digests remembers when each channel last got its periodic digest.
+	Digests map[string]time.Time `json:"digests,omitempty"`
 }
+
+// SchemaVersion is the current layout of State.
+//
+//	1  per-channel delivery records (Finding.Alerted) replace Finding.AlertedAt
+const SchemaVersion = 1
 
 type Ledger struct {
 	d     State
@@ -39,6 +50,10 @@ func New(s State) *Ledger {
 	if s.Feeds == nil {
 		s.Feeds = map[string]model.FeedState{}
 	}
+	if s.Digests == nil {
+		s.Digests = map[string]time.Time{}
+	}
+	migrate(&s)
 	l := &Ledger{d: s, byKey: map[string]string{}}
 	for _, v := range s.Vulns {
 		l.index(v)
@@ -75,7 +90,7 @@ func (l *Ledger) Create(it model.Item, now time.Time, techs []string) *model.Vul
 		ID: keys[0], Aliases: slices.Clone(keys[1:]), Title: it.Title, Summary: it.Summary,
 		Severity: it.Severity, CVSS: it.CVSS, Published: it.Published, FirstSeen: now,
 		Refs: []model.Ref{refOf(it)}, Affected: slices.Clone(it.Affected), Fixes: slices.Clone(it.Fixes),
-		Techs: techs,
+		KEV: it.KEV, Techs: techs,
 	}
 	if v.Severity == "" {
 		v.Severity = model.SevUnknown
@@ -134,6 +149,15 @@ func (l *Ledger) FindingsOf(vulnID string) []model.Finding {
 	return slices.DeleteFunc(l.Findings(), func(f model.Finding) bool { return f.VulnID != vulnID })
 }
 
+// Mutate lets fn adjust one finding in place; it reports whether the finding exists.
+func (l *Ledger) Mutate(key string, fn func(*model.Finding)) bool {
+	f := l.d.Findings[key]
+	if f != nil {
+		fn(f)
+	}
+	return f != nil
+}
+
 // UpdateFindings lets fn adjust every finding of one vulnerability in place.
 func (l *Ledger) UpdateFindings(vulnID string, fn func(*model.Finding)) {
 	for _, f := range l.d.Findings {
@@ -143,16 +167,56 @@ func (l *Ledger) UpdateFindings(vulnID string, fn func(*model.Finding)) {
 	}
 }
 
-// SetStatus updates findings of one vulnerability in a project; an empty env
-// means every environment. It returns how many findings changed.
-func (l *Ledger) SetStatus(vulnID, project string, env model.Env, st model.Status, note string, now time.Time) (int, error) {
+// Update describes a change to findings. Nil fields stay as they are.
+type Update struct {
+	Actor    string
+	Status   *model.Status
+	Note     *string
+	Owner    *string
+	Due      *time.Time // a pointer to the zero time clears the due date
+	Ticket   *string
+	Evidence *model.Evidence
+}
+
+// Update applies a change to the findings of one vulnerability in a project;
+// an empty env means every environment. Each change is also written to the
+// finding's history. It returns how many findings changed.
+func (l *Ledger) Update(vulnID, project string, env model.Env, u Update, now time.Time) (int, error) {
 	n := 0
 	for _, f := range l.d.Findings {
 		if f.VulnID != vulnID || f.Project != project || (env != "" && f.Env != env) {
 			continue
 		}
-		f.Status, f.Note, f.Updated = st, note, now
 		n++
+		f.Updated = now
+		if u.Status != nil {
+			f.Status = *u.Status
+			if u.Note != nil {
+				f.Note = *u.Note
+			}
+			f.History = append(f.History, model.Disposition{Time: now, Actor: u.Actor, Action: "status", Status: *u.Status, Note: f.Note})
+		} else if u.Note != nil {
+			f.Note = *u.Note
+		}
+		if u.Owner != nil || u.Due != nil || u.Ticket != nil {
+			d := model.Disposition{Time: now, Actor: u.Actor, Action: "assign"}
+			if u.Owner != nil {
+				f.Owner, d.Owner = *u.Owner, *u.Owner
+			}
+			if u.Due != nil {
+				f.Due, d.Due = *u.Due, *u.Due
+			}
+			if u.Ticket != nil {
+				f.Ticket, d.Ticket = *u.Ticket, *u.Ticket
+			}
+			f.History = append(f.History, d)
+		}
+		if u.Evidence != nil {
+			e := *u.Evidence
+			e.Time, e.Actor = now, u.Actor
+			f.Evidence = append(f.Evidence, e)
+			f.History = append(f.History, model.Disposition{Time: now, Actor: u.Actor, Action: "evidence", Note: e.Note, URL: e.URL})
+		}
 	}
 	if n == 0 {
 		return 0, fmt.Errorf("no finding for %s in project %q env %q", vulnID, project, env)
@@ -160,11 +224,39 @@ func (l *Ledger) SetStatus(vulnID, project string, env model.Env, st model.Statu
 	return n, nil
 }
 
-// MarkAlerted records that a finding reached the notifier.
-func (l *Ledger) MarkAlerted(key string, at time.Time) {
-	if f := l.d.Findings[key]; f != nil {
+// SetStatus is Update for the common case of a status and a note.
+func (l *Ledger) SetStatus(vulnID, project string, env model.Env, st model.Status, note string, now time.Time) (int, error) {
+	return l.Update(vulnID, project, env, Update{Status: &st, Note: &note}, now)
+}
+
+// MarkAlerted records that a finding reached one channel.
+func (l *Ledger) MarkAlerted(key, channel string, at time.Time) {
+	f := l.d.Findings[key]
+	if f == nil {
+		return
+	}
+	if f.Alerted == nil {
+		f.Alerted = map[string]time.Time{}
+	}
+	f.Alerted[channel] = at
+	if f.AlertedAt.IsZero() {
 		f.AlertedAt = at
 	}
+}
+
+// Digest returns when a channel last got its periodic digest (zero if never).
+func (l *Ledger) Digest(channel string) time.Time { return l.d.Digests[channel] }
+
+func (l *Ledger) SetDigest(channel string, at time.Time) { l.d.Digests[channel] = at }
+
+// SetEPSS records the exploit probability for a vulnerability.
+func (l *Ledger) SetEPSS(id string, e model.EPSS) bool {
+	v := l.d.Vulns[id]
+	if v == nil || (v.EPSS != nil && *v.EPSS == e) {
+		return false
+	}
+	v.EPSS = &e
+	return true
 }
 
 // Prune forgets vulnerabilities that never produced a finding and were first
@@ -191,3 +283,15 @@ func (l *Ledger) Prune(before time.Time) int {
 
 func (l *Ledger) Feed(id string) model.FeedState       { return l.d.Feeds[id] }
 func (l *Ledger) SetFeed(id string, f model.FeedState) { l.d.Feeds[id] = f }
+
+// migrate brings older state up to SchemaVersion. Each step is idempotent.
+func migrate(s *State) {
+	if s.SchemaVersion < 1 {
+		for _, f := range s.Findings {
+			if !f.AlertedAt.IsZero() && f.Alerted == nil {
+				f.Alerted = map[string]time.Time{"slack": f.AlertedAt} // before channels, Slack was the only one
+			}
+		}
+	}
+	s.SchemaVersion = SchemaVersion
+}

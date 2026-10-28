@@ -1,0 +1,16 @@
+# Product names as listed in the NVD CPE dictionary, written down independently
+# of techs.yaml. A CPE in the shipped techs.yaml that is not on this list fails CI,
+# because a wrong name silently hides real advisories. Add a name here only after
+# checking it in the dictionary (cvewatch doctor -online does that).
+# tech vendor:product
+php php:php
+nodejs nodejs:node.js
+nextjs vercel:next.js
+gitlab gitlab:gitlab
+elasticsearch elastic:elasticsearch
+magento magento:magento
+magento adobe:commerce
+nginx nginx:nginx
+redis redis:redis
+go golang:go
+python python:python

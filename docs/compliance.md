@@ -19,6 +19,8 @@ Article 20 makes management bodies responsible for oversight. The open-findings 
 
 ### Evidence an auditor may ask for
 
+`cvewatch evidence ID` assembles one issue's evidence pack: when it was published and first seen, who was alerted, every status change with actor, time and reason, owners, due dates, tickets, attached evidence, and the per-environment matrix, together with whether the audit chain verified. `cvewatch export` gives the open-items list with every environment's status as JSON, CSV or Markdown. `cvewatch policy` shows missed deadlines.
+
 | Question | Where the answer is |
 |---|---|
 | When did we learn about this issue? | `detected` record in `data/audit.log`; `first_seen` in `cvewatch show ID -json` |
@@ -49,10 +51,12 @@ Article 20 makes management bodies responsible for oversight. The open-findings 
 |---|---|---|
 | Vulnerability titles, summaries, links, severity | No, by design | Titles may mention a person by chance (for example a researcher); the tool keeps no author fields |
 | Project names, technologies, package names and versions | No | Confidential rather than personal. They describe your systems |
-| `-note` text on a status change | Possibly | Free text. Avoid names; use ticket ids |
+| `-note` text, evidence notes, owner and ticket fields | Possibly | Free text and names of people who own work. Use a team name or alias as owner and ticket ids in notes if you do not want personal data in the tool |
 | `actor` in the audit log | Yes | Defaults to the OS user name of whoever ran the command. Set `CVEWATCH_ACTOR` to a team name or pseudonym to avoid recording a person |
 | Slack messages | Possibly | Contain vulnerability ids, project names and environments. Slack is a processor for you |
 | Outbound requests | IP address | Feed providers see your server's IP address and the `user_agent` string. The default User-Agent contains no personal data |
+| EPSS lookups (opt-in) | No personal data | Sends CVE ids of tracked issues to FIRST. This reveals which vulnerabilities you track, so it is off by default |
+| Webhook and email recipients | Yes, for email | Recipient addresses are in your config; messages contain vulnerability ids, project names and environments |
 
 There are no cookies, accounts, analytics or telemetry.
 

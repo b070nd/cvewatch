@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -39,6 +40,17 @@ var parsers = map[string]parser{
 	"nvd":  {parseNVD, acceptJSON},
 	"kev":  {parseKEV, acceptJSON},
 	"ghsa": {parseGHSA, "application/vnd.github+json"},
+}
+
+// Types lists the source types Fetch understands, sorted, so config and
+// doctor can validate them without a request.
+func Types() []string {
+	out := make([]string, 0, len(parsers))
+	for t := range parsers {
+		out = append(out, t)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // Fetch downloads src and returns its new items and the validators to store.

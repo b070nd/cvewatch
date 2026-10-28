@@ -8,7 +8,7 @@ import (
 	"github.com/b070nd/cvewatch/app/src/model"
 )
 
-func techsOf(j *Judge, it model.Item) []string { return j.Judge(it, nil, nil).Techs }
+func techsOf(j *Judge, it model.Item) []string { return j.Judge(it, nil).Techs }
 
 func TestWholeWordOnly(t *testing.T) {
 	j := New([]model.Tech{
@@ -33,7 +33,7 @@ func TestWholeWordOnly(t *testing.T) {
 
 func TestExcludesAndTitleOnlyExplainThemselves(t *testing.T) {
 	j := New([]model.Tech{{Name: "php", Excludes: []string{"wordpress", "plugin for"}}})
-	v := j.Judge(model.Item{Title: "Gallery plugin for WordPress, PHP code injection"}, nil, nil)
+	v := j.Judge(model.Item{Title: "Gallery plugin for WordPress, PHP code injection"}, nil)
 	if v.Relevant() || len(v.Notes) != 1 || !strings.Contains(v.Notes[0], "excluded") {
 		t.Fatalf("exclude must block and say why: %+v", v)
 	}
@@ -59,28 +59,28 @@ func TestCPEDataBeatsTextMentions(t *testing.T) {
 	projects := []model.Project{{Name: "shop", Techs: []model.ProjectTech{{Name: "php", Version: "8.2.10"}}}}
 
 	// The text says PHP but the product data names Moodle: not about PHP.
-	if v := j.Judge(nvdItem("moodle:moodle"), projects, nil); v.Relevant() || len(v.Notes) == 0 {
+	if v := j.Judge(nvdItem("moodle:moodle"), targetsOf(projects, nil)); v.Relevant() || len(v.Notes) == 0 {
 		t.Fatalf("other product must not match: %+v", v)
 	}
 	// A package advisory (GHSA style) naming a PHP library says "PHP" in passing too.
 	pkg := model.Item{Title: "Symfony flaw in a PHP framework", Affected: []model.Affected{{Ecosystem: "composer", Name: "symfony/http-kernel"}}}
-	if v := j.Judge(pkg, projects, nil); v.Relevant() {
+	if v := j.Judge(pkg, targetsOf(projects, nil)); v.Relevant() {
 		t.Fatalf("package data must outrank the word PHP: %+v", v)
 	}
 	// Real PHP advisory, installed version inside and outside the range.
 	rng := model.Range{Max: "8.2.30", MaxExcl: true}
-	v := j.Judge(nvdItem("php:php", rng), projects, nil)
+	v := j.Judge(nvdItem("php:php", rng), targetsOf(projects, nil))
 	if len(v.Matches) != 1 || v.Matches[0].Applies != model.AppAffected {
 		t.Fatalf("8.2.10 < 8.2.30 must be affected: %+v", v.Matches)
 	}
 	projects[0].Techs[0].Version = "8.3.1"
-	v = j.Judge(nvdItem("php:php", rng), projects, nil)
+	v = j.Judge(nvdItem("php:php", rng), targetsOf(projects, nil))
 	if len(v.Matches) != 1 || v.Matches[0].Applies != model.AppNotAffected {
 		t.Fatalf("8.3.1 must be outside: %+v", v.Matches)
 	}
 	// A tech declared by series only cannot be decided against a patch-level bound.
 	projects[0].Techs[0].Version = "8.2"
-	if v = j.Judge(nvdItem("php:php", rng), projects, nil); v.Matches[0].Applies != model.AppUnknown {
+	if v = j.Judge(nvdItem("php:php", rng), targetsOf(projects, nil)); v.Matches[0].Applies != model.AppUnknown {
 		t.Fatalf("series vs patch bound must be unknown: %+v", v.Matches)
 	}
 }
@@ -88,7 +88,7 @@ func TestCPEDataBeatsTextMentions(t *testing.T) {
 func TestStructuredOnlyWaitsForProductData(t *testing.T) {
 	j := New([]model.Tech{{Name: "php", CPE: []string{"php:php"}}, {Name: "nginx"}})
 	fresh := model.Item{Title: "CVE-2026-1: flaw in a CMS written in PHP and served by nginx", StructuredOnly: true}
-	v := j.Judge(fresh, nil, nil)
+	v := j.Judge(fresh, nil)
 	if len(v.Techs) != 1 || v.Techs[0] != "nginx" || len(v.Notes) != 1 {
 		t.Fatalf("php (has cpe) must wait, nginx (no cpe) still matches by text: %+v", v)
 	}
@@ -110,18 +110,18 @@ func TestPackagesStructuredAndScopedText(t *testing.T) {
 	ghsa := model.Item{Title: "Prototype pollution in lodash", Affected: []model.Affected{
 		{Ecosystem: "npm", Name: "lodash", Ranges: []model.Range{{Max: "4.17.21", MaxExcl: true}}},
 	}}
-	v := j.Judge(ghsa, projects, pkgs)
+	v := j.Judge(ghsa, targetsOf(projects, pkgs))
 	if len(v.Matches) != 1 || v.Matches[0].Applies != model.AppAffected || v.Matches[0].Installed[0].Label() != "lodash@4.17.20" {
 		t.Fatalf("structured package: %+v", v.Matches)
 	}
 	// A different ecosystem with the same name is not our package.
 	ghsa.Affected[0].Ecosystem = "pip"
-	if v := j.Judge(ghsa, projects, pkgs); len(v.Matches) != 0 {
+	if v := j.Judge(ghsa, targetsOf(projects, pkgs)); len(v.Matches) != 0 {
 		t.Fatalf("ecosystem must match: %+v", v.Matches)
 	}
 	// Free text names only scoped packages, and never when the feed is structured.
 	text := model.Item{Title: "symfony/http-kernel header injection; express mentioned"}
-	v = j.Judge(text, projects, pkgs)
+	v = j.Judge(text, targetsOf(projects, pkgs))
 	if len(v.Matches) != 1 || v.Matches[0].Applies != model.AppUnknown || len(v.Matches[0].Installed) != 1 {
 		t.Fatalf("scoped text match: %+v", v.Matches)
 	}
@@ -139,5 +139,58 @@ func TestReassessUsesLateRanges(t *testing.T) {
 	}
 	if got, _ := j.Reassess(in, nil); got != model.AppUnknown {
 		t.Fatalf("no data must stay unknown, got %v", got)
+	}
+}
+
+// targetsOf builds one production target per project for tests that do not care about environments.
+func targetsOf(projects []model.Project, pkgs map[string][]model.Package) []Target {
+	var out []Target
+	for _, p := range projects {
+		out = append(out, Target{Project: p.Name, Env: model.EnvProd, Techs: p.Techs, Packages: pkgs[p.Name]})
+	}
+	return out
+}
+
+func TestPerEnvironmentVersionsGiveDifferentVerdicts(t *testing.T) {
+	j := New([]model.Tech{{Name: "php", CPE: []string{"php:php"}}})
+	rng := model.Range{Max: "8.2.30", MaxExcl: true}
+	targets := []Target{
+		{Project: "shop", Env: model.EnvDev, Techs: []model.ProjectTech{{Name: "php", Version: "8.3.1"}}},
+		{Project: "shop", Env: model.EnvProd, Techs: []model.ProjectTech{{Name: "php", Version: "8.2.10"}}},
+	}
+	v := j.Judge(nvdItem("php:php", rng), targets)
+	if len(v.Matches) != 2 || v.Matches[0].Env != model.EnvDev || v.Matches[0].Applies != model.AppNotAffected ||
+		v.Matches[1].Env != model.EnvProd || v.Matches[1].Applies != model.AppAffected {
+		t.Fatalf("dev runs 8.3.1 (outside), prod runs 8.2.10 (inside): %+v", v.Matches)
+	}
+}
+
+func TestPackageNamesMatchAcrossSpellings(t *testing.T) {
+	j := New(nil)
+	targets := []Target{{Project: "api", Env: model.EnvProd, Packages: []model.Package{
+		{Name: "django-rest-framework", Version: "3.14.0", Ecosystem: "pypi"},
+		{Name: "org.apache.logging.log4j:log4j-core", Version: "2.14.1", Ecosystem: "maven"},
+	}}}
+	it := model.Item{Title: "flaws", Affected: []model.Affected{
+		{Ecosystem: "pip", Name: "Django_REST.framework", Ranges: []model.Range{{Max: "3.15.0", MaxExcl: true}}},
+		{Ecosystem: "maven", Name: "org.apache.logging.log4j:log4j-core", Ranges: []model.Range{{Max: "2.17.1", MaxExcl: true}}},
+	}}
+	v := j.Judge(it, targets)
+	if len(v.Matches) != 1 || len(v.Matches[0].Installed) != 2 || v.Matches[0].Applies != model.AppAffected {
+		t.Fatalf("pip == pypi and PEP 503 names must match, maven group:artifact too: %+v", v.Matches)
+	}
+}
+
+func TestTargetFindFollowsInventoryChanges(t *testing.T) {
+	tg := Target{Techs: []model.ProjectTech{{Name: "php", Version: "8.2.30"}},
+		Packages: []model.Package{{Name: "lodash", Version: "4.17.21", Ecosystem: "npm"}, {Name: "lodash", Version: "3.0.0", Ecosystem: "npm"}}}
+	if got, ok := tg.Find(model.Installed{Name: "PHP", Via: "tech", Version: "8.2.10"}); !ok || got.Version != "8.2.30" {
+		t.Fatalf("tech upgrade: %+v %v", got, ok)
+	}
+	if got, ok := tg.Find(model.Installed{Name: "lodash", Ecosystem: "npm", Via: "package", Version: "3.0.0"}); !ok || got.Version != "3.0.0" {
+		t.Fatalf("same version wins among several: %+v", got)
+	}
+	if _, ok := tg.Find(model.Installed{Name: "gone", Ecosystem: "npm", Via: "package"}); ok {
+		t.Fatal("removed packages are not found")
 	}
 }

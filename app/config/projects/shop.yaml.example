@@ -1,4 +1,5 @@
-# Copy to <name>.yaml (any *.yaml in this folder is loaded and stays untracked).
+# Copy to <name>.yaml (any *.yaml in this folder is loaded and stays untracked),
+# or let `cvewatch init -repo /path/to/repo` write one for you.
 name: shop
 envs: [dev, int, staging, prod]   # omit for all four
 techs:                            # names must exist in techs.yaml
@@ -8,3 +9,8 @@ techs:                            # names must exist in techs.yaml
 lockfiles:                        # re-read every run
   - {type: composer, path: /path/to/shop/composer.lock}
   - {type: npm, path: /path/to/shop/package-lock.json}
+  # - {type: cyclonedx, path: /path/to/shop-prod.cdx.json, env: prod}   # an SBOM for one environment
+environments:                     # what actually runs where
+  prod:
+    techs: {php: "8.2.30"}
+    image: registry.example/shop@sha256:...   # recorded only

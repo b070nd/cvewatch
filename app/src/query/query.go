@@ -13,14 +13,17 @@ import (
 	"github.com/b070nd/cvewatch/app/src/calendar"
 	"github.com/b070nd/cvewatch/app/src/ledger"
 	"github.com/b070nd/cvewatch/app/src/model"
+	"github.com/b070nd/cvewatch/app/src/priority"
 )
 
 // Filter narrows a listing. Zero values mean no restriction.
 type Filter struct {
 	Min      model.Severity // hide anything below this severity
 	Project  string         // only this project
+	Env      model.Env      // only this environment
 	Projects []string       // only these projects (access control); empty means all
 	All      bool           // include targets whose version is not affected
+	Closed   bool           // also list the fixed, ignored and not-affected targets of issues that still have an open one
 }
 
 func (f Filter) allows(project string) bool {
@@ -30,6 +33,8 @@ func (f Filter) allows(project string) bool {
 	return len(f.Projects) == 0 || slices.Contains(f.Projects, project)
 }
 
+func (f Filter) allowsEnv(env model.Env) bool { return f.Env == "" || f.Env == env }
+
 // Target is one project environment affected by an issue.
 type Target struct {
 	Project string              `json:"project"`
@@ -38,7 +43,22 @@ type Target struct {
 	Applies model.Applicability `json:"applies"`
 	Note    string              `json:"note,omitempty"`
 	Matched []string            `json:"matched"`
-	Reasons []string            `json:"reasons,omitempty"`
+	Reasons []string            `json:"reasons,omitempty"` // why this finding exists, in plain words
+	Owner   string              `json:"owner,omitempty"`
+	Due     time.Time           `json:"due,omitempty"`
+	Overdue bool                `json:"overdue,omitempty"`
+	Ticket  string              `json:"ticket,omitempty"`
+	Updated time.Time           `json:"updated"`
+	// Evidence counts attached notes and links; the entries are in the evidence pack.
+	Evidence int `json:"evidence,omitempty"`
+}
+
+// KEVInfo is the CISA Known Exploited Vulnerabilities listing. The required
+// action text is feed text and sits under Untrusted.
+type KEVInfo struct {
+	DateAdded  time.Time `json:"date_added,omitempty"`
+	DueDate    time.Time `json:"due_date,omitempty"`
+	Ransomware bool      `json:"ransomware,omitempty"`
 }
 
 // Article is one report about the issue.
@@ -56,6 +76,7 @@ type Untrusted struct {
 	Description string      `json:"description,omitempty"`
 	Articles    []Article   `json:"articles"` // chronological, oldest first
 	Fixes       []model.Fix `json:"fixes,omitempty"`
+	KEVAction   string      `json:"kev_action,omitempty"`
 }
 
 // FixInfo says whether a remedy is known; the evidence is in Untrusted.Fixes.
@@ -78,20 +99,26 @@ type Issue struct {
 	Applies      model.Applicability `json:"applies"` // most urgent over the targets
 	ArticleCount int                 `json:"article_count"`
 	Fix          FixInfo             `json:"fix"`
+	KEV          *KEVInfo            `json:"kev,omitempty"`
+	EPSS         *model.EPSS         `json:"epss,omitempty"`
+	Priority     []string            `json:"priority,omitempty"` // why it sits where it does, from our own data
+	ProdOpen     bool                `json:"prod_open"`
 	Report       string              `json:"report,omitempty"` // markdown file with the plan
 	Targets      []Target            `json:"targets"`
 	Untrusted    Untrusted           `json:"untrusted"`
 }
 
-// Open returns issues that still have an open finding, most severe first and
-// newest last within a severity. Targets hold only open findings, and
-// versions known to be unaffected are hidden unless the filter asks for all.
+// Open returns issues that still have an open finding, in priority order:
+// KEV first, then severity, open in prod, EPSS and age (see package priority).
+// Targets hold only open findings unless the filter asks for closed ones, and
+// versions known to be unaffected are hidden unless it asks for all.
 func Open(l *ledger.Ledger, f Filter, now time.Time) []Issue {
 	byID := map[string]*Issue{}
 	var out []*Issue
-	for _, fd := range l.Findings() {
+	all := l.Findings()
+	for _, fd := range all {
 		v := l.Vuln(fd.VulnID)
-		if fd.Status != model.StatusOpen || v == nil || !v.Severity.AtLeast(f.Min) || !f.allows(fd.Project) ||
+		if fd.Status != model.StatusOpen || v == nil || !v.Severity.AtLeast(f.Min) || !f.allows(fd.Project) || !f.allowsEnv(fd.Env) ||
 			(!f.All && fd.Applies == model.AppNotAffected) {
 			continue
 		}
@@ -102,14 +129,31 @@ func Open(l *ledger.Ledger, f Filter, now time.Time) []Issue {
 			byID[v.ID] = is
 			out = append(out, is)
 		}
-		is.Targets = append(is.Targets, target(fd))
+		is.Targets = append(is.Targets, target(fd, now))
 		is.Applies = worst(is.Applies, fd.Applies, len(is.Targets) == 1)
+		is.ProdOpen = is.ProdOpen || fd.Env == model.EnvProd
+	}
+	if f.Closed {
+		for _, fd := range all {
+			if is := byID[fd.VulnID]; is != nil && fd.Status != model.StatusOpen && f.allows(fd.Project) && f.allowsEnv(fd.Env) {
+				is.Targets = append(is.Targets, target(fd, now))
+			}
+		}
+		for _, is := range out {
+			slices.SortStableFunc(is.Targets, func(a, b Target) int {
+				if c := strings.Compare(a.Project, b.Project); c != 0 {
+					return c
+				}
+				return slices.Index(model.AllEnvs, a.Env) - slices.Index(model.AllEnvs, b.Env)
+			})
+		}
+	}
+	for _, is := range out {
+		facts := factsOf(l.Vuln(is.ID), is.ProdOpen)
+		is.Priority = priority.Reasons(facts, now)
 	}
 	slices.SortStableFunc(out, func(a, b *Issue) int {
-		if d := b.Severity.Rank() - a.Severity.Rank(); d != 0 {
-			return d
-		}
-		if c := a.FirstSeen.Compare(b.FirstSeen); c != 0 {
+		if c := priority.Compare(factsOf(l.Vuln(a.ID), a.ProdOpen), factsOf(l.Vuln(b.ID), b.ProdOpen)); c != 0 {
 			return c
 		}
 		return strings.Compare(a.ID, b.ID)
@@ -119,6 +163,10 @@ func Open(l *ledger.Ledger, f Filter, now time.Time) []Issue {
 		res[i] = *p
 	}
 	return res
+}
+
+func factsOf(v *model.Vulnerability, prodOpen bool) priority.Facts {
+	return priority.Facts{Severity: v.Severity, KEV: v.KEV, EPSS: v.EPSS, Published: v.Published, FirstSeen: v.FirstSeen, ProdOpen: prodOpen}
 }
 
 // One returns an issue with all its targets in any status. The id may be an alias.
@@ -131,8 +179,9 @@ func One(l *ledger.Ledger, id string, f Filter, now time.Time) (Issue, error) {
 	is := issue(v, now)
 	for _, fd := range l.FindingsOf(v.ID) {
 		if f.allows(fd.Project) {
-			is.Targets = append(is.Targets, target(fd))
+			is.Targets = append(is.Targets, target(fd, now))
 			is.Applies = worst(is.Applies, fd.Applies, len(is.Targets) == 1)
+			is.ProdOpen = is.ProdOpen || (fd.Env == model.EnvProd && fd.Status == model.StatusOpen)
 		}
 	}
 	if len(f.Projects) > 0 && len(is.Targets) == 0 {
@@ -182,13 +231,20 @@ func issue(v *model.Vulnerability, now time.Time) Issue {
 	for _, f := range v.Fixes {
 		fix.Official = fix.Official || f.Official
 	}
+	var kev *KEVInfo
+	kevAction := ""
+	if v.KEV != nil {
+		kev = &KEVInfo{DateAdded: v.KEV.DateAdded, DueDate: v.KEV.DueDate, Ransomware: v.KEV.Ransomware}
+		kevAction = Clip(v.KEV.Action, 200)
+	}
 	return Issue{
+		KEV: kev, EPSS: v.EPSS,
 		ID: v.ID, Aliases: v.Aliases, Severity: v.Severity, CVSS: v.CVSS, Published: v.Published,
 		Age: Age(v.Published, now), AgeHours: int(now.Sub(v.Published).Hours()),
 		FirstSeen: v.FirstSeen, Techs: v.Techs, ArticleCount: len(arts), Fix: fix,
 		Report: v.ReportPath, Targets: []Target{},
 		Untrusted: Untrusted{
-			Title: Clip(v.Title, 300), Description: Clip(v.Summary, 600), Articles: arts, Fixes: cleanFixes(v.Fixes),
+			Title: Clip(v.Title, 300), Description: Clip(v.Summary, 600), Articles: arts, Fixes: cleanFixes(v.Fixes), KEVAction: kevAction,
 		},
 	}
 }
@@ -225,12 +281,16 @@ func cleanFixes(fs []model.Fix) []model.Fix {
 	return out
 }
 
-func target(f model.Finding) Target {
+func target(f model.Finding, now time.Time) Target {
 	a := f.Applies
 	if a == "" {
 		a = model.AppUnknown
 	}
-	return Target{Project: f.Project, Env: f.Env, Status: f.Status, Applies: a, Note: f.Note, Matched: f.Matched, Reasons: f.Reasons}
+	return Target{
+		Project: f.Project, Env: f.Env, Status: f.Status, Applies: a, Note: f.Note, Matched: f.Matched, Reasons: f.Reasons,
+		Owner: f.Owner, Due: f.Due, Overdue: !f.Due.IsZero() && now.After(f.Due) && f.Status == model.StatusOpen,
+		Ticket: f.Ticket, Updated: f.Updated, Evidence: len(f.Evidence),
+	}
 }
 
 // Age renders the time since t in the two most useful units, e.g. "12m",
@@ -277,4 +337,10 @@ func Clip(s string, max int) string {
 		}
 	}
 	return string(r[:cut]) + "…"
+}
+
+// Compare orders two vulnerabilities by priority: a negative result puts a
+// first. prodA and prodB say whether each is open in prod.
+func Compare(a, b *model.Vulnerability, prodA, prodB bool) int {
+	return priority.Compare(factsOf(a, prodA), factsOf(b, prodB))
 }

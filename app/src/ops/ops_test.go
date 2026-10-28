@@ -169,3 +169,153 @@ func TestExplainAndCalendar(t *testing.T) {
 		t.Fatal("other months must be empty")
 	}
 }
+
+func TestNotAffectedStatementNeedsAReason(t *testing.T) {
+	cfg, st := bundle(t, nil), seeded(t)
+	s := open(t, cfg, st, "alice")
+	c := Change{ID: "CVE-2026-1", Project: "shop", Env: model.EnvProd, Status: model.StatusNotAffected}
+	if _, err := s.Resolve(c); err == nil {
+		t.Fatal("a VEX-style statement without a reason must be rejected")
+	}
+	c.Note = "feature disabled in prod"
+	if _, err := s.Resolve(c); err != nil {
+		t.Fatal(err)
+	}
+	f := s.Ledger.FindingsOf("CVE-2026-1")[1] // order: mw, shop
+	if f.Status != model.StatusNotAffected || f.Note != "feature disabled in prod" || f.History[0].Actor != "alice" {
+		t.Fatalf("reason, actor and time must be recorded: %+v", f)
+	}
+	events, _ := s.Audit.Events()
+	if len(events) != 1 || events[0].Status != "not_affected" || events[0].Note != "feature disabled in prod" {
+		t.Fatalf("audit: %+v", events)
+	}
+}
+
+func TestAssignAndAttachEvidence(t *testing.T) {
+	cfg, st := bundle(t, nil), seeded(t)
+	s := open(t, cfg, st, "alice")
+	a := Assignment{ID: "CVE-2026-1", Project: "shop", Env: model.EnvProd, Owner: "bob", Due: "2026-11-30", Ticket: "https://tickets.test/1"}
+	if n, err := s.Assign(a); err != nil || n != 1 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	f := s.Ledger.FindingsOf("CVE-2026-1")[1] // order: mw, shop
+	if f.Owner != "bob" || f.Due.Format("2006-01-02") != "2026-11-30" || f.Ticket != "https://tickets.test/1" {
+		t.Fatalf("assignment: %+v", f)
+	}
+	for name, bad := range map[string]Assignment{
+		"due":     {ID: "CVE-2026-1", Project: "shop", Due: "next week"},
+		"nothing": {ID: "CVE-2026-1", Project: "shop"},
+		"project": {ID: "CVE-2026-1", Project: "nope", Owner: "x"},
+	} {
+		if _, err := s.Assign(bad); err == nil {
+			t.Errorf("%s must be rejected", name)
+		}
+	}
+	if _, err := s.Assign(Assignment{ID: "CVE-2026-1", Project: "shop", Env: model.EnvProd, Owner: "-", Due: "none"}); err != nil {
+		t.Fatal(err)
+	}
+	if f := s.Ledger.FindingsOf("CVE-2026-1")[1]; f.Owner != "" || !f.Due.IsZero() || f.Ticket != "https://tickets.test/1" {
+		t.Fatalf("clearing owner and due must leave the ticket: %+v", f)
+	}
+
+	if _, err := s.Attach(Attachment{ID: "CVE-2026-1", Project: "shop", URL: "javascript:alert(1)"}); err == nil {
+		t.Fatal("evidence links must be plain http(s)")
+	}
+	if _, err := s.Attach(Attachment{ID: "CVE-2026-1", Project: "shop"}); err == nil {
+		t.Fatal("empty evidence must be rejected")
+	}
+	if n, err := s.Attach(Attachment{ID: "CVE-2026-1", Project: "shop", Env: model.EnvProd, Note: "deployed in release 42\nsecond line", URL: "https://ci.test/run/42"}); err != nil || n != 1 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	f = s.Ledger.FindingsOf("CVE-2026-1")[1]
+	if len(f.Evidence) != 1 || f.Evidence[0].Actor != "alice" || strings.Contains(f.Evidence[0].Note, "\n") {
+		t.Fatalf("evidence: %+v", f.Evidence)
+	}
+	if n, err := s.Audit.Verify(); err != nil || n != 3 { // assign, assign, evidence
+		t.Fatalf("every change must be audited in one intact chain: n=%d err=%v", n, err)
+	}
+}
+
+func TestPolicyViolationsAndOverdue(t *testing.T) {
+	cfg, st := bundle(t, nil), seeded(t)
+	cfg.Policy.Rules = []config.PolicyRule{{Name: "owner-fast", Env: model.EnvProd, OwnerWithin: time.Hour}}
+	s := open(t, cfg, st, "alice")
+	v, err := s.Violations()
+	if err != nil || len(v) != 2 || v[0].Rule != "owner-fast" {
+		t.Fatalf("both prod findings have no owner after 48h: %+v %v", v, err)
+	}
+	if _, err := s.Assign(Assignment{ID: "CVE-2026-1", Project: "shop", Owner: "bob", Due: "2026-10-02"}); err != nil {
+		t.Fatal(err)
+	}
+	v, _ = s.Violations()
+	reasons := map[string]bool{}
+	for _, x := range v {
+		reasons[x.Subject.Project+": "+x.Reason] = true
+	}
+	if len(v) != 2 || !reasons["mw: no owner within 1h"] || !reasons["shop: past its due date 2026-10-02"] {
+		t.Fatalf("shop has an owner but missed its due date, mw still has none: %v", reasons)
+	}
+}
+
+func TestExportListsEveryEnvironmentOfOpenIssues(t *testing.T) {
+	cfg, st := bundle(t, nil), seeded(t)
+	s := open(t, cfg, st, "alice")
+	if _, err := s.Resolve(Change{ID: "CVE-2026-1", Project: "shop", Env: model.EnvProd, Status: model.StatusFixed}); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := s.Export(query.Filter{})
+	if err != nil || doc.SchemaVersion != 1 || doc.Count != 1 || len(doc.Issues[0].Targets) != 2 {
+		t.Fatalf("an issue still open in mw lists shop's fixed environment too: %+v %v", doc, err)
+	}
+	status := map[string]model.Status{}
+	for _, tg := range doc.Issues[0].Targets {
+		status[tg.Project] = tg.Status
+	}
+	if status["shop"] != model.StatusFixed || status["mw"] != model.StatusOpen {
+		t.Fatalf("per-environment truth: %v", status)
+	}
+}
+
+func TestEvidencePackFollowsTheAuditTrail(t *testing.T) {
+	cfg, st := bundle(t, nil), seeded(t)
+	s := open(t, cfg, st, "alice")
+	if _, err := s.Resolve(Change{ID: "CVE-2026-1", Project: "shop", Env: model.EnvProd, Status: model.StatusFixed, Note: "MR 9"}); err != nil {
+		t.Fatal(err)
+	}
+	pack, err := s.Evidence("cve-2026-1")
+	if err != nil || !pack.AuditIntact || len(pack.Matrix) != 2 {
+		t.Fatalf("pack: %+v %v", pack, err)
+	}
+	found := false
+	for _, e := range pack.Timeline {
+		found = found || (e.Kind == "status" && e.Actor == "alice" && strings.Contains(e.Detail, "MR 9"))
+	}
+	if !found {
+		t.Fatalf("the status change must be on the timeline: %+v", pack.Timeline)
+	}
+	scoped := bundle(t, map[string]config.Grant{"carol": {Projects: []string{"mw"}}})
+	scoped.DataDir = cfg.DataDir
+	cs := open(t, scoped, st, "carol")
+	p2, err := cs.Evidence("CVE-2026-1")
+	if err != nil || len(p2.Matrix) != 1 || p2.Matrix[0].Project != "mw" {
+		t.Fatalf("an actor limited to mw must not see shop: %+v %v", p2.Matrix, err)
+	}
+	for _, e := range p2.Timeline {
+		if strings.Contains(e.Detail, "shop") {
+			t.Fatalf("audit records of other projects must be hidden: %+v", e)
+		}
+	}
+}
+
+func TestDigestAndInventoryViews(t *testing.T) {
+	cfg, st := bundle(t, nil), seeded(t)
+	s := open(t, cfg, st, "alice")
+	d, err := s.Digest()
+	if err != nil || d.Open != 1 || d.BySeverity[model.SevHigh] != 1 || d.Items[0].ID != "CVE-2026-1" {
+		t.Fatalf("digest: %+v %v", d, err)
+	}
+	inv, err := s.Inventory("shop")
+	if err != nil || len(inv.Targets) != 4 || inv.Targets[0].Project != "shop" {
+		t.Fatalf("shop runs in four environments: %+v %v", inv.Targets, err)
+	}
+}

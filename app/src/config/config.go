@@ -17,6 +17,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	shipped "github.com/b070nd/cvewatch/app/src/defaults"
+	"github.com/b070nd/cvewatch/app/src/matrix"
 	"github.com/b070nd/cvewatch/app/src/model"
 )
 
@@ -28,12 +30,75 @@ type Settings struct {
 	AlertsDir string        `yaml:"alerts_dir"` // markdown reports land here
 	HTTP      HTTP          `yaml:"http"`
 	Slack     Slack         `yaml:"slack"`
+	Notify    Notify        `yaml:"notify"`  // channels besides Slack, and the digest
+	Policy    Policy        `yaml:"policy"`  // deadlines the report command checks
+	Enrich    Enrich        `yaml:"enrich"`  // optional outside lookups
+	Storage   Storage       `yaml:"storage"` // where state lives
 	// Access optionally limits who may see and change which projects, by the
 	// actor name (CVEWATCH_ACTOR or the OS user). Empty means everyone may do
 	// everything, which is right for a single operator. This is authorization
 	// on top of a local identity, not authentication: do not expose the
 	// tool to people you cannot identify by other means.
 	Access map[string]Grant `yaml:"access"`
+}
+
+// Notify configures channels besides Slack. A channel is active when its
+// secret environment variable is set, so a config file can be shared safely.
+type Notify struct {
+	Webhook Webhook `yaml:"webhook"`
+	Email   Email   `yaml:"email"`
+	Digest  Digest  `yaml:"digest"`
+}
+
+type Webhook struct {
+	URLEnv       string         `yaml:"url_env"`    // env var holding the https URL
+	SecretEnv    string         `yaml:"secret_env"` // env var holding the HMAC secret; optional
+	MinSeverity  model.Severity `yaml:"min_severity"`
+	AllowPrivate bool           `yaml:"allow_private"` // internal receivers over http
+}
+
+type Email struct {
+	Host        string         `yaml:"host"` // empty disables email
+	Port        int            `yaml:"port"` // default 587
+	From        string         `yaml:"from"`
+	To          []string       `yaml:"to"`
+	UsernameEnv string         `yaml:"username_env"`
+	PasswordEnv string         `yaml:"password_env"`
+	MinSeverity model.Severity `yaml:"min_severity"`
+}
+
+// Digest is a periodic "still open" summary, sent in the first cycle after DailyAt.
+type Digest struct {
+	DailyAt  string    `yaml:"daily_at"` // local time "08:00"; empty disables
+	Env      model.Env `yaml:"env"`      // only findings in this environment; empty means all
+	Channels []string  `yaml:"channels"` // slack, webhook, email; empty means all that are active
+	Max      int       `yaml:"max"`      // items listed, default 20
+}
+
+// Policy lists rules; `cvewatch policy` reports the findings that break them.
+type Policy struct {
+	Rules []PolicyRule `yaml:"rules"`
+}
+
+// PolicyRule says which findings it covers and what must be true within what time.
+type PolicyRule struct {
+	Name        string         `yaml:"name"`
+	Env         model.Env      `yaml:"env"`          // empty means every environment
+	KEV         bool           `yaml:"kev"`          // only issues on the CISA KEV list
+	MinSeverity model.Severity `yaml:"min_severity"` // only this severe or worse
+	OwnerWithin time.Duration  `yaml:"owner_within"` // an owner must be set this long after detection
+	FixWithin   time.Duration  `yaml:"fix_within"`   // the finding must be closed this long after detection
+}
+
+// Enrich switches on lookups that contact outside services. They are off by
+// default because they reveal which CVEs you track.
+type Enrich struct {
+	EPSS bool `yaml:"epss"` // FIRST EPSS exploit probability for tracked CVEs
+}
+
+// Storage selects the state backend.
+type Storage struct {
+	Backend string `yaml:"backend"` // file (default) or sqlite
 }
 
 // Grant is what one actor may do. "*" in Projects means every project.
@@ -68,6 +133,9 @@ type Bundle struct {
 	Sources  []model.Source
 	Projects []model.Project
 	Warnings []string // non-fatal problems worth logging
+
+	DefaultTechs   bool // techs came from the binary, not from config/techs.yaml
+	DefaultSources bool // feeds came from the binary, not from sources/*.yaml
 }
 
 func defaults() Settings {
@@ -102,10 +170,18 @@ func Load(root string) (*Bundle, error) {
 	b.DataDir = resolve(root, b.DataDir)
 	b.AlertsDir = resolve(root, b.AlertsDir)
 
+	// techs.yaml and the feed list ship inside the binary. A file of the same
+	// purpose in the folder replaces the shipped one completely.
 	var techs struct {
 		Techs []model.Tech `yaml:"techs"`
 	}
-	if err := decode(filepath.Join(root, "config", "techs.yaml"), &techs, false); err != nil {
+	techsPath := filepath.Join(root, "config", "techs.yaml")
+	if _, err := os.Stat(techsPath); errors.Is(err, os.ErrNotExist) {
+		b.DefaultTechs = true
+		if err := decodeBytes("shipped techs.yaml", shipped.Techs(), &techs); err != nil {
+			return nil, err
+		}
+	} else if err := decode(techsPath, &techs, false); err != nil {
 		return nil, err
 	}
 	b.Techs = techs.Techs
@@ -139,6 +215,16 @@ func Load(root string) (*Bundle, error) {
 		return nil, err
 	}
 
+	if len(b.Sources) == 0 {
+		var s struct {
+			Sources []model.Source `yaml:"sources"`
+		}
+		if err := decodeBytes("shipped sources", shipped.Sources(), &s); err != nil {
+			return nil, err
+		}
+		b.Sources, b.DefaultSources = s.Sources, true
+	}
+
 	return b, b.validate()
 }
 
@@ -169,6 +255,24 @@ func (b *Bundle) validate() error {
 				fail("project %s: unknown env %q (use dev, int, staging, prod)", p.Name, e)
 			}
 		}
+		for _, lf := range p.Lockfiles {
+			if !slices.Contains(matrix.Types(), lf.Type) {
+				fail("project %s: lockfile type %q is unknown (use %s)", p.Name, lf.Type, strings.Join(matrix.Types(), ", "))
+			}
+			if lf.Env != "" && !lf.Env.Valid() {
+				fail("project %s: lockfile env %q is unknown", p.Name, lf.Env)
+			}
+		}
+		for env, ec := range p.Environments {
+			if !env.Valid() {
+				fail("project %s: environments: unknown env %q", p.Name, env)
+			}
+			for tn := range ec.Techs {
+				if !known[strings.ToLower(tn)] {
+					b.Warnings = append(b.Warnings, fmt.Sprintf("project %s: environments.%s: tech %q is not in techs.yaml", p.Name, env, tn))
+				}
+			}
+		}
 		for _, t := range p.Techs {
 			if !known[strings.ToLower(t.Name)] {
 				b.Warnings = append(b.Warnings,
@@ -197,6 +301,32 @@ func (b *Bundle) validate() error {
 	}
 	if b.Interval <= 0 {
 		fail("interval must be positive")
+	}
+	if d := b.Notify.Digest; d.DailyAt != "" {
+		if _, err := time.Parse("15:04", d.DailyAt); err != nil {
+			fail("notify.digest.daily_at must look like 08:00")
+		}
+		if d.Env != "" && !d.Env.Valid() {
+			fail("notify.digest.env %q is unknown", d.Env)
+		}
+		for _, c := range d.Channels {
+			if !slices.Contains([]string{"slack", "webhook", "email"}, c) {
+				fail("notify.digest.channels: unknown channel %q", c)
+			}
+		}
+	}
+	for i, r := range b.Policy.Rules {
+		switch {
+		case r.Name == "":
+			fail("policy rule %d needs a name", i+1)
+		case r.OwnerWithin <= 0 && r.FixWithin <= 0:
+			fail("policy rule %q needs owner_within or fix_within", r.Name)
+		case r.Env != "" && !r.Env.Valid():
+			fail("policy rule %q: unknown env %q", r.Name, r.Env)
+		}
+	}
+	if !slices.Contains([]string{"", "file", "sqlite"}, b.Storage.Backend) {
+		fail("storage.backend must be file or sqlite")
 	}
 	if b.Retention > 0 && b.Retention < 2*b.Lookback {
 		fail("retention must be at least twice the lookback, or old items could be judged again")
@@ -247,10 +377,14 @@ func decode(path string, out any, optional bool) error {
 	if err != nil {
 		return err
 	}
+	return decodeBytes(path, raw, out)
+}
+
+func decodeBytes(name string, raw []byte, out any) error {
 	dec := yaml.NewDecoder(bytes.NewReader(raw))
 	dec.KnownFields(true)
 	if err := dec.Decode(out); err != nil && !errors.Is(err, io.EOF) {
-		return fmt.Errorf("%s: %w", path, err)
+		return fmt.Errorf("%s: %w", name, err)
 	}
 	return nil
 }

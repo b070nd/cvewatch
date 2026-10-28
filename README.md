@@ -1,84 +1,66 @@
 # cvewatch
 
-A small vulnerability monitor. It reads public security feeds every few hours, keeps what matters to your projects, tells Slack about new findings, and tracks whether each environment (dev, int, staging, prod) has been fixed.
+Exposure and fix tracking for software factories. It watches the feeds that matter to your stack, tracks **open / fixed / ignored per project and environment**, and keeps the evidence local.
+
+It complements scanners (Trivy, Grype, OSV-Scanner) and SBOM platforms (Dependency-Track); it does not replace them and does not scan anything. Its job is the one they leave open: which of your projects and environments are still exposed to which known issue, who owns it, and what happened so far.
 
 ```
 Open findings: 3
 
-CRITICAL (1)
-  NEW CVE-2026-109618    shop: dev,int,staging,prod  (+3 related)
+CRITICAL (2)
+  NEW CVE-2026-109618    shop: dev,int,staging,prod  [affected]  (+1 ids)
       PHP Group PHP: PHP Memory Corruption Vulnerability
-      https://nvd.nist.gov/vuln/detail/CVE-2026-109618
-
-HIGH (2)
-  ...
+      published 6d 9h ago · 2 articles · KEV, CISA due 2026-10-29 · EPSS 100% · official fix: action
+      https://thehackernews.com/...
 ```
 
 ## What it does
 
-- **Sources:** CISA KEV, NVD, GitHub advisories, Hacker News, any RSS or Atom feed. Add a source with a few lines of YAML.
-- **Version-aware:** NVD product data and GitHub advisory ranges are compared with the versions you run: `affected`, `not affected` or `unchecked`.
-- **Fix evidence:** patched versions, vendor advisories and required actions from the feeds, marked official when a vendor or authority says so.
-- **Your tech matrix:** a list of supported technologies (`php`, `elasticsearch`, `gitlab` ...) plus, per project, the packages in its `composer.lock` or `package-lock.json`, read fresh on every run.
-- **Projects and environments:** each project has its own environments. A middleware can have only `prod`.
-- **One record per issue:** reports that share a CVE id, or describe the same flaw, are merged. Age since publication, the number of articles and the articles in chronological order are kept per issue.
-- **Calendar:** a month overview with severity colors, technology tags and a legend.
-- **Fix tracking:** status per issue, project and environment (`open`, `fixed`, `ignored`) with a rollout plan in a markdown report.
-- **Alerts:** Slack for new findings, and a list of everything still open after every run. Works without Slack.
-- **Agents and IDEs:** JSON output and an MCP server (read-only by default).
-- **Audit trail:** tamper-evident log of detections, alerts and status changes.
+- **Sources:** CISA KEV, NVD, GitHub advisories, Hacker News, any RSS or Atom feed. Built in; add more with a few lines of YAML.
+- **Inventory:** declared techs with per-environment versions, plus lockfiles and SBOMs: composer, npm, Go, pip, poetry, Pipfile, Gradle, Maven, CycloneDX, SPDX.
+- **Version-aware:** NVD product data and advisory ranges are compared with what each environment runs: `affected`, `not affected` or `unchecked`, using each ecosystem's own version rules.
+- **One record per issue:** reports about the same flaw are merged, with age, article count, articles in order, fix evidence, KEV listing and EPSS.
+- **Per-environment tracking:** status, owner, due date, ticket and evidence per project and environment, with a history of every change.
+- **Priority and policy:** KEV first, then severity, open in prod, EPSS, age; policy rules report missed deadlines.
+- **Alerts:** Slack, signed webhook and email, each tracked separately, plus a daily digest.
+- **Evidence and exports:** an evidence pack per issue, and `export` as JSON (versioned schema), CSV or Markdown.
+- **Agents and IDEs:** JSON and an MCP server (read-only by default). **Audit trail:** tamper-evident log of detections, alerts and changes.
 
 ## Quick start
 
-You need Go (see `app/go.mod`) or Docker.
-
 ```bash
-cd app
-go build -o ../cvewatch ./src/cmd/cvewatch
+go install github.com/b070nd/cvewatch/app/src/cmd/cvewatch@latest     # or a release binary, or Docker (compose.yaml)
 
-cp config/projects/shop.yaml.example config/projects/myproject.yaml   # edit it
-../cvewatch check
-../cvewatch update         # fetch now, then list
-../cvewatch daemon         # or keep it running
+mkdir cvewatch-home && cd cvewatch-home
+cvewatch init -repo /path/to/your/repo     # writes config, detects lockfiles and runtime versions
+cvewatch doctor                            # checks everything; -online also checks CPE names and feeds
+cvewatch update                            # fetch now, then list
+cvewatch daemon                            # or keep it running
 ```
 
-Or install the binary with Go (it still needs the `config/` and `sources/` folders from this repository; point `-root` at them):
-
-```bash
-go install github.com/b070nd/cvewatch/app/src/cmd/cvewatch@latest
-```
-
-With Docker, see `compose.yaml`: mount your project configs read-only, keep the data in a volume.
-
-Slack is optional. Set the webhook in the environment, never in a file:
-
-```bash
-export SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
-```
+One binary is enough; the technology list and feeds are built in. Slack is optional: set `SLACK_WEBHOOK_URL`, never put it in a file. Other channels, digest, policy, SQLite and EPSS are in [docs/overview.md](docs/overview.md).
 
 ## Everyday commands
 
 | Command | Purpose |
 |---|---|
-| `update [-min S] [-project P]` | refresh all sources, then list open findings |
-| `list [-min S] [-project P] [-json]` | open findings, most severe first |
-| `show ID [-json]` | description, fix, articles in order, status and plan for one issue |
-| `why ID` | why it matched, and what today's config says |
-| `rescan [-apply]` | look back at old items with today's config (dry run unless `-apply`) |
-| `calendar [-month YYYY-MM] [-text]` | month overview page or terminal grid |
-| `fix` / `ignore` / `reopen ID -project P [-env E] [-note N]` | record what was done |
-| `daemon` | refresh every `interval` (default 4h) |
-| `mcp [-allow-write]` | MCP server on stdio |
-| `check`, `audit`, `version` | validate config, verify the audit chain, print version |
+| `update`, `list [-min S] [-project P] [-env E] [-all] [-json]` | refresh and list open findings, most urgent first |
+| `show ID`, `why ID`, `evidence ID` | description and plan; why it matched; evidence pack with timeline |
+| `fix`, `ignore`, `not-affected`, `reopen ID -project P [-env E] -note N` | record what was done (`not-affected` needs a reason) |
+| `assign ID -project P [-env E] -owner O -due DATE -ticket T` | who handles it and by when |
+| `evidence add ID -project P -note N -url U` | attach a note and link as evidence |
+| `export -format json\|csv\|md`, `policy`, `digest [-send]`, `calendar` | reports |
+| `inventory`, `rescan [-apply]` | what runs where; look back with today's config |
+| `init`, `doctor`, `check`, `audit`, `version`, `daemon`, `mcp` | setup, health, operations |
 
-`-root DIR` points at the app directory that holds `config/` and `sources/` (default: current directory).
+`-root DIR` points at the configuration folder (default: the current one).
 
 ## Know the limits
 
-- **Versions are checked only where feeds give ranges.** NVD product data and GitHub advisories do; news and Hacker News do not, so those findings stay `unchecked` and a person confirms. Check the CPE names in `techs.yaml` against the NVD CPE dictionary: a wrong name hides real advisories.
+- **Versions are checked only where feeds give ranges, and only for what you tell it runs.** NVD product data and GitHub advisories do; news and Hacker News do not, so those findings stay `unchecked` and a person confirms. Check the CPE names in `techs.yaml` against the NVD CPE dictionary: a wrong name hides real advisories.
 - **First runs are noisy.** Public feeds mention platforms in passing ("a WordPress plugin written in PHP"). CPE names, `excludes`, `match_structured` and `match_title_only` per source, and `min_severity` tune it. Config edits apply to items first seen afterwards; `rescan` looks back on purpose.
-- **Fixes are what feeds say.** The tool does not query package registries or container image registries.
-- **One writer at a time.** State is one JSON file with a lock, behind a storage seam. Several people can use one install through optional per-actor access rules; that is authorization on a local identity, not authentication.
+- **Fixes are what feeds say.** The tool does not query package or container registries, and does not scan images. Image references are recorded, not verified.
+- **State is a JSON file by default** (one process at a time) or SQLite (several processes, stale writes refused). Optional per-actor access rules are authorization on a local identity, not authentication.
 - **Linux, macOS, Windows.** On Windows owner-only file modes are not enforced by the OS; see the docs.
 
 ## Security and privacy
@@ -87,7 +69,7 @@ It makes outbound requests only to the feeds you configure and to your Slack web
 
 ## More
 
-- [docs/overview.md](docs/overview.md): how a cycle works, matching and versions, configuration, tracking fixes
+- [docs/overview.md](docs/overview.md): how it works, inventory, matching, tracking, policy, channels, storage
 - [docs/architecture.md](docs/architecture.md): modules and seams
 - [docs/agents.md](docs/agents.md): MCP, JSON output, a snippet for your `CLAUDE.md`
 - [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md)

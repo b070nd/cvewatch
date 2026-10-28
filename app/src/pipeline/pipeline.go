@@ -1,7 +1,9 @@
 // Package pipeline runs one monitoring cycle: fetch feeds, judge each item
-// against the current config, fold it into the ledger, write reports and
-// alert. Rules about relevance live in package relevance, rules about
-// identity in package ledger; this package only sequences them.
+// against what every project environment runs, fold it into the ledger,
+// re-check findings whose inventory changed, write reports, alert and send
+// digests. Rules about relevance live in package relevance, identity in
+// package ledger, inventory in package inventory; this package only sequences
+// them.
 package pipeline
 
 import (
@@ -17,38 +19,50 @@ import (
 
 	"github.com/b070nd/cvewatch/app/src/audit"
 	"github.com/b070nd/cvewatch/app/src/config"
+	"github.com/b070nd/cvewatch/app/src/epss"
 	"github.com/b070nd/cvewatch/app/src/feeds"
+	"github.com/b070nd/cvewatch/app/src/inventory"
 	"github.com/b070nd/cvewatch/app/src/ledger"
-	"github.com/b070nd/cvewatch/app/src/matrix"
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/notify"
+	"github.com/b070nd/cvewatch/app/src/query"
 	"github.com/b070nd/cvewatch/app/src/relevance"
 	"github.com/b070nd/cvewatch/app/src/report"
 )
 
-// maxBatchesPerRun bounds Slack messages per cycle.
+// maxBatchesPerRun bounds messages per channel and cycle.
 const maxBatchesPerRun = 5
+
+// Delivery is a channel with the lowest severity it should hear about.
+type Delivery struct {
+	Channel notify.Channel
+	Min     model.Severity
+}
 
 type Runner struct {
 	Cfg      *config.Bundle
 	Ledger   *ledger.Ledger
 	Save     func() error // persists the ledger; called before alerting and at the end
 	Getter   feeds.Getter
-	Notifier notify.Notifier // nil disables alerting
-	Audit    *audit.Log      // nil disables the audit trail
+	Channels []Delivery // empty disables alerting and digests
+	Audit    *audit.Log // nil disables the audit trail
 	Log      *slog.Logger
 	Now      func() time.Time
 }
 
+// Result summarizes a cycle. The JSON names are part of the MCP contract.
 type Result struct {
-	Items    int             // entries fetched
-	New      int             // vulnerabilities seen for the first time
-	Merged   int             // items folded into an already tracked issue
-	Pruned   int             // old irrelevant records forgotten
-	Findings int             // findings created
-	Fresh    map[string]bool // vulnerabilities that gained findings this cycle
-	Alerted  int             // findings delivered to the notifier
-	Failed   []string        // sources that errored, with the reason
+	Items      int             `json:"items"`          // entries fetched
+	New        int             `json:"new"`            // vulnerabilities seen for the first time
+	Merged     int             `json:"merged"`         // items folded into an already tracked issue
+	Pruned     int             `json:"pruned"`         // old irrelevant records forgotten
+	Findings   int             `json:"findings"`       // findings created
+	Reconciled int             `json:"reconciled"`     // findings re-checked because the inventory changed
+	Enriched   int             `json:"enriched"`       // EPSS scores updated
+	Fresh      map[string]bool `json:"-"`              // vulnerabilities that gained findings this cycle
+	Alerted    int             `json:"alerted"`        // findings delivered, summed over channels
+	Digests    int             `json:"digests"`        // digests sent
+	Failed     []string        `json:"failed_sources"` // sources that errored, with the reason
 }
 
 type fetched struct {
@@ -59,21 +73,24 @@ type fetched struct {
 
 // cycle carries what one run shares between its steps.
 type cycle struct {
-	r        *Runner
-	judge    *relevance.Judge
-	packages map[string][]model.Package
-	now      time.Time
-	dirty    map[string]bool // vulnerabilities whose report needs rewriting
-	gone     []*model.Vulnerability
-	res      Result
+	r      *Runner
+	judge  *relevance.Judge
+	inv    *inventory.Inventory
+	now    time.Time
+	dirty  map[string]bool // vulnerabilities whose report needs rewriting
+	events []audit.Event
+	res    Result
 }
 
 // Run executes one cycle. A failing source never stops the others, and its
 // cursor stays put so the next run retries the same window.
 func (r *Runner) Run(ctx context.Context) (Result, error) {
 	c := &cycle{
-		r: r, judge: relevance.New(r.Cfg.Techs), packages: LoadMatrix(r.Cfg, r.Log), now: r.Now(),
+		r: r, judge: relevance.New(r.Cfg.Techs), inv: inventory.Load(r.Cfg), now: r.Now(),
 		dirty: map[string]bool{}, res: Result{Fresh: map[string]bool{}},
+	}
+	for _, p := range c.inv.Problems() {
+		r.Log.Warn("inventory problem", "problem", p.String())
 	}
 	results := r.fetchAll(ctx, c.now)
 
@@ -91,19 +108,23 @@ func (r *Runner) Run(ctx context.Context) (Result, error) {
 		}
 	}
 
+	c.reconcile()
+	c.enrich(ctx)
 	if r.Cfg.Retention > 0 {
 		c.res.Pruned = r.Ledger.Prune(c.now.Add(-r.Cfg.Retention))
 	}
 	if err := c.writeReports(); err != nil {
 		return c.res, err
 	}
-	if err := r.auditDetected(c.res.Fresh, c.now); err != nil {
+	c.auditDetected()
+	if err := r.Audit.Append(c.events...); err != nil {
 		return c.res, err
 	}
 	if err := r.Save(); err != nil { // persist before alerting: a crash then repeats an alert, never loses a finding
 		return c.res, err
 	}
 	c.res.Alerted = r.alert(ctx, c.now)
+	c.res.Digests = r.digests(ctx, c.now)
 	return c.res, r.Save()
 }
 
@@ -128,33 +149,22 @@ func (r *Runner) fetchAll(ctx context.Context, now time.Time) []fetched {
 	return out
 }
 
-// LoadMatrix reads every project's lockfiles afresh, so the tech matrix
-// always follows the repositories.
-func LoadMatrix(cfg *config.Bundle, log *slog.Logger) map[string][]model.Package {
-	out := map[string][]model.Package{}
-	for _, p := range cfg.Projects {
-		for _, lf := range p.Lockfiles {
-			pkgs, err := matrix.Load(lf)
-			if err != nil {
-				log.Warn("lockfile skipped", "project", p.Name, "err", err)
-				continue
-			}
-			out[p.Name] = append(out[p.Name], pkgs...)
-		}
-	}
-	return out
-}
-
 func (c *cycle) process(it model.Item) {
 	if !safeURL(it.URL) {
 		c.r.Log.Debug("item skipped: link is not a plain http(s) URL", "source", it.SourceID)
 		return
 	}
 	l := c.r.Ledger
-	verdict := c.judge.Judge(it, c.r.Cfg.Projects, c.packages)
+	verdict := c.judge.Judge(it, c.inv.Targets())
 
 	known, folded, linked := l.Identify(it, verdict.Relevant())
-	c.dropReports(folded)
+	for _, g := range folded {
+		delete(c.dirty, g.ID)
+		if g.ReportPath != "" {
+			os.Remove(g.ReportPath)
+		}
+		c.events = append(c.events, audit.Event{Time: c.now, Actor: "cvewatch", Action: "unified", Vuln: known.ID, Note: "absorbed " + g.ID})
+	}
 	for _, o := range linked {
 		if len(l.FindingsOf(o.ID)) > 0 {
 			c.dirty[o.ID] = true // it gained a link to this article
@@ -214,36 +224,114 @@ func (c *cycle) reassess(v *model.Vulnerability) {
 	})
 }
 
+// reconcile re-checks open findings whose inventory changed: an upgraded
+// lockfile, a new declared version, a package that is gone. It only changes
+// what the finding records about the installed version and the verdict that
+// follows from it; status, owner and notes are left alone.
+func (c *cycle) reconcile() {
+	l := c.r.Ledger
+	for _, f := range l.Findings() {
+		if f.Status != model.StatusOpen || len(f.Installed) == 0 {
+			continue
+		}
+		tg, ok := c.inv.Target(f.Project, f.Env)
+		v := l.Vuln(f.VulnID)
+		if !ok || v == nil {
+			continue
+		}
+		var now []model.Installed
+		var changes, gone []string
+		for _, old := range f.Installed {
+			cur, found := tg.Find(old)
+			switch {
+			case !found:
+				gone = append(gone, old.Label())
+			case cur.Version != old.Version:
+				changes = append(changes, old.Label()+" → "+cur.Label())
+				now = append(now, cur)
+			default:
+				now = append(now, cur)
+			}
+		}
+		if len(changes) == 0 && len(gone) == 0 {
+			continue
+		}
+
+		applies, reasons := model.AppNotAffected, []string{"no longer installed: " + strings.Join(gone, ", ")}
+		if len(now) > 0 {
+			applies, reasons = c.judge.Reassess(now, v.Affected)
+		}
+		note := strings.Join(append(changes, prefixed("removed ", gone)...), "; ") + "; now " + string(applies)
+		labels := make([]string, len(now))
+		for i, in := range now {
+			labels[i] = in.Label()
+		}
+		l.Mutate(f.Key(), func(m *model.Finding) {
+			m.Installed, m.Matched, m.Applies, m.Reasons, m.Updated = now, labels, applies, reasons, c.now
+			m.History = append(m.History, model.Disposition{Time: c.now, Actor: "cvewatch", Action: "inventory", Note: note})
+		})
+		c.events = append(c.events, audit.Event{Time: c.now, Actor: "cvewatch", Action: "inventory", Vuln: f.VulnID,
+			Project: f.Project, Env: string(f.Env), Note: note})
+		c.dirty[f.VulnID] = true
+		c.res.Reconciled++
+	}
+}
+
+func prefixed(p string, xs []string) []string {
+	out := make([]string, len(xs))
+	for i, x := range xs {
+		out[i] = p + x
+	}
+	return out
+}
+
+// enrich adds EPSS scores to tracked CVEs when the operator turned it on.
+// Only CVE ids leave the machine, and only for issues that have findings.
+func (c *cycle) enrich(ctx context.Context) {
+	if !c.r.Cfg.Enrich.EPSS {
+		return
+	}
+	var ids []string
+	for _, v := range c.r.Ledger.Relevant() {
+		if strings.HasPrefix(v.ID, "CVE-") {
+			ids = append(ids, v.ID)
+		}
+	}
+	scores, err := epss.Scores(ctx, c.r.Getter, ids)
+	if err != nil {
+		c.r.Log.Warn("epss lookup incomplete", "err", err)
+	}
+	for id, e := range scores {
+		if c.r.Ledger.SetEPSS(id, e) {
+			c.res.Enriched++
+			c.dirty[id] = true
+		}
+	}
+}
+
 func (c *cycle) addFindings(vulnID string, ms []relevance.Match) {
-	n := AddFindings(c.r.Ledger, c.r.Cfg.Projects, vulnID, ms, c.now)
+	n := AddFindings(c.r.Ledger, vulnID, ms, c.now)
 	c.res.Findings += n
 	if n > 0 {
 		c.res.Fresh[vulnID] = true
 	}
 }
 
-// AddFindings creates one finding per environment of each matched project. It
-// never touches existing findings, so statuses survive. It returns how many
-// were created.
-func AddFindings(l *ledger.Ledger, projects []model.Project, vulnID string, ms []relevance.Match, now time.Time) int {
+// AddFindings creates one finding per matched project environment. It never
+// touches existing findings, so statuses survive. It returns how many were created.
+func AddFindings(l *ledger.Ledger, vulnID string, ms []relevance.Match, now time.Time) int {
 	created := 0
 	for _, m := range ms {
-		i := slices.IndexFunc(projects, func(p model.Project) bool { return p.Name == m.Project })
-		if i < 0 {
-			continue
-		}
 		labels := make([]string, len(m.Installed))
 		for k, in := range m.Installed {
 			labels[k] = in.Label()
 		}
-		for _, env := range projects[i].EffectiveEnvs() {
-			f := model.Finding{
-				VulnID: vulnID, Project: m.Project, Env: env, Status: model.StatusOpen, Matched: labels,
-				Installed: m.Installed, Applies: m.Applies, Reasons: m.Reasons, Updated: now,
-			}
-			if l.AddFinding(f) {
-				created++
-			}
+		f := model.Finding{
+			VulnID: vulnID, Project: m.Project, Env: m.Env, Status: model.StatusOpen, Matched: labels,
+			Installed: m.Installed, Applies: m.Applies, Reasons: m.Reasons, Updated: now,
+		}
+		if l.AddFinding(f) {
+			created++
 		}
 	}
 	return created
@@ -255,16 +343,6 @@ func safeURL(raw string) bool {
 	u, err := url.Parse(raw)
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" &&
 		!strings.ContainsAny(raw, " \t\r\n<>|\"`\\")
-}
-
-// dropReports removes report files of records that were folded into another.
-func (c *cycle) dropReports(gone []*model.Vulnerability) {
-	for _, g := range gone {
-		delete(c.dirty, g.ID)
-		if g.ReportPath != "" {
-			os.Remove(g.ReportPath)
-		}
-	}
 }
 
 func (c *cycle) writeReports() error {
@@ -283,67 +361,151 @@ func (c *cycle) writeReports() error {
 }
 
 // auditDetected records when each new finding set was first seen.
-func (r *Runner) auditDetected(fresh map[string]bool, now time.Time) error {
-	var events []audit.Event
-	for _, id := range slices.Sorted(maps.Keys(fresh)) {
+func (c *cycle) auditDetected() {
+	for _, id := range slices.Sorted(maps.Keys(c.res.Fresh)) {
 		var projects []string
-		for _, f := range r.Ledger.FindingsOf(id) {
+		for _, f := range c.r.Ledger.FindingsOf(id) {
 			if !slices.Contains(projects, f.Project) {
 				projects = append(projects, f.Project)
 			}
 		}
-		events = append(events, audit.Event{Time: now, Actor: "cvewatch", Action: "detected", Vuln: id,
+		c.events = append(c.events, audit.Event{Time: c.now, Actor: "cvewatch", Action: "detected", Vuln: id,
 			Project: strings.Join(projects, ",")})
 	}
-	return r.Audit.Append(events...)
 }
 
-// alert sends every open finding that has not been delivered yet, including
-// ones whose delivery failed in an earlier run. Findings whose version is
-// known to be unaffected are recorded but never alerted.
+// alert sends every open finding that a channel has not been told about yet,
+// including ones whose delivery failed in an earlier run. Delivery is tracked
+// per channel. Findings whose version is known to be unaffected are recorded
+// but never alerted.
 func (r *Runner) alert(ctx context.Context, now time.Time) int {
-	if r.Notifier == nil {
-		return 0
-	}
-	var batch []notify.Alert
-	for _, f := range r.Ledger.Findings() {
-		v := r.Ledger.Vuln(f.VulnID)
-		if f.Status != model.StatusOpen || !f.AlertedAt.IsZero() || v == nil ||
-			f.Applies == model.AppNotAffected || !v.Severity.AtLeast(r.Cfg.Slack.MinSeverity) {
-			continue
-		}
-		if n := len(batch); n > 0 && batch[n-1].Vuln.ID == v.ID {
-			batch[n-1].Findings = append(batch[n-1].Findings, f)
-		} else {
-			batch = append(batch, notify.Alert{Vuln: v, Findings: []model.Finding{f}})
-		}
-	}
-
-	// Most severe first, and a cap per run so enabling Slack on a busy
-	// backlog does not flood the channel; the rest goes out next cycle.
-	slices.SortStableFunc(batch, func(a, b notify.Alert) int { return b.Vuln.Severity.Rank() - a.Vuln.Severity.Rank() })
-	if limit := maxBatchesPerRun * notify.BatchSize; len(batch) > limit {
-		r.Log.Info("alert backlog throttled", "sending", limit, "deferred", len(batch)-limit)
-		batch = batch[:limit]
-	}
-
 	sent := 0
-	for chunk := range slices.Chunk(batch, notify.BatchSize) {
-		if err := r.Notifier.Send(ctx, chunk); err != nil {
-			r.Log.Error("alert delivery failed, will retry next run", "err", err)
-			break
-		}
-		var events []audit.Event
-		for _, a := range chunk {
-			for _, f := range a.Findings {
-				r.Ledger.MarkAlerted(f.Key(), now)
-				sent++
+	for _, d := range r.Channels {
+		name := d.Channel.Name()
+		var batch []notify.Alert
+		for _, f := range r.Ledger.Findings() {
+			v := r.Ledger.Vuln(f.VulnID)
+			if f.Status != model.StatusOpen || f.Delivered(name) || v == nil ||
+				f.Applies == model.AppNotAffected || !v.Severity.AtLeast(d.Min) {
+				continue
 			}
-			events = append(events, audit.Event{Time: now, Actor: "cvewatch", Action: "alerted", Vuln: a.Vuln.ID, Note: "slack"})
+			if n := len(batch); n > 0 && batch[n-1].Vuln.ID == v.ID {
+				batch[n-1].Findings = append(batch[n-1].Findings, f)
+			} else {
+				batch = append(batch, notify.Alert{Vuln: v, Findings: []model.Finding{f}})
+			}
 		}
-		if err := r.Audit.Append(events...); err != nil {
-			r.Log.Error("audit write failed", "err", err)
+
+		// Most urgent first, and a cap per run so enabling a channel on a busy
+		// backlog does not flood it; the rest goes out next cycle.
+		slices.SortStableFunc(batch, func(a, b notify.Alert) int {
+			return query.Compare(a.Vuln, b.Vuln, hasProd(a.Findings), hasProd(b.Findings))
+		})
+		if limit := maxBatchesPerRun * notify.BatchSize; len(batch) > limit {
+			r.Log.Info("alert backlog throttled", "channel", name, "sending", limit, "deferred", len(batch)-limit)
+			batch = batch[:limit]
+		}
+
+		for chunk := range slices.Chunk(batch, notify.BatchSize) {
+			if err := d.Channel.Send(ctx, chunk, now); err != nil {
+				r.Log.Error("alert delivery failed, will retry next run", "channel", name, "err", err)
+				break
+			}
+			var events []audit.Event
+			for _, a := range chunk {
+				for _, f := range a.Findings {
+					r.Ledger.MarkAlerted(f.Key(), name, now)
+					sent++
+				}
+				events = append(events, audit.Event{Time: now, Actor: "cvewatch", Action: "alerted", Vuln: a.Vuln.ID, Note: name})
+			}
+			if err := r.Audit.Append(events...); err != nil {
+				r.Log.Error("audit write failed", "err", err)
+			}
 		}
 	}
 	return sent
+}
+
+func hasProd(fs []model.Finding) bool {
+	return slices.ContainsFunc(fs, func(f model.Finding) bool { return f.Env == model.EnvProd })
+}
+
+// digests sends the periodic "still open" summary to each configured channel,
+// once per day, in the first cycle after the configured time.
+func (r *Runner) digests(ctx context.Context, now time.Time) int {
+	cfg := r.Cfg.Notify.Digest
+	if cfg.DailyAt == "" || len(r.Channels) == 0 {
+		return 0
+	}
+	at, err := time.Parse("15:04", cfg.DailyAt)
+	if err != nil {
+		return 0 // config validation reports this; never crash a cycle over it
+	}
+	due := time.Date(now.Year(), now.Month(), now.Day(), at.Hour(), at.Minute(), 0, 0, now.Location())
+	if now.Before(due) {
+		return 0
+	}
+
+	sent := 0
+	digest := BuildDigest(r.Ledger, query.Filter{Env: cfg.Env}, cfg.Max, now)
+	for _, d := range r.Channels {
+		name := d.Channel.Name()
+		if len(cfg.Channels) > 0 && !slices.Contains(cfg.Channels, name) {
+			continue
+		}
+		if !r.Ledger.Digest(name).Before(due) {
+			continue // today's digest already went out
+		}
+		if digest.Open > 0 {
+			if err := d.Channel.SendDigest(ctx, digest, now); err != nil {
+				r.Log.Error("digest delivery failed, will retry next run", "channel", name, "err", err)
+				continue
+			}
+			sent++
+			if err := r.Audit.Append(audit.Event{Time: now, Actor: "cvewatch", Action: "digest", Note: name}); err != nil {
+				r.Log.Error("audit write failed", "err", err)
+			}
+		}
+		r.Ledger.SetDigest(name, now) // also when nothing is open: no repeat today
+	}
+	return sent
+}
+
+// BuildDigest summarizes what is still open, most urgent first, capped at max (default 20).
+func BuildDigest(l *ledger.Ledger, f query.Filter, max int, now time.Time) notify.Digest {
+	if max <= 0 {
+		max = 20
+	}
+	issues := query.Open(l, f, now)
+	d := notify.Digest{Env: f.Env, Open: len(issues), BySeverity: map[model.Severity]int{}}
+	for _, is := range issues {
+		d.BySeverity[is.Severity]++
+		overdue := false
+		var projects []string
+		owner := ""
+		for _, t := range is.Targets {
+			overdue = overdue || t.Overdue
+			if !slices.Contains(projects, t.Project) {
+				projects = append(projects, t.Project)
+			}
+			if owner == "" {
+				owner = t.Owner
+			}
+		}
+		if overdue {
+			d.Overdue++
+		}
+		if len(d.Items) >= max {
+			d.Truncated++
+			continue
+		}
+		link := ""
+		if len(is.Untrusted.Articles) > 0 {
+			link = is.Untrusted.Articles[0].URL
+		}
+		d.Items = append(d.Items, notify.DigestItem{ID: is.ID, Title: is.Untrusted.Title, Severity: is.Severity,
+			Projects: projects, Age: is.Age, KEV: is.KEV != nil, Overdue: overdue, Owner: owner, URL: link})
+	}
+	return d
 }

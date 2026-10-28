@@ -498,3 +498,17 @@ func TestKEVFixAndRansomware(t *testing.T) {
 		t.Errorf("action runes = %d, want 200", n)
 	}
 }
+
+func TestKEVFieldsReachTheItem(t *testing.T) {
+	fixture := `{"vulnerabilities":[{"cveID":"CVE-2025-0001","vendorProject":"Acme","product":"Widget","vulnerabilityName":"Widget RCE",
+	"shortDescription":"Bad.","dateAdded":"2025-12-30","dueDate":"2026-01-20","requiredAction":"Apply updates per vendor instructions.","knownRansomwareCampaignUse":"Known"}]}`
+	items := fetch(t, body(fixture), "kev", model.FeedState{})
+	if len(items) != 1 || items[0].KEV == nil {
+		t.Fatalf("items: %+v", items)
+	}
+	k := items[0].KEV
+	if !k.Ransomware || k.Action != "Apply updates per vendor instructions." ||
+		!k.DueDate.Equal(time.Date(2026, 1, 20, 0, 0, 0, 0, time.UTC)) || !k.DateAdded.Equal(time.Date(2025, 12, 30, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("kev: %+v", k)
+	}
+}
