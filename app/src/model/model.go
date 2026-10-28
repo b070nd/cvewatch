@@ -39,6 +39,10 @@ const (
 	StatusOpen    Status = "open"
 	StatusFixed   Status = "fixed"
 	StatusIgnored Status = "ignored"
+	// StatusNotAffected is a human assertion (VEX-style) that the issue does not
+	// apply here. It needs a reason. It is separate from the derived
+	// Applicability, which comes from version ranges.
+	StatusNotAffected Status = "not_affected"
 )
 
 // Severity is ordered. Unknown ranks lowest, so once a minimum severity is
@@ -146,6 +150,16 @@ type Project struct {
 	Envs      []Env         `yaml:"envs"` // defaults to AllEnvs
 	Techs     []ProjectTech `yaml:"techs"`
 	Lockfiles []Lockfile    `yaml:"lockfiles"`
+	// Environments holds what differs per environment: the runtime versions
+	// actually deployed and the image reference. Anything not listed falls
+	// back to the project-level techs.
+	Environments map[Env]EnvConfig `yaml:"environments"`
+}
+
+// EnvConfig is what one environment runs.
+type EnvConfig struct {
+	Techs map[string]string `yaml:"techs"` // tech name -> deployed version, e.g. php: "8.2.30"
+	Image string            `yaml:"image"` // image tag or digest, recorded only; no registry is queried
 }
 
 type ProjectTech struct {
@@ -155,8 +169,12 @@ type ProjectTech struct {
 
 // Lockfile is read on every run, so the tech matrix follows the repository.
 type Lockfile struct {
-	Type string `yaml:"type"` // composer | npm
+	Type string `yaml:"type"` // see matrix.Types(): composer, npm, go, pip, ...
 	Path string `yaml:"path"`
+	Env  Env    `yaml:"env"` // applies to this environment only; empty means all
+	// Dev includes development-only packages (composer require-dev and the
+	// like) in every environment. By default they count only in dev and int.
+	Dev bool `yaml:"dev"`
 }
 
 func (p Project) EffectiveEnvs() []Env {
@@ -166,9 +184,20 @@ func (p Project) EffectiveEnvs() []Env {
 	return p.Envs
 }
 
-// Package is one dependency read from a lockfile.
+// Ecosystem names. Feeds, lockfiles and SBOMs all map onto these; see package ecosystem.
+const (
+	EcoComposer = "composer"
+	EcoNPM      = "npm"
+	EcoGo       = "go"
+	EcoPyPI     = "pypi"
+	EcoMaven    = "maven"
+	EcoCPE      = "cpe" // product names from NVD, not a package manager
+)
+
+// Package is one dependency read from a lockfile or SBOM.
 type Package struct {
 	Name, Version, Ecosystem string
+	Dev                      bool // development-only dependency
 }
 
 // ---- affected versions and fixes ----
@@ -258,6 +287,21 @@ func (i Installed) Label() string {
 	return i.Name + "@" + i.Version
 }
 
+// KEV is CISA's Known Exploited Vulnerabilities catalog entry.
+type KEV struct {
+	DateAdded  time.Time `json:"date_added,omitempty"`
+	DueDate    time.Time `json:"due_date,omitempty"` // CISA's remediation deadline for federal agencies
+	Action     string    `json:"action,omitempty"`   // required action, plain text
+	Ransomware bool      `json:"ransomware,omitempty"`
+}
+
+// EPSS is FIRST's probability that a vulnerability is exploited in the next 30 days.
+type EPSS struct {
+	Score      float64   `json:"score"`
+	Percentile float64   `json:"percentile"`
+	Date       time.Time `json:"date,omitempty"`
+}
+
 // ---- runtime data ----
 
 // Item is a normalized feed entry before deduplication.
@@ -273,6 +317,7 @@ type Item struct {
 	Published  time.Time
 	Severity   Severity
 	CVSS       float64
+	KEV        *KEV // set by the CISA KEV feed
 	TitleOnly  bool // tech matching ignores the summary (set from Source.MatchTitleOnly)
 	// StructuredOnly: techs with CPE names ignore text and need product data (Source.MatchStructured).
 	StructuredOnly bool
@@ -384,6 +429,8 @@ type Vulnerability struct {
 	Refs       []Ref      `json:"refs"`
 	Affected   []Affected `json:"affected,omitempty"`
 	Fixes      []Fix      `json:"fixes,omitempty"`
+	KEV        *KEV       `json:"kev,omitempty"`
+	EPSS       *EPSS      `json:"epss,omitempty"`
 	Techs      []string   `json:"techs,omitempty"` // matched at evaluation time
 	ReportPath string     `json:"report_path,omitempty"`
 }
@@ -402,7 +449,49 @@ type Finding struct {
 	Applies   Applicability `json:"applies,omitempty"` // whether the installed version is in the affected range
 	Reasons   []string      `json:"reasons,omitempty"` // why this finding exists, in plain words
 	Updated   time.Time     `json:"updated"`
-	AlertedAt time.Time     `json:"alerted_at,omitempty"` // zero until Slack accepted it
+	AlertedAt time.Time     `json:"alerted_at,omitempty"` // legacy: first delivery; see Alerted
+
+	// Workflow. Owner, Due and Ticket say who handles it and by when; Note is
+	// the current reason or remark; Evidence and History keep the trail.
+	Owner    string        `json:"owner,omitempty"`
+	Due      time.Time     `json:"due,omitempty"`
+	Ticket   string        `json:"ticket,omitempty"` // change ticket, merge request or similar link
+	Evidence []Evidence    `json:"evidence,omitempty"`
+	History  []Disposition `json:"history,omitempty"`
+	// Alerted records the delivery per channel ("slack", "webhook", "email"),
+	// so one failing channel does not repeat alerts on the others.
+	Alerted map[string]time.Time `json:"alerted,omitempty"`
+}
+
+// Evidence is a note and link attached to a finding: an advisory, a merge
+// request, a change ticket, a deployment record.
+type Evidence struct {
+	Time  time.Time `json:"time"`
+	Actor string    `json:"actor"`
+	Note  string    `json:"note,omitempty"`
+	URL   string    `json:"url,omitempty"`
+}
+
+// Disposition is one entry in a finding's history: what changed, by whom, when.
+type Disposition struct {
+	Time   time.Time `json:"time"`
+	Actor  string    `json:"actor"`
+	Action string    `json:"action"` // status | assign | evidence | inventory
+	Status Status    `json:"status,omitempty"`
+	Note   string    `json:"note,omitempty"`
+	Owner  string    `json:"owner,omitempty"`
+	Due    time.Time `json:"due,omitempty"`
+	Ticket string    `json:"ticket,omitempty"`
+	URL    string    `json:"url,omitempty"`
+}
+
+// Delivered reports whether the channel already got this finding. Findings
+// delivered before channels existed count as delivered on Slack.
+func (f Finding) Delivered(channel string) bool {
+	if !f.Alerted[channel].IsZero() {
+		return true
+	}
+	return channel == "slack" && !f.AlertedAt.IsZero()
 }
 
 func (f Finding) Key() string { return f.VulnID + "|" + f.Project + "|" + string(f.Env) }
