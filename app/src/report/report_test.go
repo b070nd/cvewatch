@@ -92,3 +92,33 @@ func TestRenderNeutralizesHostileText(t *testing.T) {
 		t.Fatalf("table cell not sanitized:\n%s", out)
 	}
 }
+
+func TestRenderShowsKEVEPSSOwnerDueAndEvidence(t *testing.T) {
+	v := &model.Vulnerability{ID: "CVE-1", Title: "Bug", Severity: model.SevCritical, Published: now.Add(-48 * time.Hour),
+		KEV:  &model.KEV{DateAdded: now.Add(-24 * time.Hour), DueDate: now.Add(72 * time.Hour), Ransomware: true, Action: "Apply <b>updates</b>."},
+		EPSS: &model.EPSS{Score: 0.912, Percentile: 0.99}}
+	due := now.Add(-time.Hour)
+	out := Render(v, []model.Finding{{VulnID: "CVE-1", Project: "shop", Env: model.EnvProd, Status: model.StatusOpen,
+		Owner: "bob", Due: due, Ticket: "JIRA-1", Evidence: []model.Evidence{{Time: now, Actor: "bob", Note: "merged", URL: "https://mr.test/1"}}}}, now)
+	for _, want := range []string{"**KEV:** on CISA's Known Exploited Vulnerabilities list since 2026-10-02, CISA remediation due 2026-10-06, known ransomware use",
+		"Required action: Apply &lt;b&gt;updates&lt;/b&gt;.", "**EPSS:** 91% chance", "known exploited (CISA KEV)", "open in prod",
+		"| shop | prod | open | unchecked | bob |", "(overdue)", "JIRA-1", "**Evidence:**", "bob: merged https://mr.test/1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "<b>") {
+		t.Error("feed text must stay escaped")
+	}
+}
+
+func TestDigestFlagsKEVEPSSAndOverdue(t *testing.T) {
+	out := Digest([]query.Issue{{ID: "CVE-9", Severity: model.SevHigh, ArticleCount: 1,
+		KEV: &query.KEVInfo{DueDate: time.Date(2026, 11, 17, 0, 0, 0, 0, time.UTC)}, EPSS: &model.EPSS{Score: 0.5},
+		Targets: []query.Target{{Project: "shop", Env: model.EnvProd, Overdue: true}}}}, nil)
+	for _, want := range []string{"KEV, CISA due 2026-11-17", "EPSS 50%", "OVERDUE"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}

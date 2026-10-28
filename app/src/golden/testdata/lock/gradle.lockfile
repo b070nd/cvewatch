@@ -1,0 +1,3 @@
+# gradle dependency lock
+org.apache.logging.log4j:log4j-core:2.14.1=compileClasspath,runtimeClasspath
+empty=

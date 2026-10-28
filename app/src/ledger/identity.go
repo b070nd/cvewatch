@@ -106,6 +106,12 @@ func (l *Ledger) unify(vs []*model.Vulnerability) (*model.Vulnerability, []*mode
 		main.Affected = mergeAffected(main.Affected, g.Affected)
 		main.Fixes = mergeFixes(main.Fixes, g.Fixes)
 		main.Techs = appendMissing(main.Techs, g.Techs...)
+		if main.KEV == nil {
+			main.KEV = g.KEV
+		}
+		if main.EPSS == nil {
+			main.EPSS = g.EPSS
+		}
 		if main.Summary == "" {
 			main.Summary = g.Summary
 		}
@@ -153,6 +159,9 @@ func (l *Ledger) Absorb(v *model.Vulnerability, it model.Item) Change {
 	}
 	if f := mergeFixes(v.Fixes, it.Fixes); len(f) != len(v.Fixes) {
 		v.Fixes, changed, c.Evidence = f, true, true
+	}
+	if it.KEV != nil && v.KEV == nil {
+		v.KEV, changed = it.KEV, true // a later KEV listing counts, even though it shares its URL with the NVD entry
 	}
 	if !it.Published.IsZero() && it.Published.Before(v.Published) {
 		v.Published, changed = it.Published, true

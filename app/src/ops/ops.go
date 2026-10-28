@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -16,10 +17,15 @@ import (
 	"github.com/b070nd/cvewatch/app/src/audit"
 	"github.com/b070nd/cvewatch/app/src/calendar"
 	"github.com/b070nd/cvewatch/app/src/config"
+	"github.com/b070nd/cvewatch/app/src/evidence"
+	"github.com/b070nd/cvewatch/app/src/export"
 	"github.com/b070nd/cvewatch/app/src/host"
+	"github.com/b070nd/cvewatch/app/src/inventory"
 	"github.com/b070nd/cvewatch/app/src/ledger"
 	"github.com/b070nd/cvewatch/app/src/model"
+	"github.com/b070nd/cvewatch/app/src/notify"
 	"github.com/b070nd/cvewatch/app/src/pipeline"
+	"github.com/b070nd/cvewatch/app/src/priority"
 	"github.com/b070nd/cvewatch/app/src/query"
 	"github.com/b070nd/cvewatch/app/src/relevance"
 	"github.com/b070nd/cvewatch/app/src/report"
@@ -52,7 +58,7 @@ func Open(root string, log *slog.Logger) (*Session, error) {
 	for _, w := range cfg.Warnings {
 		log.Warn(w)
 	}
-	st, err := store.OpenFile(cfg.DataDir)
+	st, err := store.Open(cfg.Storage.Backend, cfg.DataDir)
 	if err != nil {
 		return nil, err
 	}
@@ -82,8 +88,11 @@ func (s *Session) Close() error { return s.store.Close() }
 func (s *Session) Commit() error { return s.store.Save(s.Ledger.State()) }
 
 // ParseFilter validates the flags shared by every listing.
-func ParseFilter(min, project string) (query.Filter, error) {
-	f := query.Filter{Project: project}
+func ParseFilter(min, project, env string) (query.Filter, error) {
+	f := query.Filter{Project: project, Env: model.Env(env)}
+	if env != "" && !f.Env.Valid() {
+		return f, fmt.Errorf("unknown env %q (use dev, int, staging, prod)", env)
+	}
 	if min != "" {
 		if f.Min = model.ParseSeverity(min); f.Min == model.SevUnknown {
 			return f, fmt.Errorf("unknown severity %q (use low, medium, high or critical)", min)
@@ -220,12 +229,14 @@ func (s *Session) judge(v *model.Vulnerability) relevance.Verdict {
 		Title: v.Title, Summary: v.Summary, IDs: v.Keys(), Affected: v.Affected, Severity: v.Severity,
 		Published: v.Published, TitleOnly: v.Summary == "", // irrelevant records kept no summary
 	}
-	return relevance.New(s.Cfg.Techs).Judge(it, s.Cfg.Projects, pipeline.LoadMatrix(s.Cfg, s.Log))
+	return relevance.New(s.Cfg.Techs).Judge(it, inventory.Load(s.Cfg).Targets())
 }
 
 // ---- writes ----
 
-// Change is a status update requested by a person or an agent.
+// Change is a status update requested by a person or an agent. A reason in
+// Note is required for StatusNotAffected, the human assertion that an issue
+// does not apply here.
 type Change struct {
 	ID, Project string
 	Env         model.Env // empty means every environment of the project
@@ -236,52 +247,140 @@ type Change struct {
 func (c Change) validate(cfg *config.Bundle) error {
 	switch c.Status {
 	case model.StatusFixed, model.StatusIgnored, model.StatusOpen:
+	case model.StatusNotAffected:
+		if strings.TrimSpace(c.Note) == "" {
+			return errors.New("a not-affected statement needs a reason (-note)")
+		}
 	default:
-		return fmt.Errorf("status must be fixed, ignored or open, not %q", c.Status)
+		return fmt.Errorf("status must be fixed, ignored, not_affected or open, not %q", c.Status)
 	}
-	if c.Env != "" && !c.Env.Valid() {
-		return fmt.Errorf("unknown env %q (use dev, int, staging, prod)", c.Env)
+	return validateTarget(cfg, c.Project, c.Env)
+}
+
+func validateTarget(cfg *config.Bundle, project string, env model.Env) error {
+	if env != "" && !env.Valid() {
+		return fmt.Errorf("unknown env %q (use dev, int, staging, prod)", env)
 	}
-	if c.Project == "" {
+	if project == "" {
 		return errors.New("a project is required")
 	}
-	if !slices.ContainsFunc(cfg.Projects, func(p model.Project) bool { return p.Name == c.Project }) {
-		return fmt.Errorf("unknown project %q", c.Project)
+	if !slices.ContainsFunc(cfg.Projects, func(p model.Project) bool { return p.Name == project }) {
+		return fmt.Errorf("unknown project %q", project)
 	}
 	return nil
 }
 
-// Resolve applies a status change. The order is fixed: check, change in
-// memory, record in the audit log, refresh the report, save. If saving fails
-// the audit log gets a compensating entry, so it never claims a change that
-// did not land.
+// clean keeps free text from people and agents tidy: no control characters,
+// no line breaks, bounded length.
+func clean(s string, max int) string { return query.Clip(s, max) }
+
+// Resolve applies a status change.
 func (s *Session) Resolve(c Change) (int, error) {
 	if err := c.validate(s.Cfg); err != nil {
 		return 0, err
 	}
-	if err := s.mayWrite(c.Project); err != nil {
+	note := clean(c.Note, 500)
+	return s.apply(c.ID, c.Project, c.Env, ledger.Update{Status: &c.Status, Note: &note},
+		audit.Event{Action: "status", Status: string(c.Status), Note: note})
+}
+
+// Assignment sets who handles findings and by when. An empty field is left
+// as it is; "-" (or "none" for Due) clears it. Due is a date, YYYY-MM-DD.
+type Assignment struct {
+	ID, Project        string
+	Env                model.Env
+	Owner, Due, Ticket string
+}
+
+func (s *Session) Assign(a Assignment) (int, error) {
+	if err := validateTarget(s.Cfg, a.Project, a.Env); err != nil {
 		return 0, err
 	}
-	v := s.Ledger.Lookup([]string{strings.ToUpper(strings.TrimSpace(c.ID))})
+	var u ledger.Update
+	var parts []string
+	if a.Owner != "" {
+		v := clean(strings.TrimPrefix(a.Owner, "-"), 100)
+		u.Owner = &v
+		parts = append(parts, "owner="+v)
+	}
+	if a.Ticket != "" {
+		v := ""
+		if a.Ticket != "-" {
+			v = clean(a.Ticket, 300)
+		}
+		u.Ticket = &v
+		parts = append(parts, "ticket="+v)
+	}
+	if a.Due != "" {
+		var d time.Time
+		if a.Due != "none" && a.Due != "-" {
+			var err error
+			if d, err = time.Parse("2006-01-02", a.Due); err != nil {
+				return 0, fmt.Errorf("due must look like 2026-11-30: %w", err)
+			}
+		}
+		u.Due = &d
+		parts = append(parts, "due="+d.Format("2006-01-02"))
+	}
+	if len(parts) == 0 {
+		return 0, errors.New("nothing to assign: give -owner, -due or -ticket")
+	}
+	return s.apply(a.ID, a.Project, a.Env, u, audit.Event{Action: "assign", Note: strings.Join(parts, " ")})
+}
+
+// Attachment adds a note and link as evidence for a fix, a decision or a deployment.
+type Attachment struct {
+	ID, Project string
+	Env         model.Env
+	Note, URL   string
+}
+
+func (s *Session) Attach(a Attachment) (int, error) {
+	if err := validateTarget(s.Cfg, a.Project, a.Env); err != nil {
+		return 0, err
+	}
+	note, link := clean(a.Note, 500), strings.TrimSpace(a.URL)
+	if note == "" && link == "" {
+		return 0, errors.New("evidence needs a note or a link")
+	}
+	if link != "" {
+		if u, err := url.Parse(link); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" ||
+			strings.ContainsAny(link, " \t\r\n<>|\"`\\") {
+			return 0, errors.New("the evidence link must be a plain http(s) URL")
+		}
+	}
+	return s.apply(a.ID, a.Project, a.Env, ledger.Update{Evidence: &model.Evidence{Note: note, URL: link}},
+		audit.Event{Action: "evidence", Note: note, URL: link})
+}
+
+// apply is the one write path. The order is fixed: check access, change in
+// memory, record in the audit log, refresh the report, save. If saving fails
+// the audit log gets a compensating entry, so it never claims a change that
+// did not land.
+func (s *Session) apply(id, project string, env model.Env, u ledger.Update, ev audit.Event) (int, error) {
+	if err := s.mayWrite(project); err != nil {
+		return 0, err
+	}
+	v := s.Ledger.Lookup([]string{strings.ToUpper(strings.TrimSpace(id))})
 	if v == nil {
-		return 0, fmt.Errorf("unknown vulnerability %q", c.ID)
+		return 0, fmt.Errorf("unknown vulnerability %q", id)
 	}
 	now := s.Now()
-	n, err := s.Ledger.SetStatus(v.ID, c.Project, c.Env, c.Status, c.Note, now)
+	u.Actor = s.Actor
+	n, err := s.Ledger.Update(v.ID, project, env, u, now)
 	if err != nil {
 		return 0, err
 	}
-	ev := audit.Event{Time: now, Actor: s.Actor, Action: "status", Vuln: v.ID, Project: c.Project,
-		Env: string(c.Env), Status: string(c.Status), Note: c.Note}
+	ev.Time, ev.Actor, ev.Vuln, ev.Project, ev.Env = now, s.Actor, v.ID, project, string(env)
 	if err := s.Audit.Append(ev); err != nil {
-		return 0, fmt.Errorf("audit log: %w", err) // never change status without a record
+		return 0, fmt.Errorf("audit log: %w", err) // never change anything without a record
 	}
 	path, rerr := report.Write(s.Cfg.AlertsDir, v, s.Ledger.FindingsOf(v.ID), now)
 	if rerr == nil {
 		v.ReportPath = path
 	}
 	if err := s.Commit(); err != nil {
-		ev.Action, ev.Note = "status-failed", "not saved: "+err.Error()
+		ev.Action, ev.Note = ev.Action+"-failed", "not saved: "+err.Error()
 		s.Audit.Append(ev)
 		return 0, err
 	}
@@ -309,17 +408,17 @@ func (s *Session) Rescan(apply bool) (Rescan, error) {
 		}
 	}
 	out := Rescan{Applied: apply}
-	matrix := pipeline.LoadMatrix(s.Cfg, s.Log)
+	targets := inventory.Load(s.Cfg).Targets()
 	judge := relevance.New(s.Cfg.Techs)
 	now := s.Now()
 	relevant := map[string]bool{}
 	for _, v := range s.Ledger.Relevant() {
 		relevant[v.ID] = true
 	}
-	ids := make([]string, 0)
-	for _, f := range s.Ledger.State().Vulns {
-		if !relevant[f.ID] {
-			ids = append(ids, f.ID)
+	var ids []string
+	for id := range s.Ledger.State().Vulns {
+		if !relevant[id] {
+			ids = append(ids, id)
 		}
 	}
 	slices.Sort(ids)
@@ -327,20 +426,22 @@ func (s *Session) Rescan(apply bool) (Rescan, error) {
 		v := s.Ledger.Vuln(id)
 		it := model.Item{Title: v.Title, Summary: v.Summary, IDs: v.Keys(), Affected: v.Affected,
 			Severity: v.Severity, Published: v.Published, TitleOnly: v.Summary == ""}
-		verdict := judge.Judge(it, s.Cfg.Projects, matrix)
-		if !verdict.Relevant() || len(verdict.Matches) == 0 {
+		verdict := judge.Judge(it, targets)
+		if len(verdict.Matches) == 0 {
 			continue
 		}
 		c := Candidate{ID: v.ID, Title: query.Clip(v.Title, 120)}
 		for _, m := range verdict.Matches {
-			c.Projects = append(c.Projects, m.Project)
+			if !slices.Contains(c.Projects, m.Project) {
+				c.Projects = append(c.Projects, m.Project)
+			}
 		}
 		out.Candidates = append(out.Candidates, c)
 		if !apply {
 			continue
 		}
 		v.Techs = verdict.Techs
-		if pipeline.AddFindings(s.Ledger, s.Cfg.Projects, v.ID, verdict.Matches, now) > 0 {
+		if pipeline.AddFindings(s.Ledger, v.ID, verdict.Matches, now) > 0 {
 			if path, err := report.Write(s.Cfg.AlertsDir, v, s.Ledger.FindingsOf(v.ID), now); err == nil {
 				v.ReportPath = path
 			}
@@ -365,4 +466,147 @@ func (s *Session) Refresh(ctx context.Context) (pipeline.Result, error) {
 		return pipeline.Result{}, err
 	}
 	return runner.Run(ctx)
+}
+
+// ---- exports, evidence, policy, digest, inventory ----
+
+// Export returns the open issues with the status of every environment, as the
+// versioned document all outputs share.
+func (s *Session) Export(f query.Filter) (export.Document, error) {
+	f, err := s.scope(f)
+	if err != nil {
+		return export.Document{}, err
+	}
+	f.Closed = true
+	return export.New(query.Open(s.Ledger, f, s.Now()), s.Now()), nil
+}
+
+// Evidence assembles the evidence pack for one issue: facts from the feeds,
+// the per-environment truth, and the audit trail, in time order.
+func (s *Session) Evidence(id string) (evidence.Pack, error) {
+	f, err := s.scope(query.Filter{})
+	if err != nil {
+		return evidence.Pack{}, err
+	}
+	is, err := query.One(s.Ledger, id, f, s.Now())
+	if err != nil {
+		return evidence.Pack{}, err
+	}
+	var fs []model.Finding
+	for _, fd := range s.Ledger.FindingsOf(is.ID) {
+		if len(f.Projects) == 0 || slices.Contains(f.Projects, fd.Project) {
+			fs = append(fs, fd)
+		}
+	}
+	events, aerr := s.Audit.Events()
+	if len(f.Projects) > 0 {
+		events = slices.DeleteFunc(events, func(e audit.Event) bool { return !visibleTo(f.Projects, e.Project) })
+	}
+	return evidence.Build(s.Ledger.Vuln(is.ID), fs, events, aerr, s.Now()), nil
+}
+
+// visibleTo reports whether an audit record concerns no project or one of the allowed ones.
+func visibleTo(allowed []string, project string) bool {
+	if project == "" {
+		return true
+	}
+	for _, p := range strings.Split(project, ",") {
+		if slices.Contains(allowed, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// Violations lists open findings that break a policy rule or their own due date.
+func (s *Session) Violations() ([]priority.Violation, error) {
+	f, err := s.scope(query.Filter{})
+	if err != nil {
+		return nil, err
+	}
+	var subjects []priority.Subject
+	for _, fd := range s.Ledger.Findings() {
+		v := s.Ledger.Vuln(fd.VulnID)
+		if fd.Status != model.StatusOpen || fd.Applies == model.AppNotAffected || v == nil ||
+			(len(f.Projects) > 0 && !slices.Contains(f.Projects, fd.Project)) {
+			continue
+		}
+		subjects = append(subjects, priority.Subject{
+			VulnID: fd.VulnID, Title: query.Clip(v.Title, 100), Project: fd.Project, Env: fd.Env, Severity: v.Severity,
+			KEV: v.KEV != nil, Owner: fd.Owner, Due: fd.Due, Detected: v.FirstSeen,
+		})
+	}
+	var rules []priority.Rule
+	for _, r := range s.Cfg.Policy.Rules {
+		rules = append(rules, priority.Rule{Name: r.Name, Env: r.Env, KEV: r.KEV, MinSeverity: r.MinSeverity,
+			OwnerWithin: r.OwnerWithin, FixWithin: r.FixWithin})
+	}
+	return priority.Violations(rules, subjects, s.Now()), nil
+}
+
+// Digest builds the "still open" summary as the digest channels would send it.
+func (s *Session) Digest() (notify.Digest, error) {
+	f, err := s.scope(query.Filter{Env: s.Cfg.Notify.Digest.Env})
+	if err != nil {
+		return notify.Digest{}, err
+	}
+	return pipeline.BuildDigest(s.Ledger, f, s.Cfg.Notify.Digest.Max, s.Now()), nil
+}
+
+// SendDigest sends the digest now to every active channel, without touching
+// the daily cursor. It returns how many channels took it.
+func (s *Session) SendDigest(ctx context.Context) (int, error) {
+	if err := s.mayWrite(""); err != nil {
+		return 0, err
+	}
+	d, err := s.Digest()
+	if err != nil {
+		return 0, err
+	}
+	channels, err := pipeline.Channels(s.Cfg, s.Log)
+	if err != nil {
+		return 0, err
+	}
+	sent := 0
+	for _, c := range channels {
+		if err := c.Channel.SendDigest(ctx, d, s.Now()); err != nil {
+			return sent, fmt.Errorf("%s: %w", c.Channel.Name(), err)
+		}
+		sent++
+	}
+	return sent, nil
+}
+
+// InventoryView is what the tool believes runs in each project environment.
+type InventoryView struct {
+	Targets  []relevance.Target
+	Sources  []inventory.Source
+	Problems []inventory.Problem
+}
+
+func (s *Session) Inventory(project string) (InventoryView, error) {
+	f, err := s.scope(query.Filter{Project: project})
+	if err != nil {
+		return InventoryView{}, err
+	}
+	inv := inventory.Load(s.Cfg)
+	var v InventoryView
+	for _, t := range inv.Targets() {
+		if t.Project == f.Project || f.Project == "" {
+			if len(f.Projects) == 0 || slices.Contains(f.Projects, t.Project) {
+				v.Targets = append(v.Targets, t)
+			}
+		}
+	}
+	for _, src := range inv.Sources() {
+		if (f.Project == "" || src.Project == f.Project) && (len(f.Projects) == 0 || slices.Contains(f.Projects, src.Project)) {
+			v.Sources = append(v.Sources, src)
+		}
+	}
+	for _, p := range inv.Problems() {
+		if (f.Project == "" || p.Project == f.Project) && (len(f.Projects) == 0 || slices.Contains(f.Projects, p.Project)) {
+			v.Problems = append(v.Problems, p)
+		}
+	}
+	return v, nil
 }

@@ -34,3 +34,9 @@ techs:
     cpe: [nginx:nginx]
   - name: redis
     cpe: [redis:redis]
+  - name: go
+    aliases: [golang]
+    cpe: [golang:go]
+  - name: python
+    aliases: [python, cpython]
+    cpe: [python:python]

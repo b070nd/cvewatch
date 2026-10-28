@@ -11,6 +11,7 @@ import (
 
 	"github.com/b070nd/cvewatch/app/src/host"
 	"github.com/b070nd/cvewatch/app/src/model"
+	"github.com/b070nd/cvewatch/app/src/priority"
 	"github.com/b070nd/cvewatch/app/src/query"
 )
 
@@ -62,7 +63,27 @@ func Render(v *model.Vulnerability, fs []model.Finding, now time.Time) string {
 	if v.CVSS > 0 {
 		fmt.Fprintf(&b, " · **CVSS:** %.1f", v.CVSS)
 	}
-	b.WriteString("\n\n## Description\n\n")
+	b.WriteString("\n\n")
+	if k := v.KEV; k != nil {
+		fmt.Fprintf(&b, "**KEV:** on CISA's Known Exploited Vulnerabilities list since %s", k.DateAdded.UTC().Format("2006-01-02"))
+		if !k.DueDate.IsZero() {
+			fmt.Fprintf(&b, ", CISA remediation due %s", k.DueDate.UTC().Format("2006-01-02"))
+		}
+		if k.Ransomware {
+			b.WriteString(", known ransomware use")
+		}
+		if k.Action != "" {
+			fmt.Fprintf(&b, ". Required action: %s", md(query.Clip(k.Action, 200)))
+		}
+		b.WriteString("\n\n")
+	}
+	if e := v.EPSS; e != nil {
+		fmt.Fprintf(&b, "**EPSS:** %.0f%% chance of exploitation in the next 30 days (percentile %.0f)\n\n", e.Score*100, e.Percentile*100)
+	}
+	if why := priority.Reasons(priority.Facts{Severity: v.Severity, KEV: v.KEV, EPSS: v.EPSS, ProdOpen: prodOpen(fs)}, now); len(why) > 0 {
+		fmt.Fprintf(&b, "**Why it ranks where it does:** %s\n\n", strings.Join(why, "; "))
+	}
+	b.WriteString("## Description\n\n")
 	if v.Summary != "" {
 		fmt.Fprintf(&b, "%s\n\n", md(query.Clip(v.Summary, 600)))
 	} else {
@@ -112,10 +133,27 @@ func Render(v *model.Vulnerability, fs []model.Finding, now time.Time) string {
 		}
 	}
 
-	b.WriteString("\n## Status\n\n| Project | Env | Status | Version | Matched | Note |\n|---|---|---|---|---|---|\n")
+	b.WriteString("\n## Status\n\n| Project | Env | Status | Version | Owner | Due | Ticket | Matched | Note |\n|---|---|---|---|---|---|---|---|---|\n")
 	for _, f := range fs {
-		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s |\n", cell(f.Project), f.Env, f.Status, applies(f.Applies),
-			cell(strings.Join(f.Matched, ", ")), cell(f.Note))
+		due := ""
+		if !f.Due.IsZero() {
+			due = f.Due.UTC().Format("2006-01-02")
+			if f.Status == model.StatusOpen && now.After(f.Due) {
+				due += " (overdue)"
+			}
+		}
+		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", cell(f.Project), f.Env, f.Status, applies(f.Applies),
+			cell(f.Owner), due, cell(f.Ticket), cell(strings.Join(f.Matched, ", ")), cell(f.Note))
+	}
+	var attached []string
+	for _, f := range fs {
+		for _, e := range f.Evidence {
+			attached = append(attached, fmt.Sprintf("- %s/%s, %s by %s: %s %s", cell(f.Project), f.Env,
+				e.Time.UTC().Format("2006-01-02"), cell(e.Actor), md(e.Note), md(e.URL)))
+		}
+	}
+	if len(attached) > 0 {
+		b.WriteString("\n**Evidence:**\n" + strings.Join(attached, "\n") + "\n")
 	}
 
 	b.WriteString("\n## Plan\n")
@@ -123,6 +161,15 @@ func Render(v *model.Vulnerability, fs []model.Finding, now time.Time) string {
 		b.WriteString(plan(v, p))
 	}
 	return b.String()
+}
+
+func prodOpen(fs []model.Finding) bool {
+	for _, f := range fs {
+		if f.Env == model.EnvProd && f.Status == model.StatusOpen {
+			return true
+		}
+	}
+	return false
 }
 
 func applies(a model.Applicability) string {
@@ -241,6 +288,22 @@ func facts(is query.Issue) string {
 		parts = append(parts, "published "+is.Age+" ago")
 	}
 	parts = append(parts, plural(is.ArticleCount, "article"))
+	if k := is.KEV; k != nil {
+		kev := "KEV"
+		if !k.DueDate.IsZero() {
+			kev += ", CISA due " + k.DueDate.Format("2006-01-02")
+		}
+		parts = append(parts, kev)
+	}
+	if is.EPSS != nil {
+		parts = append(parts, fmt.Sprintf("EPSS %.0f%%", is.EPSS.Score*100))
+	}
+	for _, t := range is.Targets {
+		if t.Overdue {
+			parts = append(parts, "OVERDUE")
+			break
+		}
+	}
 	switch {
 	case is.Fix.Official:
 		parts = append(parts, "official fix: "+fixWhat(is))

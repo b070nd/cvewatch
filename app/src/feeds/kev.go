@@ -17,6 +17,7 @@ type kevResponse struct {
 		VulnerabilityName string `json:"vulnerabilityName"`
 		ShortDescription  string `json:"shortDescription"`
 		DateAdded         string `json:"dateAdded"`
+		DueDate           string `json:"dueDate"`
 		RequiredAction    string `json:"requiredAction"`
 		RansomwareUse     string `json:"knownRansomwareCampaignUse"`
 	} `json:"vulnerabilities"`
@@ -48,11 +49,16 @@ func parseKEV(body []byte, src model.Source, since time.Time) ([]model.Item, err
 		if action := truncate(plain(v.RequiredAction), 200); action != "" {
 			fixes = []model.Fix{{Kind: model.FixAction, Detail: action, URL: link, Source: src.ID, Official: true}}
 		}
+		kev := &model.KEV{DateAdded: added, Action: truncate(plain(v.RequiredAction), 200), Ransomware: v.RansomwareUse == "Known"}
+		if due, err := time.Parse(time.DateOnly, v.DueDate); err == nil {
+			kev.DueDate = due
+		}
 		it, ok := finish(src.ID, model.Item{
 			Title:     fmt.Sprintf("%s %s: %s", v.VendorProject, v.Product, v.VulnerabilityName),
 			URL:       link,
 			Summary:   summary,
 			Fixes:     fixes,
+			KEV:       kev,
 			Published: added,
 			Severity:  model.SevHigh,
 		}, v.CVEID)

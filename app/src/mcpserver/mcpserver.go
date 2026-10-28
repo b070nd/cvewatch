@@ -17,8 +17,11 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/b070nd/cvewatch/app/src/audit"
+	"github.com/b070nd/cvewatch/app/src/evidence"
+	"github.com/b070nd/cvewatch/app/src/export"
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/ops"
+	"github.com/b070nd/cvewatch/app/src/pipeline"
 	"github.com/b070nd/cvewatch/app/src/query"
 )
 
@@ -50,8 +53,19 @@ func build(root string, log *slog.Logger, allowWrite bool) *mcp.Server {
 	mcp.AddTool(srv, &mcp.Tool{Name: "get_calendar", Annotations: ro,
 		Description: "List vulnerabilities published in a month (default: this month) for a calendar view, with severity, techs, article count and fix availability."}, s.calendar)
 
+	mcp.AddTool(srv, &mcp.Tool{Name: "get_evidence", Annotations: ro,
+		Description: "Evidence pack for one vulnerability: facts, per-environment status, and the timeline of detection, alerts, status changes, owners and attached evidence."}, s.evidence)
+	mcp.AddTool(srv, &mcp.Tool{Name: "policy_violations", Annotations: ro,
+		Description: "List open findings that break a configured policy rule (for example no owner within 24h for a KEV issue in prod) or their own due date."}, s.violations)
+
 	if allowWrite {
 		no := false
+		mcp.AddTool(srv, &mcp.Tool{Name: "assign",
+			Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no},
+			Description: "Set owner, due date or ticket for a vulnerability in a project, optionally one environment."}, s.assign)
+		mcp.AddTool(srv, &mcp.Tool{Name: "attach_evidence",
+			Annotations: &mcp.ToolAnnotations{DestructiveHint: &no},
+			Description: "Attach a note and link (merge request, deployment, advisory) as evidence to a vulnerability in a project."}, s.attach)
 		mcp.AddTool(srv, &mcp.Tool{Name: "set_status",
 			Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no},
 			Description: "Set the fix status (fixed, ignored or open) of a vulnerability for a project, optionally one environment. Use fixed only after the fix is deployed there."}, s.setStatus)
@@ -75,24 +89,26 @@ func (s *server) with(fn func(*ops.Session) error) error {
 type listIn struct {
 	MinSeverity       string `json:"min_severity,omitempty" jsonschema:"lowest severity to include: low, medium, high or critical"`
 	Project           string `json:"project,omitempty" jsonschema:"only findings for this project"`
+	Env               string `json:"env,omitempty" jsonschema:"only this environment: dev, int, staging or prod"`
 	IncludeUnaffected bool   `json:"include_unaffected,omitempty" jsonschema:"also list targets whose version is known to be outside the affected range"`
+	IncludeClosed     bool   `json:"include_closed,omitempty" jsonschema:"also list the fixed, ignored and not-affected environments of issues that are still open somewhere"`
 }
 
-type listOut struct {
-	Count  int           `json:"count"`
-	Issues []query.Issue `json:"issues"`
-}
-
-func (s *server) list(_ context.Context, _ *mcp.CallToolRequest, in listIn) (*mcp.CallToolResult, listOut, error) {
-	f, err := ops.ParseFilter(in.MinSeverity, in.Project)
+// The list result is the same versioned document the CLI exports.
+func (s *server) list(_ context.Context, _ *mcp.CallToolRequest, in listIn) (*mcp.CallToolResult, export.Document, error) {
+	f, err := ops.ParseFilter(in.MinSeverity, in.Project, in.Env)
 	if err != nil {
-		return nil, listOut{}, err
+		return nil, export.Document{}, err
 	}
 	f.All = in.IncludeUnaffected
-	var out listOut
-	err = s.with(func(sess *ops.Session) (err error) {
-		out.Issues, err = sess.List(f)
-		out.Count = len(out.Issues)
+	var out export.Document
+	err = s.with(func(sess *ops.Session) error {
+		if in.IncludeClosed {
+			out, err = sess.Export(f)
+			return err
+		}
+		issues, err := sess.List(f)
+		out = export.New(issues, sess.Now())
 		return err
 	})
 	return nil, out, err
@@ -143,7 +159,7 @@ type calendarOut struct {
 }
 
 func (s *server) calendar(_ context.Context, _ *mcp.CallToolRequest, in calendarIn) (*mcp.CallToolResult, calendarOut, error) {
-	f, err := ops.ParseFilter(in.MinSeverity, in.Project)
+	f, err := ops.ParseFilter(in.MinSeverity, in.Project, "")
 	if err != nil {
 		return nil, calendarOut{}, err
 	}
@@ -173,8 +189,8 @@ type statusIn struct {
 	ID      string `json:"id" jsonschema:"CVE or GHSA id"`
 	Project string `json:"project" jsonschema:"project name as in its config file"`
 	Env     string `json:"env,omitempty" jsonschema:"dev, int, staging or prod; omit for all of the project's environments"`
-	Status  string `json:"status" jsonschema:"fixed, ignored or open"`
-	Note    string `json:"note,omitempty" jsonschema:"free text such as a ticket, merge request or version"`
+	Status  string `json:"status" jsonschema:"fixed, ignored, not_affected or open"`
+	Note    string `json:"note,omitempty" jsonschema:"reason, ticket, merge request or version; required for not_affected"`
 }
 
 type statusOut struct {
@@ -191,20 +207,87 @@ func (s *server) setStatus(_ context.Context, _ *mcp.CallToolRequest, in statusI
 	return nil, out, err
 }
 
-type refreshOut struct {
-	Items    int      `json:"items"`
-	New      int      `json:"new"`
-	Merged   int      `json:"merged"`
-	Findings int      `json:"findings"`
-	Alerted  int      `json:"alerted"`
-	Failed   []string `json:"failed_sources,omitempty"`
+func (s *server) refresh(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, pipeline.Result, error) {
+	var out pipeline.Result
+	err := s.with(func(sess *ops.Session) (err error) {
+		out, err = sess.Refresh(ctx)
+		return err
+	})
+	return nil, out, err
 }
 
-func (s *server) refresh(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, refreshOut, error) {
-	var out refreshOut
+type evidenceIn struct {
+	ID string `json:"id" jsonschema:"CVE or GHSA id"`
+}
+
+func (s *server) evidence(_ context.Context, _ *mcp.CallToolRequest, in evidenceIn) (*mcp.CallToolResult, evidence.Pack, error) {
+	var out evidence.Pack
+	err := s.with(func(sess *ops.Session) (err error) {
+		out, err = sess.Evidence(in.ID)
+		return err
+	})
+	return nil, out, err
+}
+
+type violationOut struct {
+	Count      int              `json:"count"`
+	Violations []violationEntry `json:"violations"`
+}
+
+type violationEntry struct {
+	ID      string `json:"id"`
+	Project string `json:"project"`
+	Env     string `json:"env"`
+	Rule    string `json:"rule"`
+	Reason  string `json:"reason"`
+	Late    string `json:"late"`
+}
+
+func (s *server) violations(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, violationOut, error) {
+	out := violationOut{Violations: []violationEntry{}}
 	err := s.with(func(sess *ops.Session) error {
-		res, err := sess.Refresh(ctx)
-		out = refreshOut{res.Items, res.New, res.Merged, res.Findings, res.Alerted, res.Failed}
+		vs, err := sess.Violations()
+		for _, v := range vs {
+			out.Violations = append(out.Violations, violationEntry{ID: v.Subject.VulnID, Project: v.Subject.Project,
+				Env: string(v.Subject.Env), Rule: v.Rule, Reason: v.Reason, Late: v.Late.Round(time.Hour).String()})
+		}
+		out.Count = len(out.Violations)
+		return err
+	})
+	return nil, out, err
+}
+
+type assignIn struct {
+	ID      string `json:"id" jsonschema:"CVE or GHSA id"`
+	Project string `json:"project" jsonschema:"project name as in its config file"`
+	Env     string `json:"env,omitempty" jsonschema:"dev, int, staging or prod; omit for all of the project's environments"`
+	Owner   string `json:"owner,omitempty" jsonschema:"who handles it; - clears"`
+	Due     string `json:"due,omitempty" jsonschema:"deadline YYYY-MM-DD; none clears"`
+	Ticket  string `json:"ticket,omitempty" jsonschema:"ticket or merge request link; - clears"`
+}
+
+func (s *server) assign(_ context.Context, _ *mcp.CallToolRequest, in assignIn) (*mcp.CallToolResult, statusOut, error) {
+	var out statusOut
+	err := s.with(func(sess *ops.Session) (err error) {
+		out.Updated, err = sess.Assign(ops.Assignment{ID: in.ID, Project: in.Project, Env: model.Env(in.Env),
+			Owner: in.Owner, Due: in.Due, Ticket: in.Ticket})
+		return err
+	})
+	return nil, out, err
+}
+
+type attachIn struct {
+	ID      string `json:"id" jsonschema:"CVE or GHSA id"`
+	Project string `json:"project" jsonschema:"project name as in its config file"`
+	Env     string `json:"env,omitempty" jsonschema:"dev, int, staging or prod; omit for all of the project's environments"`
+	Note    string `json:"note,omitempty" jsonschema:"what the evidence shows"`
+	URL     string `json:"url,omitempty" jsonschema:"advisory, merge request, change ticket or deployment record (http or https)"`
+}
+
+func (s *server) attach(_ context.Context, _ *mcp.CallToolRequest, in attachIn) (*mcp.CallToolResult, statusOut, error) {
+	var out statusOut
+	err := s.with(func(sess *ops.Session) (err error) {
+		out.Updated, err = sess.Attach(ops.Attachment{ID: in.ID, Project: in.Project, Env: model.Env(in.Env), Note: in.Note, URL: in.URL})
 		return err
 	})
 	return nil, out, err

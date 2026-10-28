@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/b070nd/cvewatch/app/src/ecosystem"
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/version"
 )
@@ -49,9 +50,57 @@ type Verdict struct {
 // Relevant reports whether any tech or project matched.
 func (v Verdict) Relevant() bool { return len(v.Techs) > 0 || len(v.Matches) > 0 }
 
-// Match is the outcome for one project.
+// Target is one project environment as relevance sees it: what runs there.
+// The inventory module builds them from config, lockfiles and SBOMs.
+type Target struct {
+	Project  string
+	Env      model.Env
+	Techs    []model.ProjectTech // declared techs with this environment's versions
+	Packages []model.Package
+	Image    string // image tag or digest, recorded only
+}
+
+// Find returns what the target currently runs for an earlier match, so a
+// finding can be re-checked after a lockfile or declared version changed.
+// A package is found by ecosystem and name; if several versions are
+// installed the one equal to the old version wins.
+func (t Target) Find(old model.Installed) (model.Installed, bool) {
+	switch old.Via {
+	case "tech":
+		for _, pt := range t.Techs {
+			if strings.EqualFold(pt.Name, old.Name) {
+				return model.Installed{Name: pt.Name, Version: pt.Version, Via: "tech"}, true
+			}
+		}
+	case "package":
+		var first *model.Package
+		for i, p := range t.Packages {
+			if pkgKey(p.Ecosystem, p.Name) != pkgKey(old.Ecosystem, old.Name) {
+				continue
+			}
+			if p.Version == old.Version {
+				return model.Installed{Name: p.Name, Version: p.Version, Ecosystem: p.Ecosystem, Via: "package"}, true
+			}
+			if first == nil {
+				first = &t.Packages[i]
+			}
+		}
+		if first != nil {
+			return model.Installed{Name: first.Name, Version: first.Version, Ecosystem: first.Ecosystem, Via: "package"}, true
+		}
+	}
+	return model.Installed{}, false
+}
+
+// pkgKey is the identity of a package across lockfiles, SBOMs and advisories.
+func pkgKey(eco, name string) string {
+	return ecosystem.Canonical(eco) + "|" + ecosystem.NormalizeName(eco, name)
+}
+
+// Match is the outcome for one project environment.
 type Match struct {
 	Project   string
+	Env       model.Env
 	Installed []model.Installed
 	Applies   model.Applicability // the most urgent over everything installed
 	Reasons   []string
@@ -64,8 +113,8 @@ type hit struct {
 	why    string
 }
 
-// Judge evaluates one item against the projects' declared techs and lockfile packages.
-func (j *Judge) Judge(it model.Item, projects []model.Project, pkgs map[string][]model.Package) Verdict {
+// Judge evaluates one item against what each project environment runs.
+func (j *Judge) Judge(it model.Item, targets []Target) Verdict {
 	var v Verdict
 	hits := map[string]hit{}
 	for _, t := range j.techs {
@@ -79,24 +128,24 @@ func (j *Judge) Judge(it model.Item, projects []model.Project, pkgs map[string][
 		}
 	}
 
-	for _, p := range projects {
-		m := Match{Project: p.Name, Applies: model.AppNotAffected}
-		for _, pt := range p.Techs {
+	for _, tg := range targets {
+		m := Match{Project: tg.Project, Env: tg.Env, Applies: model.AppNotAffected}
+		for _, pt := range tg.Techs {
 			h, ok := hits[strings.ToLower(pt.Name)]
 			if !ok {
 				continue
 			}
 			in := model.Installed{Name: pt.Name, Version: pt.Version, Via: "tech"}
-			m.add(in, applies(in.Version, h.ranges, h.known), h.why)
+			m.add(in, applies(in, h.ranges, h.known), h.why)
 		}
-		for _, pkg := range pkgs[p.Name] {
+		for _, pkg := range tg.Packages {
 			in := model.Installed{Name: pkg.Name, Version: pkg.Version, Ecosystem: pkg.Ecosystem, Via: "package"}
 			if rs, structured, ok := packageHit(it, pkg); ok {
 				why := "named in the advisory's package list"
 				if !structured {
 					why = "named in the text"
 				}
-				m.add(in, applies(in.Version, rs, structured), why)
+				m.add(in, applies(in, rs, structured), why)
 			}
 		}
 		if len(m.Installed) > 0 {
@@ -126,11 +175,13 @@ func verdictWords(a model.Applicability) string {
 	return "version could not be checked"
 }
 
-func applies(installed string, ranges []model.Range, known bool) model.Applicability {
+// applies compares the installed version with the ranges in the ordering of
+// its own ecosystem (PEP 440 for PyPI, Maven rules for Maven, and so on).
+func applies(in model.Installed, ranges []model.Range, known bool) model.Applicability {
 	if !known {
 		return model.AppUnknown
 	}
-	return version.Evaluate(installed, ranges)
+	return version.EvaluateFor(in.Ecosystem, in.Version, ranges)
 }
 
 // judge decides one tech. Structured CPE data wins over text when the tech
@@ -138,7 +189,7 @@ func applies(installed string, ranges []model.Range, known bool) model.Applicabi
 func (t tech) judge(it model.Item) (h hit, note string, ok bool) {
 	if len(t.cpe) > 0 {
 		for _, a := range it.Affected {
-			if a.Ecosystem == "cpe" && t.cpe[a.Name] {
+			if a.Ecosystem == model.EcoCPE && t.cpe[a.Name] {
 				h.ranges = append(h.ranges, a.Ranges...)
 				h.known = len(a.Ranges) > 0
 			}
@@ -180,7 +231,7 @@ func (t tech) judge(it model.Item) (h hit, note string, ok bool) {
 
 func (t tech) matchesCPE(it model.Item) bool {
 	for _, a := range it.Affected {
-		if a.Ecosystem == "cpe" && t.cpe[a.Name] {
+		if a.Ecosystem == model.EcoCPE && t.cpe[a.Name] {
 			return true
 		}
 	}
@@ -192,12 +243,13 @@ func (t tech) matchesCPE(it model.Item) bool {
 // and only when the feed gave no structured packages at all.
 func packageHit(it model.Item, pkg model.Package) (ranges []model.Range, structured, ok bool) {
 	hasStructured := false
+	want := pkgKey(pkg.Ecosystem, pkg.Name)
 	for _, a := range it.Affected {
-		if a.Ecosystem == "cpe" {
+		if a.Ecosystem == model.EcoCPE {
 			continue
 		}
 		hasStructured = true
-		if a.Ecosystem == pkg.Ecosystem && a.Name == pkg.Name {
+		if pkgKey(a.Ecosystem, a.Name) == want {
 			ranges = append(ranges, a.Ranges...)
 			ok = true
 		}
@@ -205,7 +257,8 @@ func packageHit(it model.Item, pkg model.Package) (ranges []model.Range, structu
 	if ok {
 		return ranges, len(ranges) > 0, true
 	}
-	if !hasStructured && strings.Contains(pkg.Name, "/") && wordRe([]string{pkg.Name}).MatchString(strings.ToLower(it.Text())) {
+	scoped := strings.ContainsAny(pkg.Name, "/:") // vendor/package, group:artifact, module paths
+	if !hasStructured && scoped && wordRe([]string{pkg.Name}).MatchString(strings.ToLower(it.Text())) {
 		return nil, false, true
 	}
 	return nil, false, false
@@ -222,7 +275,7 @@ func (j *Judge) Reassess(installed []model.Installed, affected []model.Affected)
 	for i, in := range installed {
 		a := model.AppUnknown
 		if ranges := j.rangesFor(in, affected); len(ranges) > 0 {
-			a = version.Evaluate(in.Version, ranges)
+			a = version.EvaluateFor(in.Ecosystem, in.Version, ranges)
 		}
 		if i == 0 {
 			out = a
@@ -241,9 +294,9 @@ func (j *Judge) rangesFor(in model.Installed, affected []model.Affected) []model
 	var out []model.Range
 	for _, a := range affected {
 		switch {
-		case in.Via == "package" && a.Ecosystem == in.Ecosystem && a.Name == in.Name:
+		case in.Via == "package" && pkgKey(a.Ecosystem, a.Name) == pkgKey(in.Ecosystem, in.Name):
 			out = append(out, a.Ranges...)
-		case in.Via == "tech" && a.Ecosystem == "cpe":
+		case in.Via == "tech" && a.Ecosystem == model.EcoCPE:
 			for _, t := range j.techs {
 				if t.name == strings.ToLower(in.Name) && t.cpe[a.Name] {
 					out = append(out, a.Ranges...)

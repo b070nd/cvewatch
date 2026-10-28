@@ -1,0 +1,31 @@
+# Global settings. Every key is optional; these are the defaults.
+interval: 4h        # daemon period
+lookback: 168h      # first run of a source reaches this far back
+retention: 4320h    # forget items that matched nothing after 180 days; 0 keeps them
+                    # (must be at least twice the lookback; findings and the audit log are never pruned)
+
+data_dir: data         # state.json, audit.log (relative to this folder)
+alerts_dir: alerts     # generated reports and calendar pages
+
+http:
+  user_agent: "cvewatch/1.0 (internal vulnerability monitor)"
+  timeout: 30s
+  retries: 3
+  retry_delay: 2s
+  rate: 1                       # requests per second, per host
+  host_rates:                   # stricter limits for touchy hosts
+    services.nvd.nist.gov: 0.1  # NVD allows ~5 requests / 30s without a key
+  threshold_429: 3              # consecutive 429s before a host cooldown
+  cooldown_429: 2m
+  allow_private: false          # true permits http:// and internal addresses, e.g. an internal feed or proxy
+
+slack:
+  webhook_env: SLACK_WEBHOOK_URL  # the webhook itself stays in the environment
+  min_severity: unknown           # unknown | low | medium | high | critical
+
+# Optional access rules by actor name (CVEWATCH_ACTOR, else the OS user).
+# Leave the section out for a single operator: everyone may do everything.
+# This is authorization on top of a local identity, not authentication.
+# access:
+#   alice: {projects: [shop], write: true}
+#   bob:   {projects: ["*"], write: false}
