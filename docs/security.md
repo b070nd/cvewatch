@@ -52,6 +52,14 @@ What the tool defends against, how, and how to deploy it.
   - A hash-chained audit log records detections, alerts and every status change with an actor. `cvewatch audit` verifies it. Editing or deleting a record in the middle is detected; truncating the end or rewriting the whole file is not. Forward the log to a system you do not administer if you need that.
   - A status change is refused if it cannot be logged.
 
+## Setup, discovery and project edits
+
+- `discover` and the setup tools read files in the folder they are given and nothing else. They never execute anything, never follow symbolic links, skip dependency and build folders, and cap depth, file count and file size. Text found in a repository is untrusted: it is shown as plain text with control characters removed and never interpreted.
+- Project files are changed only through `ops`: names are restricted to letters, digits, dash and underscore (no path separators), access rules apply (creating a project needs access to all projects), the result is validated, the old file is backed up, the write is atomic, and the audit log records it before anything is written.
+- The dashboard is static HTML with escaped text, a restrictive content security policy, no scripts and no external requests. It lists your exposure: store it as carefully as `data/`.
+- Vendor advisory feeds (CSAF) are fetched over https only; a provider index may only point to files on the same host.
+- A technology the catalog does not contain is never guessed: unknown means unknown.
+
 ## Deploying
 
 - Run as an unprivileged user, never as root. The container image runs as UID 65532 and works with `--read-only` and `--cap-drop ALL`; only `/data` and `/alerts` need to be writable.

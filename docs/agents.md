@@ -19,6 +19,21 @@ It starts read-only with these tools:
 | `policy_violations` | open findings that break a policy rule or their due date |
 | `get_calendar` | issues published in a month, with severity, techs, article count and fix availability |
 
+Setup tools (read-only unless noted) let an agent configure the monitor with the user:
+
+| Tool | Does |
+|---|---|
+| `search_catalog` | find technologies (open and closed source) by name, vendor or keyword, optionally within a category |
+| `discover_stack` | look at a repository folder and propose technologies, versions and lockfiles, each with evidence and a confidence; reads files only |
+| `list_projects` | the monitored projects with environments, technologies and lockfiles |
+| `preview_project_change` | the diff and problems a change to a project file would produce; writes nothing |
+| `edit_project` | only with `-allow-write`: apply the change (comments kept, old file backed up, audited as `project`) |
+| `get_status` | health of the monitor: daemon, feeds, channels, recent cycles |
+
+`discover_stack` reads files in the folder it is given and nothing else: it never executes anything, never follows symbolic links, skips dependency folders and caps depth, file count and file size. Its output is evidence for a human to confirm, not a decision.
+
+Skill files for Claude Code live in `skills/`: `cvewatch-setup` walks through the tools above with the user, and `cvewatch-triage` reads and records findings. Copy them to `~/.claude/skills/` or a project's `.claude/skills/`.
+
 The server inherits the permissions of the local user that starts it and speaks only over stdio; there is no network listener. Add `-allow-write` to the command to also expose `set_status` (fixed, ignored, not_affected with a reason, open), `assign` (owner, due date, ticket), `attach_evidence` and `refresh` (fetch all sources, alert channels). Leave it off for shared setups; marking an issue fixed changes what the team believes is patched. Changes made through MCP are recorded in the audit log with the actor `mcp:<user>`.
 
 Each call opens the data directory briefly, so a running `daemon` keeps working. If a call hits the daemon mid-cycle it fails with "another cvewatch process is using the data directory"; retry.

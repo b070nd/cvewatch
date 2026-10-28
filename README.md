@@ -32,11 +32,12 @@ HIGH (1)
 | | |
 |---|---|
 | **Watches** | NVD, GitHub advisories, CISA KEV, Hacker News and any RSS or Atom feed |
-| **Tech-agnostic** | not tied to one language or stack: add any technology in a few lines of YAML |
-| **Knows what you run** | declared techs and versions, lockfiles and SBOMs, per project **and environment** |
+| **Tech-agnostic** | a built-in catalog of ~145 open and closed source technologies, and any other in a few lines of YAML |
+| **Knows what you run** | declared techs and versions, lockfiles and SBOMs, per project **and environment**; `setup` finds them in your repository, with evidence |
 | **Decides** | what matters to you, whether your version is affected, and what to do first |
 | **Tracks** | open, fixed, ignored or not-affected per environment, with owner, deadline, ticket and evidence |
-| **Tells** | Slack, signed webhook, email, a daily digest, JSON/CSV/Markdown exports, an MCP server |
+| **Tells** | Slack, signed webhook, email, a daily digest, JSON/CSV/Markdown/SARIF exports, a status page, an MCP server |
+| **Shows** | a full-screen TUI, a static dashboard and `cvewatch status`: is the monitor itself working? |
 | **Proves** | a hash-chained audit log and an evidence pack per issue |
 | **Runs as** | one binary, on your machine, no telemetry |
 
@@ -88,10 +89,10 @@ cvewatch is **tech-agnostic**: nothing in it is specific to PHP, Node or any one
 | **Packages** | a lockfile or SBOM: composer, npm, Go, pip, poetry, Pipfile, Gradle, Maven, CycloneDX, SPDX | exact per-package matching, with each ecosystem's own version rules |
 | **Anything else** | just the technology name | it is matched by name and the finding stays `unchecked` until a person confirms the version |
 
-Eleven technologies ship in the box (PHP, Node.js, Next.js, GitLab, Elasticsearch, Magento, nginx, Redis, Go, Python and Vercel). Adding yours is a few lines, for example Grafana:
+About 145 technologies ship in the box, open and closed source: runtimes, frameworks, databases, web and app servers, CMS and commerce platforms, CI/CD, container and cloud tooling, network and security appliances, operating systems. `cvewatch catalog fortinet` searches them. Only technologies a project declares are judged, so the size of the list adds no noise, and some carry their vendor's advisory feed, which switches on with them. Something missing? A few lines in `config/techs.yaml` add it (or replace a shipped entry; `disabled: true` removes one), for example Grafana:
 
 ```yaml
-# config/techs.yaml   (cvewatch init writes a copy of the shipped list for you to extend)
+# config/techs.yaml   (holds only your additions; the shipped catalog is always there)
 techs:
   - name: grafana
     aliases: [grafana]
@@ -128,10 +129,14 @@ flowchart TB
 go install github.com/b070nd/cvewatch/app/src/cmd/cvewatch@latest   # or Docker, see compose.yaml
 
 mkdir cvewatch-home && cd cvewatch-home
-cvewatch init -repo ~/code/shop        # writes a starter config, detects composer.lock, package-lock.json, go.mod, .nvmrc ...
+cvewatch init                          # writes a starter config
+cvewatch setup ~/code/shop             # guided: finds technologies, versions and lockfiles, shows the evidence, asks you to confirm
 cvewatch doctor                        # checks everything and tells you what to fix
 cvewatch update                        # fetch the feeds now, then show what is open
+cvewatch tui                           # or browse and triage in a full-screen interface
 ```
+
+`setup` looks at lockfiles, `.tool-versions`, `go.mod`, `package.json`, Dockerfiles, compose files, Kubernetes manifests and Terraform, also in monorepos, and says why it believes each thing ("nginx 1.25.3: image in `docker-compose.yml`"). Guesses it is unsure about are asked, not declared. `cvewatch init -repo ~/code/shop` does the same without questions.
 
 The list of technologies and feeds is built in, so one binary is enough. `init` writes a project file per repository, and you adjust the versions it could not guess (a repository says what is *declared*, not what *runs in prod*).
 
@@ -295,8 +300,10 @@ Read-only by default. The agent can call:
 | `get_evidence` | the full timeline and per-environment matrix for one issue |
 | `policy_violations` | which deadlines are broken right now |
 | `get_calendar` | what was published this month |
+| `get_status` | whether the monitor itself is healthy: daemon, feeds, channels |
+| `search_catalog`, `discover_stack`, `list_projects`, `preview_project_change` | set a project up: find technologies, read a repository, preview the change |
 
-Opt in to writing with `mcp -allow-write`, and the agent can also `set_status`, `assign`, `attach_evidence` and `refresh`.
+Opt in to writing with `mcp -allow-write`, and the agent can also `set_status`, `assign`, `attach_evidence`, `refresh` and `edit_project`. The skills in [`skills/`](skills) walk an agent through setup (`cvewatch-setup`) and triage (`cvewatch-triage`), asking the human at every step that matters.
 
 **Example: a dependency upgrade.** A developer asks the agent to bump the packages of `shop`. Instead of guessing, the agent calls `list_findings(project="shop", env="prod", min_severity="high")`, sees that `symfony/http-kernel 6.4.1` is `affected` with an official fix in 6.4.2, upgrades exactly that, opens the merge request, and calls `attach_evidence(note="MR !412 upgrades http-kernel to 6.4.2", url=...)`. The **status stays `open`**. After the deploy a human runs `cvewatch fix ... -env prod`, because "fixed" is a statement about production, not about a branch.
 
@@ -330,7 +337,7 @@ access:
 
 ### Run it for the whole factory
 
-- **One install, many products.** Each repository gets a project file (`cvewatch init -repo ...`), each environment its own versions, SBOM and image reference. The ledger is shared, so a CVE that touches three products appears once, with three rows.
+- **One install, many products.** Each repository gets a project file (`cvewatch setup DIR`), each environment its own versions, SBOM and image reference. The ledger is shared, so a CVE that touches three products appears once, with three rows.
 - **A ritual that fits your process.** A daily digest of what is still open in prod; `policy` as the escalation trigger; `assign` for owner, deadline and ticket.
 - **Evidence on demand.** `cvewatch evidence CVE-...` is the pack you hand to an auditor or a customer: when it was published, when you detected it, who was told, who owned it, what was attached, when each environment was fixed, and whether the audit chain verified. [docs/compliance.md](docs/compliance.md) explains how this supports NIS2 vulnerability-handling duties and the GDPR (it supports them; it does not make you compliant).
 - **Plays with your scanners.** Run Trivy, Grype or OSV-Scanner for detection and SBOM generation; let cvewatch own the multi-environment open/fixed truth and the deadlines.
@@ -348,11 +355,13 @@ Agent snippet for your `CLAUDE.md` and details: [docs/agents.md](docs/agents.md)
 | Merges the same issue across sources | **yes** | partly | partly | no |
 | Owners, deadlines, evidence, audit trail | **yes** | no | some | no |
 | One binary, data stays local | **yes** | yes | a hosted service | n/a |
+| Gate a CI build on severity | `list -fail-on high`, SARIF export | **yes** | via API | no |
 
 ## Know the limits
 
 - **Versions are checked only where feeds give ranges, and only for what you say runs.** NVD product data and GitHub advisories do; news and Hacker News do not, so those findings stay `unchecked` and a person confirms.
 - **First runs can be noisy.** `cvewatch doctor` and the shipped CPE names remove most of it; `excludes`, `match_structured`, `match_title_only` and `-min` tune the rest. Config edits apply to items first seen afterwards; `rescan` looks back on purpose.
+- **No distro or OS-package advisories** (Debian, Alpine, Red Hat...) and no offline mode: use a scanner for what is inside an image, and cvewatch for who is exposed and what happened next.
 - **Package-level matching covers ten input formats today** (composer, npm, Go, pip, poetry, Pipfile, Gradle, Maven, CycloneDX, SPDX). Other stacks are covered by technology name, not by package.
 - **Fixes are what feeds say.** No package or container registry is queried and nothing is scanned. Image references are recorded, not verified.
 - **Authorization relies on the local identity.** It is for people you can identify otherwise, not a public service.

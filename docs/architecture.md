@@ -4,7 +4,7 @@ One package per concern under `app/src`. The arrows show who depends on whom; th
 
 | Module | Owns | Seam |
 |---|---|---|
-| `ops` | every operation (list, show, why, rescan, calendar, status, assign, evidence, export, policy, digest, inventory, refresh), validation, access rules, audit order | CLI and MCP are its two adapters |
+| `ops` | every operation (list, show, why, rescan, calendar, status, assign, evidence, export, policy, digest, inventory, project edits, refresh), validation, access rules, audit order | CLI, TUI and MCP are its adapters; read-only sessions read a lock-free snapshot |
 | `pipeline` | one refresh cycle: fetch, judge, record, reconcile, enrich, report, alert, digest | `feeds.Getter`, `notify.Channel` |
 | `inventory` | what runs in each project environment | `matrix` adapters |
 | `matrix` | reading lockfiles and SBOMs | one adapter per type (ten today) |
@@ -12,7 +12,7 @@ One package per concern under `app/src`. The arrows show who depends on whom; th
 | `relevance` | what an item is about, which environments run it, version verdict, reasons | none: pure rules |
 | `version` | comparing versions and ranges per ecosystem (semver, PEP 440, Maven, Go) | schemes per ecosystem |
 | `ledger` | domain state and identity: known issues, aliases, merging, findings, status, history | none: in memory |
-| `store` | persisting the ledger's `State`, optimistic revisions | `store.Storage`: file, memory, SQLite |
+| `store` | persisting the ledger's `State`, optimistic revisions, lock-free `Reader` snapshots | `store.Storage`: file, memory, SQLite |
 | `priority` | ordering and policy deadlines | none: pure |
 | `feeds` | each source type into items with ranges, fixes and KEV data | `parsers` map: one adapter per type |
 | `epss` | exploit probability lookup | `Getter` |
@@ -23,7 +23,15 @@ One package per concern under `app/src`. The arrows show who depends on whom; th
 | `report`, `calendar`, `notify` | markdown, calendar page, channel messages | `notify.Channel`: Slack, webhook, email |
 | `audit` | hash-chained audit log, readable by issue | |
 | `doctor` | configuration and environment checks, `init` | |
-| `defaults` | built-in techs, feeds and starter files | embedded and user's folder |
+| `catalog` | the technology catalog (open and closed source): lookup by name, image, package, file or word; validation | shipped entries layered with the user's `techs.yaml` |
+| `discovery` | what a repository uses, with evidence and confidence (lockfiles, version files, Dockerfiles, compose, Kubernetes, Terraform, `.tool-versions`) | one detector per source; reads files only |
+| `projectfile` | comment-preserving edits of a project file: validate, diff, backup, atomic write | none: pure plus one file write |
+| `setup` | the setup flow: steps as data, defaults, validation, answers turned into project-file edits | `wizard`, `tui` and MCP are its adapters |
+| `wizard`, `tui` | plain prompt and full-screen front ends of the setup flow, plus findings, projects and status screens; `tui` is its own program (`cvewatch-tui`) because Bubble Tea queries the terminal at start-up | `ops.Session` |
+| `status` | health of the tool: daemon, feeds, channels, cycles | none: pure |
+| `dashboard` | static HTML status and findings page, no scripts | none: pure |
+| `daemon` | the refresh loop: heartbeat, dashboard, short sessions | |
+| `defaults` | built-in catalog, feeds and starter files | embedded; the user's folder is layered over it |
 | `host` | everything that differs per operating system | Unix and Windows adapters |
 | `config`, `model` | configuration and shared types | |
 | `testkit`, `golden` | shared test rig; replay of fixtures through the shipped configuration | |
@@ -31,6 +39,8 @@ One package per concern under `app/src`. The arrows show who depends on whom; th
 Rules of thumb kept by the structure:
 
 - A rule lives in one place. Relevance and versions in `relevance` and `version`, identity and merging in `ledger`, validation and access in `ops`.
-- Front ends hold no behaviour. `cmd/cvewatch` and `mcpserver` parse input and print output.
+- Front ends hold no behaviour. `cmd/cvewatch`, `mcpserver`, `wizard` and `tui` parse input and draw output; setup rules live in `setup`, operations in `ops`.
+- Viewers never block the daemon: reads use a snapshot without the lock, and every write is one short session that retries once if another process saved first.
+- Only technologies a project declares are judged, so a large catalog costs nothing in noise.
 - Persistence is replaceable (three adapters share one contract test). `ledger` never touches files; `store` never makes domain decisions.
 - Feed text is untrusted at every step: cleaned on the way in, escaped on the way out.

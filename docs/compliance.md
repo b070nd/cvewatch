@@ -13,6 +13,7 @@ Article 21(2) requires essential and important entities to take proportionate ri
 | 21(2)(e) vulnerability handling in acquisition, development and maintenance | Watches public sources including CISA KEV (actively exploited flaws), matches them to your technologies and dependencies, creates a finding per project and environment, and tracks remediation from open to fixed or ignored | Does not scan systems, confirm that you are affected, or patch anything |
 | 21(2)(d) supply chain security | Reads `composer.lock` and `package-lock.json`, so advisories for your actual dependencies are matched by package name | Does not cover other ecosystems, transitive risk scoring or supplier assessments |
 | 21(2)(a) risk analysis | Gives severity, CVSS and known-exploited signals as input | Does not rate business impact; people decide priorities |
+| 21(2)(e) knowing what you run | The catalog, discovery and project files record which technologies, versions and lockfiles each project and environment declares, with evidence for each guess and an audited change history | Does not inventory hosts or images; people confirm what discovery proposes |
 | 21(2)(f) assessing effectiveness | Open findings by severity and the audit log show how quickly issues are detected and closed | Defines no targets; set your own deadlines |
 
 Article 20 makes management bodies responsible for oversight. The open-findings list and the per-issue reports give management a current view of known exposure.
@@ -56,6 +57,7 @@ Article 20 makes management bodies responsible for oversight. The open-findings 
 | Slack messages | Possibly | Contain vulnerability ids, project names and environments. Slack is a processor for you |
 | Outbound requests | IP address | Feed providers see your server's IP address and the `user_agent` string. The default User-Agent contains no personal data |
 | EPSS lookups (opt-in) | No personal data | Sends CVE ids of tracked issues to FIRST. This reveals which vulnerabilities you track, so it is off by default |
+| Project files and their backups | Possibly | Project names and technologies are not personal. `project` entries in the audit log carry the actor like every other change |
 | Webhook and email recipients | Yes, for email | Recipient addresses are in your config; messages contain vulnerability ids, project names and environments |
 
 There are no cookies, accounts, analytics or telemetry.
