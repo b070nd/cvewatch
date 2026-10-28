@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/b070nd/cvewatch/app/src/audit"
 	"github.com/b070nd/cvewatch/app/src/calendar"
 	"github.com/b070nd/cvewatch/app/src/config"
+	"github.com/b070nd/cvewatch/app/src/dashboard"
 	"github.com/b070nd/cvewatch/app/src/evidence"
 	"github.com/b070nd/cvewatch/app/src/export"
 	"github.com/b070nd/cvewatch/app/src/host"
@@ -29,6 +31,7 @@ import (
 	"github.com/b070nd/cvewatch/app/src/query"
 	"github.com/b070nd/cvewatch/app/src/relevance"
 	"github.com/b070nd/cvewatch/app/src/report"
+	"github.com/b070nd/cvewatch/app/src/status"
 	"github.com/b070nd/cvewatch/app/src/store"
 )
 
@@ -46,8 +49,14 @@ type Session struct {
 	Now    func() time.Time
 	Actor  string // who is acting; defaults to audit.Actor()
 
-	store store.Storage
+	store    store.Storage
+	reader   store.Reader // set for read-only sessions
+	readOnly bool
 }
+
+// ErrReadOnly is returned by anything that would change state in a session
+// opened with OpenReadOnly.
+var ErrReadOnly = errors.New("this session is read-only")
 
 // Open loads the configuration under root and locks and loads the state.
 func Open(root string, log *slog.Logger) (*Session, error) {
@@ -82,10 +91,64 @@ func OpenWith(cfg *config.Bundle, st store.Storage, log *slog.Logger) (*Session,
 	}, nil
 }
 
-func (s *Session) Close() error { return s.store.Close() }
+func (s *Session) Close() error {
+	if s.readOnly {
+		return s.reader.Close()
+	}
+	return s.store.Close()
+}
 
 // Commit persists the ledger.
-func (s *Session) Commit() error { return s.store.Save(s.Ledger.State()) }
+func (s *Session) Commit() error {
+	if s.readOnly {
+		return ErrReadOnly
+	}
+	return s.store.Save(s.Ledger.State())
+}
+
+// OpenReadOnly loads the configuration and a lock-free snapshot of the state.
+// Viewers use it so they never block the daemon or each other; anything that
+// would change state returns ErrReadOnly.
+func OpenReadOnly(root string, log *slog.Logger) (*Session, error) {
+	cfg, err := config.Load(root)
+	if err != nil {
+		return nil, err
+	}
+	for _, w := range cfg.Warnings {
+		log.Warn(w)
+	}
+	rd, err := store.OpenReader(cfg.Storage.Backend, cfg.DataDir)
+	if err != nil {
+		return nil, err
+	}
+	s, err := OpenReadOnlyWith(cfg, rd, log)
+	if err != nil {
+		rd.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+// OpenReadOnlyWith builds a read-only session on any reader.
+func OpenReadOnlyWith(cfg *config.Bundle, rd store.Reader, log *slog.Logger) (*Session, error) {
+	state, err := rd.Load()
+	if err != nil {
+		return nil, err
+	}
+	return &Session{Cfg: cfg, Ledger: ledger.New(state), Audit: audit.Open(cfg.DataDir), Log: log, Now: time.Now,
+		Actor: audit.Actor(), reader: rd, readOnly: true}, nil
+}
+
+// reload replaces the in-memory ledger with the stored state, for retrying
+// after another process saved first.
+func (s *Session) reload() error {
+	state, err := s.store.Load()
+	if err != nil {
+		return err
+	}
+	s.Ledger = ledger.New(state)
+	return nil
+}
 
 // ParseFilter validates the flags shared by every listing.
 func ParseFilter(min, project, env string) (query.Filter, error) {
@@ -118,6 +181,9 @@ func (s *Session) scope(f query.Filter) (query.Filter, error) {
 
 // mayWrite checks write access to one project ("" means all projects).
 func (s *Session) mayWrite(project string) error {
+	if s.readOnly {
+		return ErrReadOnly
+	}
 	projects, write, open := s.Cfg.Allowed(baseActor(s.Actor))
 	switch {
 	case !write:
@@ -358,6 +424,17 @@ func (s *Session) Attach(a Attachment) (int, error) {
 // the audit log gets a compensating entry, so it never claims a change that
 // did not land.
 func (s *Session) apply(id, project string, env model.Env, u ledger.Update, ev audit.Event) (int, error) {
+	n, err := s.applyOnce(id, project, env, u, ev)
+	if errors.Is(err, store.ErrConflict) { // another process saved first (SQLite): reload and redo once
+		if rerr := s.reload(); rerr != nil {
+			return 0, rerr
+		}
+		return s.applyOnce(id, project, env, u, ev)
+	}
+	return n, err
+}
+
+func (s *Session) applyOnce(id, project string, env model.Env, u ledger.Update, ev audit.Event) (int, error) {
 	if err := s.mayWrite(project); err != nil {
 		return 0, err
 	}
@@ -609,4 +686,71 @@ func (s *Session) Inventory(project string) (InventoryView, error) {
 		}
 	}
 	return v, nil
+}
+
+// ---- health and dashboard ----
+
+// Status reports the health of the tool itself: the daemon, each feed and
+// channel, and the recent cycles.
+func (s *Session) Status() (status.Report, error) {
+	if _, err := s.scope(query.Filter{}); err != nil {
+		return status.Report{}, err
+	}
+	in := status.Input{Now: s.Now(), Interval: s.Cfg.Interval}
+	for _, src := range s.Cfg.Sources {
+		if !src.Disabled {
+			in.Sources = append(in.Sources, status.Ref{ID: src.ID, Type: src.Type})
+		}
+	}
+	for _, e := range notify.FromConfig(s.Cfg) {
+		if e.Channel != nil {
+			in.Channels = append(in.Channels, e.Name)
+		}
+	}
+	in.Cycles, in.Health, in.Delivery, in.Beat = s.Ledger.Health()
+	return status.Build(in), nil
+}
+
+// Beat records that the daemon is alive and when it will run next.
+func (s *Session) Beat(started, next time.Time) error {
+	if err := s.mayWrite(""); err != nil {
+		return err
+	}
+	s.Ledger.SetHeartbeat(model.Heartbeat{Mode: "daemon", Started: started, LastCycle: s.Now(), NextRun: next,
+		Interval: s.Cfg.Interval, PID: os.Getpid()})
+	return s.Commit()
+}
+
+// DashboardHTML renders the static status page for everything the actor may see.
+func (s *Session) DashboardHTML() (string, error) {
+	f, err := s.scope(query.Filter{})
+	if err != nil {
+		return "", err
+	}
+	f.Closed = true
+	rep, err := s.Status()
+	if err != nil {
+		return "", err
+	}
+	viol, err := s.Violations()
+	if err != nil {
+		return "", err
+	}
+	d := dashboard.Data{Issues: query.Open(s.Ledger, f, s.Now()), Violations: viol, Status: rep}
+	for _, p := range s.Cfg.Projects {
+		if len(f.Projects) == 0 || slices.Contains(f.Projects, p.Name) {
+			d.Projects = append(d.Projects, dashboard.Project{Name: p.Name, Envs: p.EffectiveEnvs()})
+		}
+	}
+	return dashboard.HTML(d, s.Now()), nil
+}
+
+// WriteDashboard writes the dashboard page, owner-only, and returns its path.
+func (s *Session) WriteDashboard() (string, error) {
+	page, err := s.DashboardHTML()
+	if err != nil {
+		return "", err
+	}
+	path := s.Cfg.DashboardPath()
+	return path, host.WriteFileAtomic(path, []byte(page))
 }

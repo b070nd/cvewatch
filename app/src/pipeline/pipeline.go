@@ -8,6 +8,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"maps"
 	"net/url"
@@ -99,9 +100,11 @@ func (r *Runner) Run(ctx context.Context) (Result, error) {
 		if f.err != nil {
 			c.res.Failed = append(c.res.Failed, src.ID+": "+f.err.Error())
 			r.Log.Warn("source failed", "source", src.ID, "err", f.err)
+			r.Ledger.SourceOutcome(src.ID, src.Type, c.now, 0, errors.New(query.Clip(f.err.Error(), 200)))
 			continue
 		}
 		r.Ledger.SetFeed(src.ID, model.FeedState{Validators: f.val, LastRun: c.now})
+		r.Ledger.SourceOutcome(src.ID, src.Type, c.now, len(f.items), nil)
 		for _, it := range f.items {
 			c.res.Items++
 			c.process(it)
@@ -125,6 +128,11 @@ func (r *Runner) Run(ctx context.Context) (Result, error) {
 	}
 	c.res.Alerted = r.alert(ctx, c.now)
 	c.res.Digests = r.digests(ctx, c.now)
+	r.Ledger.RecordCycle(model.CycleRecord{
+		Started: c.now, Finished: r.Now(), Items: c.res.Items, New: c.res.New, Merged: c.res.Merged,
+		Findings: c.res.Findings, Reconciled: c.res.Reconciled, Alerted: c.res.Alerted, Digests: c.res.Digests,
+		Failed: len(c.res.Failed),
+	})
 	return c.res, r.Save()
 }
 
@@ -407,7 +415,9 @@ func (r *Runner) alert(ctx context.Context, now time.Time) int {
 		}
 
 		for chunk := range slices.Chunk(batch, notify.BatchSize) {
-			if err := d.Channel.Send(ctx, chunk, now); err != nil {
+			err := d.Channel.Send(ctx, chunk, now)
+			r.Ledger.ChannelOutcome(name, now, clipErr(err))
+			if err != nil {
 				r.Log.Error("alert delivery failed, will retry next run", "channel", name, "err", err)
 				break
 			}
@@ -425,6 +435,14 @@ func (r *Runner) alert(ctx context.Context, now time.Time) int {
 		}
 	}
 	return sent
+}
+
+// clipErr bounds an error for the health record; nil stays nil.
+func clipErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	return errors.New(query.Clip(err.Error(), 200))
 }
 
 func hasProd(fs []model.Finding) bool {
@@ -458,7 +476,9 @@ func (r *Runner) digests(ctx context.Context, now time.Time) int {
 			continue // today's digest already went out
 		}
 		if digest.Open > 0 {
-			if err := d.Channel.SendDigest(ctx, digest, now); err != nil {
+			err := d.Channel.SendDigest(ctx, digest, now)
+			r.Ledger.ChannelOutcome(name, now, clipErr(err))
+			if err != nil {
 				r.Log.Error("digest delivery failed, will retry next run", "channel", name, "err", err)
 				continue
 			}
