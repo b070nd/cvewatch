@@ -36,7 +36,7 @@ Skill files for Claude Code live in `skills/`: `cvewatch-setup` walks through th
 
 The server inherits the permissions of the local user that starts it and speaks only over stdio; there is no network listener. Add `-allow-write` to the command to also expose `set_status` (fixed, ignored, not_affected with a reason, open), `assign` (owner, due date, ticket), `attach_evidence` and `refresh` (fetch all sources, alert channels). Leave it off for shared setups; marking an issue fixed changes what the team believes is patched. Changes made through MCP are recorded in the audit log with the actor `mcp:<user>`.
 
-Each call opens the data directory briefly, so a running `daemon` keeps working. If a call hits the daemon mid-cycle it fails with "another cvewatch process is using the data directory"; retry.
+Read tools use a snapshot and never wait for a running `daemon`. A tool that changes something opens the data directory briefly. If it hits the daemon mid-cycle it fails with "another cvewatch process is using the data directory"; retry.
 
 ## Feed text is untrusted
 

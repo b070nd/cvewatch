@@ -126,7 +126,8 @@ flowchart TB
 ### Five minutes to a useful list
 
 ```bash
-go install github.com/b070nd/cvewatch/app/src/cmd/cvewatch@latest   # or Docker, see compose.yaml
+go install github.com/b070nd/cvewatch/app/src/cmd/cvewatch@latest   # or a release archive, or Docker (see compose.yaml)
+go install github.com/b070nd/cvewatch/app/src/cmd/cvewatch-tui@latest   # optional: the full-screen interface
 
 mkdir cvewatch-home && cd cvewatch-home
 cvewatch init                          # writes a starter config
@@ -138,7 +139,7 @@ cvewatch tui                           # or browse and triage in a full-screen i
 
 `setup` looks at lockfiles, `.tool-versions`, `go.mod`, `package.json`, Dockerfiles, compose files, Kubernetes manifests and Terraform, also in monorepos, and says why it believes each thing ("nginx 1.25.3: image in `docker-compose.yml`"). Guesses it is unsure about are asked, not declared. `cvewatch init -repo ~/code/shop` does the same without questions.
 
-The list of technologies and feeds is built in, so one binary is enough. `init` writes a project file per repository, and you adjust the versions it could not guess (a repository says what is *declared*, not what *runs in prod*).
+The technology catalog and the feeds are built in, so one binary is enough. `setup` writes a project file per repository. Check the versions it could not guess: a repository says what is *declared*, not what *runs in prod*.
 
 ### What it does for you
 

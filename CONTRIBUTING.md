@@ -18,7 +18,7 @@ Format code with `gofmt` before you commit:
 gofmt -l -w .
 ```
 
-Tests must not reach the network. Use fixtures stored with the tests instead. `src/testkit` has the shared rig (fake feed getter, recording channel, a `Rig` that runs real cycles over a temporary config folder). `src/golden` replays synthetic feed items through the shipped configuration: add a case there when you change matching, versions or `techs.yaml`, and add a product name to `testdata/cpe-known-good.txt` only after checking it in the NVD CPE dictionary.
+Tests must not reach the network. Use fixtures stored with the tests instead. `src/testkit` has the shared rig (fake feed getter, recording channel, a `Rig` that runs real cycles over a temporary config folder). `src/golden` replays synthetic feed items through the shipped configuration: add a case there when you change matching, versions or the catalog (`stack.yaml` must declare every catalog technology that has a CPE name), and add a product name to `testdata/cpe-known-good.txt` only after checking it in the NVD CPE dictionary.
 
 ## Repository layout
 

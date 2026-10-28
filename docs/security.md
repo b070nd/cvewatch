@@ -73,11 +73,11 @@ What the tool defends against, how, and how to deploy it.
 ## Known limits
 
 - Matching by text can miss a vulnerability that no feed describes in the words you configured, and can raise false alarms. It is an early-warning aid, not a scanner.
-- Versions are not compared with affected ranges.
+- Versions are compared only where a feed gives ranges. Other findings stay `unchecked` until a person confirms them.
 - On Windows the OS does not enforce the 0600/0700 modes; owner-only access then depends on the profile folder's ACLs.
 - Anyone who can read `data/` can see your exposure; anyone who can write to it can mark findings fixed. Protect the directory with file permissions.
 - The audit chain has the limits described above.
-- Dependencies are few (YAML parser, the MCP SDK, a pure-Go SQLite driver, `golang.org/x/sys` on Windows). CI runs `govulncheck`, and Dependabot proposes updates.
+- Dependencies are few (YAML parser, the MCP SDK, a pure-Go SQLite driver, `golang.org/x/sys` on Windows, and Bubble Tea with Lip Gloss, which only the separate `cvewatch-tui` program uses). CI runs `govulncheck`, and Dependabot proposes updates.
 
 ## Reporting problems
 
