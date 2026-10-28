@@ -7,12 +7,14 @@ It is a companion to scanners (Trivy, Grype, OSV-Scanner) and SBOM platforms (De
 ## First run
 
 ```bash
-cvewatch init -repo /path/to/your/repo      # starter config; detects lockfiles and runtime versions
+cvewatch init -repo /path/to/your/repo      # starter config; detects technologies, versions and lockfiles
+cvewatch setup /path/to/your/repo            # or: guided, with the evidence for every guess
+cvewatch tui                                 # full-screen findings, projects and status (runs cvewatch-tui)
 cvewatch doctor                              # checks config, lockfiles, state, channels (add -online for CPE names and feeds)
 cvewatch update                              # fetch now, then list
 ```
 
-One binary is enough: the technology list and the feeds are built in, and `init` writes editable copies. `-root DIR` points at the folder with `config/` and `sources/` (default: the current folder).
+One binary is enough: the technology catalog and the feeds are built in. `config/techs.yaml` and `sources/*.yaml` hold only your additions and changes; they are layered over the built-in ones. `-root DIR` points at the folder with `config/` and `sources/` (default: the current folder).
 
 ## How a cycle works
 
@@ -24,6 +26,20 @@ One binary is enough: the technology list and the feeds are built in, and `init`
 6. Optionally add EPSS scores, write reports, save, then alert every channel and send the daily digest.
 
 A failed source keeps its cursor and is retried next cycle. A finding counts as alerted per channel only after that channel accepted it.
+
+## Technologies and discovery
+
+The built-in catalog covers open and closed source technologies (runtimes, frameworks, databases, servers, platforms, appliances and so on); `cvewatch catalog WORDS` searches it. A technology is only judged when a project declares it, so the size of the catalog adds no noise. Add or change entries in `config/techs.yaml` (an entry with the same name replaces the built-in one; `disabled: true` removes it). A technology can carry its vendor's advisory feed (for example a CSAF provider), which switches on when a project declares it.
+
+`cvewatch discover DIR` proposes what a repository uses and why: lockfiles and the packages in them, `.tool-versions`, `go.mod`, `package.json` engines, Dockerfile and compose images, Kubernetes manifests, Terraform, and marker files. Every proposal has evidence and a confidence (high, medium, low); low ones are offered, never declared silently. It reads files only, does not follow symlinks, and is bounded in depth, count and size.
+
+## Setting up and changing projects
+
+`cvewatch setup [DIR]` is a guided prompt, `cvewatch tui` the same flow in a full-screen interface (a separate program, `cvewatch-tui`, shipped next to `cvewatch`, so its terminal library does not touch every other command), and the MCP tools and skills in `skills/` give an agent the same steps. All three use one setup flow, so the questions and checks are identical. Changes to a project file keep its comments, are validated before saving, back the old file up under `data/project-backups/`, and are written to the audit log. For scripts: `cvewatch project NAME -set php=8.2 -lock composer:PATH` shows the diff, and `-save` writes it.
+
+## Is it working?
+
+`cvewatch status` shows the daemon (alive, overdue, or only one-off runs seen), every feed (last success, failures in a row) and channel, and the last cycles. It exits non-zero when something is failing. `cvewatch dashboard` writes a static HTML page with the same plus the open findings; set `dashboard: {enabled: true}` in `config.yaml` and the daemon refreshes it each cycle. The page has no scripts and no external requests.
 
 ## Inventory
 
@@ -105,17 +121,17 @@ Channels switch on when their secret is in the environment, so one config file i
 
 ## Exports and the JSON contract
 
-`cvewatch export -format json|csv|md` lists open issues with the status of every environment. JSON from `export`, `list -json` and MCP is one versioned document (`schema_version`, `generated_at`, `count`, `issues`); the schema is in [schema/export-v1.schema.json](schema/export-v1.schema.json). Feed text sits under `untrusted`. CSV cells that could be read as spreadsheet formulas are neutralized.
+`cvewatch export -format json|csv|md|sarif` lists open issues with the status of every environment. JSON from `export`, `list -json` and MCP is one versioned document (`schema_version`, `generated_at`, `count`, `issues`); the schema is in [schema/export-v1.schema.json](schema/export-v1.schema.json). Feed text sits under `untrusted`. CSV cells that could be read as spreadsheet formulas are neutralized.
 
 ## Layout
 
 | Path | Purpose |
 |---|---|
 | `config/config.yaml` | interval, HTTP limits, Slack, notify, policy, enrich, storage, access |
-| `config/techs.yaml` | supported technologies: aliases, excludes, CPE names (built in unless you provide one) |
+| `config/techs.yaml` | your additions to the built-in technology catalog |
 | `config/projects/*.yaml` | one file per project |
-| `sources/*.yaml` | feeds (built in unless you provide any) |
-| `data/` | state (`state.json`, or `state.db` with the SQLite backend) and `audit.log` |
+| `sources/*.yaml` | your additions to the built-in feeds (same `id` replaces; `disabled: true` switches one off) |
+| `data/` | state (`state.json`, or `state.db` with the SQLite backend), `audit.log`, `project-backups/` |
 | `alerts/` | generated markdown reports and calendar pages |
 
 ## Storage

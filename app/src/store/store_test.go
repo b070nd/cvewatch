@@ -325,3 +325,38 @@ func TestLegacyFileLoads(t *testing.T) {
 		t.Fatalf("after save: %+v", got)
 	}
 }
+
+func TestReaderSeesStateWithoutTheLock(t *testing.T) {
+	for _, backend := range []string{"file", "sqlite"} {
+		t.Run(backend, func(t *testing.T) {
+			dir := t.TempDir()
+			w, err := Open(backend, dir) // the writer holds its lock for the whole test
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer w.Close()
+			l := ledger.New(ledger.State{})
+			l.Create(model.Item{Title: "PHP bug", URL: "https://a.test/1", IDs: []string{"CVE-2026-1"}}, time.Now(), nil)
+			if err := w.Save(l.State()); err != nil {
+				t.Fatal(err)
+			}
+
+			r, err := OpenReader(backend, dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer r.Close()
+			s, err := r.Load()
+			if err != nil || ledger.New(s).Vuln("CVE-2026-1") == nil {
+				t.Fatalf("reader must see saved state while the writer is open: %v", err)
+			}
+		})
+	}
+	if _, err := OpenReader("nope", t.TempDir()); err == nil {
+		t.Fatal("unknown backend")
+	}
+	r, _ := OpenReader("file", t.TempDir())
+	if s, err := r.Load(); err != nil || len(s.Vulns) != 0 {
+		t.Fatalf("a missing state is empty: %v", err)
+	}
+}

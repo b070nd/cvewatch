@@ -9,6 +9,7 @@ package ledger
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -27,12 +28,22 @@ type State struct {
 	Feeds    map[string]model.FeedState      `json:"feeds"`
 	// Digests remembers when each channel last got its periodic digest.
 	Digests map[string]time.Time `json:"digests,omitempty"`
+
+	// Health of the tool itself, for the status command, dashboard and TUI.
+	Cycles    []model.CycleRecord            `json:"cycles,omitempty"` // newest last, capped
+	Sources   map[string]model.SourceHealth  `json:"sources,omitempty"`
+	Channels  map[string]model.ChannelHealth `json:"channels,omitempty"`
+	Heartbeat *model.Heartbeat               `json:"heartbeat,omitempty"`
 }
 
 // SchemaVersion is the current layout of State.
 //
 //	1  per-channel delivery records (Finding.Alerted) replace Finding.AlertedAt
-const SchemaVersion = 1
+//	2  health records: cycles, per-source and per-channel outcomes, heartbeat
+const SchemaVersion = 2
+
+// maxCycles is how many cycle records are kept.
+const maxCycles = 50
 
 type Ledger struct {
 	d     State
@@ -52,6 +63,12 @@ func New(s State) *Ledger {
 	}
 	if s.Digests == nil {
 		s.Digests = map[string]time.Time{}
+	}
+	if s.Sources == nil {
+		s.Sources = map[string]model.SourceHealth{}
+	}
+	if s.Channels == nil {
+		s.Channels = map[string]model.ChannelHealth{}
 	}
 	migrate(&s)
 	l := &Ledger{d: s, byKey: map[string]string{}}
@@ -294,4 +311,48 @@ func migrate(s *State) {
 		}
 	}
 	s.SchemaVersion = SchemaVersion
+}
+
+// ---- health records ----
+
+// RecordCycle appends a cycle record, keeping the most recent ones.
+func (l *Ledger) RecordCycle(c model.CycleRecord) {
+	l.d.Cycles = append(l.d.Cycles, c)
+	if n := len(l.d.Cycles); n > maxCycles {
+		l.d.Cycles = slices.Clone(l.d.Cycles[n-maxCycles:])
+	}
+}
+
+// SourceOutcome records one attempt to read a feed. A success clears the
+// failure streak; a failure extends it.
+func (l *Ledger) SourceOutcome(id, typ string, now time.Time, items int, err error) {
+	h := l.d.Sources[id]
+	h.Type, h.LastAttempt = typ, now
+	if err == nil {
+		h.LastSuccess, h.Failures, h.LastError, h.Items = now, 0, "", items
+	} else {
+		h.Failures++
+		h.LastError = err.Error()
+	}
+	l.d.Sources[id] = h
+}
+
+// ChannelOutcome records one attempt to deliver through a channel.
+func (l *Ledger) ChannelOutcome(name string, now time.Time, err error) {
+	h := l.d.Channels[name]
+	h.LastAttempt = now
+	if err == nil {
+		h.LastSuccess, h.Failures, h.LastError = now, 0, ""
+	} else {
+		h.Failures++
+		h.LastError = err.Error()
+	}
+	l.d.Channels[name] = h
+}
+
+func (l *Ledger) SetHeartbeat(h model.Heartbeat) { l.d.Heartbeat = &h }
+
+// Health returns the stored health records.
+func (l *Ledger) Health() (cycles []model.CycleRecord, sources map[string]model.SourceHealth, channels map[string]model.ChannelHealth, hb *model.Heartbeat) {
+	return slices.Clone(l.d.Cycles), maps.Clone(l.d.Sources), maps.Clone(l.d.Channels), l.d.Heartbeat
 }

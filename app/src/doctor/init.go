@@ -3,21 +3,23 @@ package doctor
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/b070nd/cvewatch/app/src/config"
 	"github.com/b070nd/cvewatch/app/src/defaults"
+	"github.com/b070nd/cvewatch/app/src/discovery"
+	"github.com/b070nd/cvewatch/app/src/model"
+	"github.com/b070nd/cvewatch/app/src/projectfile"
 )
 
 // InitOptions controls Init.
 type InitOptions struct {
 	Force   bool   // overwrite files that already exist
-	Repo    string // a repository to look at for lockfiles and runtime versions
+	Repo    string // a repository to look at for technologies, versions and lockfiles
 	Project string // project name; default is the repository folder's name
 }
 
@@ -26,8 +28,10 @@ type InitResult struct {
 	Written, Skipped, Notes []string
 }
 
-// Init writes the shipped starter files under root and, when Repo is set, a
-// project file describing what it found at the top level of that repository.
+// Init writes the starter files under root and, when Repo is set, a project
+// file describing what discovery found in that repository. Lockfile paths are
+// stored relative to root, so the folder keeps working when it moves or is
+// mounted elsewhere, as long as the repository keeps its place next to it.
 // Existing files are left alone unless Force is set.
 func Init(root string, o InitOptions) (InitResult, error) {
 	var res InitResult
@@ -55,21 +59,95 @@ func Init(root string, o InitOptions) (InitResult, error) {
 		return res, fmt.Errorf("repository %s is not a folder", o.Repo)
 	}
 	name := sanitize(cmpOr(o.Project, filepath.Base(repo)))
-	det, err := detect(repo)
+	cfg, err := config.Load(root)
 	if err != nil {
 		return res, err
 	}
-	if len(det.files) == 0 && len(det.techs) == 0 {
-		res.Notes = append(res.Notes, fmt.Sprintf(
-			"Found no lockfile or version file at the top of %s: copy config/projects/example.yaml.example to config/projects/%s.yaml and edit it.", repo, name), next)
-		return res, nil
-	}
-	if err := res.write(root, "config/projects/"+name+".yaml", det.projectFile(name, repo), o.Force); err != nil {
+	det, err := discovery.Scan(repo, cfg.Catalog, discovery.Options{})
+	if err != nil {
 		return res, err
 	}
-	res.Notes = append(res.Notes, det.notes(repo)...)
-	res.Notes = append(res.Notes, fmt.Sprintf("Project %q is in config/projects/%s.yaml: check the versions, they are only what the repository declares.", name, name), next)
+	data, maybe, err := projectFromDiscovery(name, root, det)
+	if err != nil {
+		return res, err
+	}
+	if data == nil {
+		res.Notes = append(res.Notes, fmt.Sprintf(
+			"Found no lockfile or technology in %s: copy config/projects/example.yaml.example to config/projects/%s.yaml and edit it.", repo, name), next)
+		return res, nil
+	}
+	if err := res.write(root, "config/projects/"+name+".yaml", data, o.Force); err != nil {
+		return res, err
+	}
+	res.Notes = append(res.Notes, discoveryNotes(repo, det, maybe)...)
+	res.Notes = append(res.Notes,
+		fmt.Sprintf("Project %q is in config/projects/%s.yaml: check the versions, they are only what the repository declares.", name, name),
+		"Lockfile paths are relative to "+shellArg(root)+". In a container, mount the repository at the same place relative to the root folder.", next)
 	return res, nil
+}
+
+// projectFromDiscovery builds the project file. High and medium confidence
+// technologies are declared; low ones are returned so they can be offered.
+// It returns nil data when there is nothing to declare.
+func projectFromDiscovery(name, root string, det discovery.Result) (data []byte, maybe []discovery.TechProposal, err error) {
+	f, err := projectfile.New(name)
+	if err != nil {
+		return nil, nil, err
+	}
+	var ops []projectfile.Op
+	for _, t := range det.Techs {
+		if t.Confidence == discovery.Low {
+			maybe = append(maybe, t)
+			continue
+		}
+		ops = append(ops, projectfile.Op{Kind: "set_tech", Tech: t.Tech, Version: t.Version})
+	}
+	for _, l := range det.Lockfiles {
+		path := filepath.Join(det.Root, filepath.FromSlash(l.Path))
+		if rel, err := filepath.Rel(root, path); err == nil {
+			path = rel
+		}
+		ops = append(ops, projectfile.Op{Kind: "add_lockfile", Lockfile: model.Lockfile{Type: l.Type, Path: filepath.ToSlash(path)}})
+	}
+	if len(ops) == 0 {
+		return nil, maybe, nil
+	}
+	if err := f.Apply(ops...); err != nil {
+		return nil, nil, err
+	}
+	data, err = f.Bytes()
+	return data, maybe, err
+}
+
+func discoveryNotes(repo string, det discovery.Result, maybe []discovery.TechProposal) []string {
+	var out []string
+	if len(det.Lockfiles) > 0 {
+		var parts []string
+		for _, l := range det.Lockfiles {
+			parts = append(parts, fmt.Sprintf("%s (%s)", l.Path, l.Type))
+		}
+		out = append(out, fmt.Sprintf("Found in %s: %s.", repo, strings.Join(parts, ", ")))
+	}
+	var parts []string
+	for _, t := range det.Techs {
+		if t.Confidence != discovery.Low {
+			parts = append(parts, strings.TrimSpace(t.Tech+" "+t.Version))
+		}
+	}
+	if len(parts) > 0 {
+		out = append(out, "Technologies: "+strings.Join(parts, ", ")+".")
+	}
+	if len(maybe) > 0 {
+		var names []string
+		for _, t := range maybe {
+			names = append(names, t.Tech)
+		}
+		out = append(out, "Possible, not declared (low confidence, confirm with `cvewatch discover`): "+strings.Join(names, ", ")+".")
+	}
+	if det.Truncated {
+		out = append(out, "The repository is large: only part of it was scanned.")
+	}
+	return out
 }
 
 // write stores one file, creating its folder, unless it exists and force is off.
@@ -117,160 +195,3 @@ func sanitize(s string) string {
 }
 
 type foundFile struct{ typ, name string }
-
-// detection is what the top level of a repository declares.
-type detection struct {
-	files []foundFile       // lockfiles, in directory order
-	techs map[string]string // tech name -> version, "" when unknown
-}
-
-func (d *detection) tech(name, version string) {
-	if d.techs == nil {
-		d.techs = map[string]string{}
-	}
-	if version != "" || d.techs[name] == "" {
-		d.techs[name] = version
-	}
-}
-
-var (
-	// lockTypes maps exact file names; the tech list says what each implies.
-	lockTypes = map[string]struct {
-		typ  string
-		tech string
-	}{
-		"composer.lock":     {"composer", "php"},
-		"package-lock.json": {"npm", "nodejs"},
-		"go.mod":            {"go", "go"},
-		"requirements.txt":  {"pip", "python"},
-		"poetry.lock":       {"poetry", "python"},
-		"Pipfile.lock":      {"pipfile", "python"},
-		"gradle.lockfile":   {"gradle", ""},
-		"pom.xml":           {"maven", ""},
-		"bom.json":          {"cyclonedx", ""},
-		"sbom.json":         {"cyclonedx", ""},
-	}
-	// versionFiles hold one runtime version each.
-	versionFiles = map[string]string{
-		".nvmrc": "nodejs", ".node-version": "nodejs", ".php-version": "php", ".python-version": "python",
-	}
-	versionLike = regexp.MustCompile(`^\d+(\.\d+){0,2}$`)
-	goDirective = regexp.MustCompile(`(?m)^go\s+(\d+)\.(\d+)`)
-)
-
-func detect(repo string) (detection, error) {
-	var d detection
-	entries, err := os.ReadDir(repo)
-	if err != nil {
-		return d, err
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		n := e.Name()
-		switch lt, ok := lockTypes[n]; {
-		case ok:
-			d.files = append(d.files, foundFile{lt.typ, n})
-			if lt.tech != "" {
-				d.tech(lt.tech, "")
-			}
-		case strings.HasSuffix(n, ".cdx.json"):
-			d.files = append(d.files, foundFile{"cyclonedx", n})
-		case strings.HasSuffix(n, ".spdx.json"):
-			d.files = append(d.files, foundFile{"spdx", n})
-		}
-	}
-	// Versions come second so a version file also implies its tech.
-	if v := goVersion(filepath.Join(repo, "go.mod")); v != "" {
-		d.tech("go", v)
-	}
-	for file, tech := range versionFiles {
-		if v := firstLine(filepath.Join(repo, file)); versionLike.MatchString(v) {
-			d.tech(tech, v)
-		}
-	}
-	return d, nil
-}
-
-// readSmall reads at most limit bytes of a regular file; a missing file is "".
-func readSmall(path string, limit int64) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-	b, _ := io.ReadAll(io.LimitReader(f, limit))
-	return string(b)
-}
-
-func firstLine(path string) string {
-	first, _, _ := strings.Cut(readSmall(path, 1024), "\n")
-	return strings.TrimPrefix(strings.TrimSpace(first), "v")
-}
-
-// goVersion returns the go directive of a go.mod as a series, "1.22".
-func goVersion(path string) string {
-	m := goDirective.FindStringSubmatch(readSmall(path, 1<<20))
-	if m == nil {
-		return ""
-	}
-	return m[1] + "." + m[2]
-}
-
-func (d detection) techNames() []string {
-	names := make([]string, 0, len(d.techs))
-	for n := range d.techs {
-		names = append(names, n)
-	}
-	slices.Sort(names)
-	return names
-}
-
-func (d detection) projectFile(name, repo string) []byte {
-	var b strings.Builder
-	fmt.Fprintf(&b, "# Project %s, detected by `cvewatch init` from %s.\n", name, repo)
-	b.WriteString("# Versions are what the repository declares; set the ones actually deployed per\n")
-	b.WriteString("# environment under `environments:` if they differ. Lockfiles are re-read every run.\n")
-	fmt.Fprintf(&b, "name: %s\n", name)
-	if len(d.techs) == 0 {
-		b.WriteString("techs: []\n")
-	} else {
-		b.WriteString("techs:\n")
-		for _, t := range d.techNames() {
-			if v := d.techs[t]; v != "" {
-				fmt.Fprintf(&b, "  - {name: %s, version: %s}\n", t, strconv.Quote(v))
-			} else {
-				fmt.Fprintf(&b, "  - {name: %s}\n", t)
-			}
-		}
-	}
-	if len(d.files) == 0 {
-		b.WriteString("lockfiles: []\n")
-	} else {
-		b.WriteString("lockfiles:\n")
-		for _, f := range d.files {
-			fmt.Fprintf(&b, "  - {type: %s, path: %s}\n", f.typ, strconv.Quote(filepath.Join(repo, f.name)))
-		}
-	}
-	return []byte(b.String())
-}
-
-func (d detection) notes(repo string) []string {
-	var out []string
-	if len(d.files) > 0 {
-		var parts []string
-		for _, f := range d.files {
-			parts = append(parts, fmt.Sprintf("%s (%s)", f.name, f.typ))
-		}
-		out = append(out, fmt.Sprintf("Found in %s: %s.", repo, strings.Join(parts, ", ")))
-	}
-	if len(d.techs) > 0 {
-		var parts []string
-		for _, t := range d.techNames() {
-			parts = append(parts, strings.TrimSpace(t+" "+d.techs[t]))
-		}
-		out = append(out, "Technologies: "+strings.Join(parts, ", ")+".")
-	}
-	return out
-}

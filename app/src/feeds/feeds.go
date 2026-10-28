@@ -24,6 +24,11 @@ type Getter interface {
 // polling window; only some parsers use it.
 type parseFunc func(body []byte, src model.Source, since time.Time) ([]model.Item, error)
 
+// fetchFunc is the second kind of adapter, for sources that need several
+// requests (an index, then one document per entry). It does its own
+// downloading; Fetch stamps and filters what it returns like any other.
+type fetchFunc func(ctx context.Context, g Getter, src model.Source, st model.FeedState, since time.Time) ([]model.Item, model.Validators, error)
+
 type parser struct {
 	parse  parseFunc
 	accept string // default Accept header
@@ -42,11 +47,19 @@ var parsers = map[string]parser{
 	"ghsa": {parseGHSA, "application/vnd.github+json"},
 }
 
+// fetchers is consulted before parsers.
+var fetchers = map[string]fetchFunc{
+	"csaf": fetchCSAF,
+}
+
 // Types lists the source types Fetch understands, sorted, so config and
 // doctor can validate them without a request.
 func Types() []string {
-	out := make([]string, 0, len(parsers))
+	out := make([]string, 0, len(parsers)+len(fetchers))
 	for t := range parsers {
+		out = append(out, t)
+	}
+	for t := range fetchers {
 		out = append(out, t)
 	}
 	slices.Sort(out)
@@ -61,24 +74,38 @@ func Types() []string {
 // URL placeholders: {since} (RFC3339 UTC; NVD format for type nvd),
 // {since_unix}, {since_date} (YYYY-MM-DD) and {now} (same format as {since}).
 func Fetch(ctx context.Context, g Getter, src model.Source, st model.FeedState, now time.Time, lookback time.Duration) ([]model.Item, model.Validators, error) {
-	p, ok := parsers[src.Type]
-	if !ok {
+	f, isFetcher := fetchers[src.Type]
+	p, isParser := parsers[src.Type]
+	if !isFetcher && !isParser {
 		return nil, st.Validators, fmt.Errorf("feeds: source %q: unknown type %q", src.ID, src.Type)
 	}
 	since := st.LastRun
 	if since.IsZero() {
 		since = now.Add(-lookback)
 	}
-	resp, err := g.Get(ctx, expand(src, since, now), st.Validators, mergeHeaders(p.accept, src.Headers))
-	if err != nil {
-		return nil, st.Validators, fmt.Errorf("feeds: source %q: %w", src.ID, err)
-	}
-	if resp.NotModified {
-		return nil, st.Validators, nil
-	}
-	items, err := p.parse(resp.Body, src, since)
-	if err != nil {
-		return nil, st.Validators, fmt.Errorf("feeds: source %q: parse %s: %w", src.ID, src.Type, err)
+	var (
+		items  []model.Item
+		valids model.Validators
+	)
+	if isFetcher {
+		var err error
+		items, valids, err = f(ctx, g, src, st, since)
+		if err != nil {
+			return nil, st.Validators, fmt.Errorf("feeds: source %q: %w", src.ID, err)
+		}
+	} else {
+		resp, err := g.Get(ctx, expand(src, since, now), st.Validators, mergeHeaders(p.accept, src.Headers))
+		if err != nil {
+			return nil, st.Validators, fmt.Errorf("feeds: source %q: %w", src.ID, err)
+		}
+		if resp.NotModified {
+			return nil, st.Validators, nil
+		}
+		items, err = p.parse(resp.Body, src, since)
+		if err != nil {
+			return nil, st.Validators, fmt.Errorf("feeds: source %q: parse %s: %w", src.ID, src.Type, err)
+		}
+		valids = resp.Validators
 	}
 	items = recent(items, since)
 	for i := range items {
@@ -86,7 +113,7 @@ func Fetch(ctx context.Context, g Getter, src model.Source, st model.FeedState, 
 		items[i].TitleOnly = src.MatchTitleOnly
 		items[i].StructuredOnly = src.MatchStructured
 	}
-	return items, resp.Validators, nil
+	return items, valids, nil
 }
 
 // feedLag is how far before the window an item may be dated and still count,

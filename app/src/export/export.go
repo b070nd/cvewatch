@@ -52,7 +52,7 @@ func New(issues []query.Issue, now time.Time) Document {
 }
 
 // Formats lists the names Write accepts (markdown is an alias of md).
-func Formats() []string { return []string{"json", "csv", "md"} }
+func Formats() []string { return []string{"json", "csv", "md", "sarif"} }
 
 // Write renders the document in the named format.
 func Write(w io.Writer, format string, d Document) error {
@@ -63,6 +63,8 @@ func Write(w io.Writer, format string, d Document) error {
 		return d.WriteCSV(w)
 	case "md", "markdown":
 		return d.WriteMarkdown(w)
+	case "sarif":
+		return d.WriteSARIF(w)
 	}
 	return fmt.Errorf("unknown export format %q (valid: %s)", format, strings.Join(Formats(), ", "))
 }

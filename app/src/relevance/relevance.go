@@ -16,6 +16,7 @@ import (
 
 type tech struct {
 	name    string
+	scheme  string // version ordering for what the tech runs: "", pypi, maven, go
 	re      *regexp.Regexp
 	exclude *regexp.Regexp // nil when the tech has no excludes
 	cpe     map[string]bool
@@ -28,7 +29,7 @@ type Judge struct{ techs []tech }
 func New(techs []model.Tech) *Judge {
 	j := &Judge{}
 	for _, t := range techs {
-		c := tech{name: strings.ToLower(t.Name), re: wordRe(t.Terms()), cpe: map[string]bool{}}
+		c := tech{name: strings.ToLower(t.Name), scheme: t.Scheme, re: wordRe(t.Terms()), cpe: map[string]bool{}}
 		if len(t.Excludes) > 0 {
 			c.exclude = wordRe(t.Excludes)
 		}
@@ -38,6 +39,15 @@ func New(techs []model.Tech) *Judge {
 		j.techs = append(j.techs, c)
 	}
 	return j
+}
+
+// Names lists the technologies the judge knows, lowercase.
+func (j *Judge) Names() []string {
+	out := make([]string, len(j.techs))
+	for i, t := range j.techs {
+		out[i] = t.name
+	}
+	return out
 }
 
 // Verdict is what judging one item produced.
@@ -116,8 +126,22 @@ type hit struct {
 // Judge evaluates one item against what each project environment runs.
 func (j *Judge) Judge(it model.Item, targets []Target) Verdict {
 	var v Verdict
+	// Only technologies some project environment runs are judged. The catalog
+	// holds many more; judging them all would store and report advisories
+	// nobody here is exposed to.
+	declared := map[string]bool{}
+	for _, tg := range targets {
+		for _, pt := range tg.Techs {
+			declared[strings.ToLower(pt.Name)] = true
+		}
+	}
+	schemes := map[string]string{}
 	hits := map[string]hit{}
 	for _, t := range j.techs {
+		if !declared[t.name] {
+			continue
+		}
+		schemes[t.name] = t.scheme
 		h, note, ok := t.judge(it)
 		if note != "" {
 			v.Notes = append(v.Notes, note)
@@ -135,7 +159,7 @@ func (j *Judge) Judge(it model.Item, targets []Target) Verdict {
 			if !ok {
 				continue
 			}
-			in := model.Installed{Name: pt.Name, Version: pt.Version, Via: "tech"}
+			in := model.Installed{Name: pt.Name, Version: pt.Version, Via: "tech", Ecosystem: schemes[strings.ToLower(pt.Name)]}
 			m.add(in, applies(in, h.ranges, h.known), h.why)
 		}
 		for _, pkg := range tg.Packages {

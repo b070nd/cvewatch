@@ -354,3 +354,35 @@ func checkObject(t *testing.T, path string, val map[string]any, schema map[strin
 		}
 	}
 }
+
+func TestSARIFHasARulePerIssueAndAResultPerTarget(t *testing.T) {
+	d := New([]query.Issue{{
+		ID: "CVE-2026-1", Severity: model.SevCritical, Untrusted: query.Untrusted{Title: "Bad bug"},
+		Targets: []query.Target{{Project: "shop", Env: model.EnvProd, Status: model.StatusOpen}, {Project: "shop", Env: model.EnvDev, Status: model.StatusOpen}},
+	}, {ID: "CVE-2026-2", Severity: model.SevLow}}, time.Now())
+	var buf bytes.Buffer
+	if err := Write(&buf, "sarif", d); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Version string `json:"version"`
+		Runs    []struct {
+			Tool struct {
+				Driver struct {
+					Rules []struct{ ID string }
+				}
+			}
+			Results []struct {
+				RuleID string `json:"ruleId"`
+				Level  string
+			}
+		}
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	r := got.Runs[0]
+	if got.Version != "2.1.0" || len(r.Tool.Driver.Rules) != 2 || len(r.Results) != 2 || r.Results[0].Level != "error" || r.Results[0].RuleID != "CVE-2026-1" {
+		t.Fatalf("sarif = %s", buf.String())
+	}
+}

@@ -270,3 +270,36 @@ func TestDigestGoesOutOncePerDay(t *testing.T) {
 		t.Fatalf("a new day brings a new digest: %d", len(g.Channel.Digests))
 	}
 }
+
+func TestCycleRecordsFeedAndChannelHealth(t *testing.T) {
+	g := rig(t, phpTech, map[string]string{"shop": "name: shop\nenvs: [prod]\ntechs: [{name: php, version: '8.2.10'}]\n"},
+		map[string]string{nvdURL: nvdBody("CVE-2026-7272", "PHP flaw.", "php:php", "8.2.30"), feedURL: rss})
+	g.Getter.Errs = map[string]error{kevURL: errors.New("kev is down")}
+	mail := &testkit.Channel{Label: "email", Err: errors.New("smtp down")}
+	g.Runner.Channels = append(g.Runner.Channels, pipeline.Delivery{Channel: mail})
+
+	g.Run()
+	g.Run()
+	cycles, sources, channels, _ := g.Ledger.Health()
+	if len(cycles) != 2 || cycles[1].Failed != 1 || cycles[1].Items == 0 {
+		t.Fatalf("cycles = %+v", cycles)
+	}
+	if h := sources["kev"]; h.Failures != 2 || !strings.Contains(h.LastError, "kev is down") || !h.LastSuccess.IsZero() {
+		t.Errorf("kev health = %+v", h)
+	}
+	if h := sources["feed"]; h.Failures != 0 || h.LastSuccess.IsZero() || h.Items != 3 {
+		t.Errorf("feed health = %+v", h)
+	}
+	if h := channels["email"]; h.Failures != 2 || !strings.Contains(h.LastError, "smtp down") {
+		t.Errorf("email health = %+v", h)
+	}
+	if h := channels["slack"]; h.Failures != 0 || h.LastSuccess.IsZero() {
+		t.Errorf("slack health = %+v", h)
+	}
+
+	mail.Err = nil
+	g.Run()
+	if _, _, channels, _ = g.Ledger.Health(); channels["email"].Failures != 0 {
+		t.Errorf("a success must reset the failure count: %+v", channels["email"])
+	}
+}

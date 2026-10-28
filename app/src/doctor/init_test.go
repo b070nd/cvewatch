@@ -61,10 +61,25 @@ func TestInitWritesLayoutAndSkips(t *testing.T) {
 	if len(res.Written) != len(defaults.Layout()) || len(res.Skipped) != 0 {
 		t.Fatalf("force run written %v skipped %v", res.Written, res.Skipped)
 	}
-	if got, _ := os.ReadFile(edited); string(got) != string(defaults.Techs()) {
+	if got, _ := os.ReadFile(edited); string(got) != string(defaults.UserTechs()) {
 		t.Error("Force did not restore the file")
 	}
 }
+
+// stack is a user catalog that recognises the test repositories, so the tests
+// do not depend on what the shipped catalog contains.
+const stack = `techs:
+  - name: php
+    cpe: ["php:php"]
+    detect:
+      versions: [{file: .php-version, pattern: '^(\d+(?:\.\d+)*)'}]
+  - name: nodejs
+    cpe: ["nodejs:node.js"]
+    detect:
+      versions: [{file: .nvmrc, pattern: '^v?(\d+(?:\.\d+)*)'}]
+  - name: go
+    cpe: ["golang:go"]
+`
 
 func TestInitDetectsRepository(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "My Shop_v2")
@@ -73,13 +88,15 @@ func TestInitDetectsRepository(t *testing.T) {
 		"package-lock.json": `{"lockfileVersion":3,"packages":{"node_modules/left-pad":{"version":"1.3.0"}}}`,
 		"go.mod":            "module example.com/x\n\ngo 1.22.3\n",
 		".nvmrc":            "v20.11.1\n",
+		".php-version":      "8.2.4\n",
 		"notes.txt":         "ignored",
-		"sub/composer.lock": "{}", // not top level
+		"sub/composer.lock": `{"packages":[]}`, // monorepo: found too
 	}
 	for rel, c := range files {
 		put(t, repo, rel, c)
 	}
 	root := t.TempDir()
+	put(t, root, "config/techs.yaml", stack)
 	res, err := Init(root, InitOptions{Repo: repo})
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +105,7 @@ func TestInitDetectsRepository(t *testing.T) {
 		t.Fatalf("written = %v", res.Written)
 	}
 	notes := strings.Join(res.Notes, "\n")
-	for _, s := range []string{"composer.lock (composer)", "package-lock.json (npm)", "go.mod (go)", "go 1.22", "nodejs 20.11.1", "doctor", "update"} {
+	for _, s := range []string{"composer.lock (composer)", "package-lock.json (npm)", "go.mod (go)", "sub/composer.lock", "go 1.22", "nodejs 20.11.1", "relative to", "doctor", "update"} {
 		if !strings.Contains(notes, s) {
 			t.Errorf("notes lack %q:\n%s", s, notes)
 		}
@@ -110,18 +127,23 @@ func TestInitDetectsRepository(t *testing.T) {
 	for _, tc := range p.Techs {
 		techs[tc.Name] = tc.Version
 	}
-	if len(techs) != 3 || techs["php"] != "" || techs["go"] != "1.22" || techs["nodejs"] != "20.11.1" {
+	if len(techs) != 3 || techs["php"] != "8.2.4" || techs["go"] != "1.22.3" || techs["nodejs"] != "20.11.1" {
 		t.Errorf("techs = %v", techs)
 	}
-	types := map[string]string{}
+	paths := map[string]bool{}
 	for _, lf := range p.Lockfiles {
 		if !filepath.IsAbs(lf.Path) {
-			t.Errorf("path %q is not absolute", lf.Path)
+			t.Errorf("path %q should be resolved against the root", lf.Path)
 		}
-		types[lf.Type] = lf.Path
+		paths[lf.Type+" "+lf.Path] = true
 	}
-	if len(types) != 3 || types["composer"] != filepath.Join(repo, "composer.lock") || types["npm"] == "" || types["go"] == "" {
+	if len(p.Lockfiles) != 4 || !paths["composer "+filepath.Join(repo, "composer.lock")] || !paths["composer "+filepath.Join(repo, "sub", "composer.lock")] {
 		t.Errorf("lockfiles = %v", p.Lockfiles)
+	}
+	// The file itself holds relative paths, so it survives a move or a container mount.
+	raw, _ := os.ReadFile(filepath.Join(root, "config", "projects", "my-shop-v2.yaml"))
+	if strings.Contains(string(raw), repo) {
+		t.Errorf("file holds absolute paths:\n%s", raw)
 	}
 
 	// And a doctor run on it is clean.
@@ -136,35 +158,22 @@ func TestInitDetectsRepository(t *testing.T) {
 	}
 }
 
-func TestInitDetectsMoreTypes(t *testing.T) {
+func TestInitOffersLowConfidenceTechsOnly(t *testing.T) {
 	repo := t.TempDir()
-	for rel, c := range map[string]string{
-		"requirements.txt": "flask==1.0\n", ".python-version": "3.12.1\n", ".php-version": "8.2\n",
-		"gradle.lockfile": "", "pom.xml": "<project/>", "sbom.json": "{}", "app.cdx.json": "{}", "app.spdx.json": "{}",
-		".node-version": "lts/*\n", // not a version: ignored
-	} {
-		put(t, repo, rel, c)
-	}
-	d, err := detect(repo)
+	put(t, repo, "requirements.txt", "flask==1.0\n")
+	put(t, repo, "wp-config.php", "<?php")
+	root := t.TempDir()
+	put(t, root, "config/techs.yaml", "techs:\n  - {name: wordpress, detect: {files: [wp-config.php]}}\n")
+	res, err := Init(root, InitOptions{Repo: repo})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var types []string
-	for _, f := range d.files {
-		types = append(types, f.typ)
+	raw, _ := os.ReadFile(filepath.Join(root, "config", "projects", sanitize(filepath.Base(repo))+".yaml"))
+	if strings.Contains(string(raw), "wordpress") || !strings.Contains(string(raw), "requirements.txt") {
+		t.Errorf("project file:\n%s", raw)
 	}
-	slices.Sort(types)
-	if got := strings.Join(types, ","); got != "cyclonedx,cyclonedx,gradle,maven,pip,spdx" {
-		t.Errorf("types = %s", got)
-	}
-	if d.techs["python"] != "3.12.1" || d.techs["php"] != "8.2" {
-		t.Errorf("techs = %v", d.techs)
-	}
-	if _, ok := d.techs["nodejs"]; ok {
-		t.Errorf("lts/* must not count: %v", d.techs)
-	}
-	if !strings.Contains(string(d.projectFile("x", repo)), `{name: python, version: "3.12.1"}`) {
-		t.Errorf("project file:\n%s", d.projectFile("x", repo))
+	if n := strings.Join(res.Notes, "\n"); !strings.Contains(n, "Possible, not declared") || !strings.Contains(n, "wordpress") {
+		t.Errorf("notes = %s", n)
 	}
 }
 

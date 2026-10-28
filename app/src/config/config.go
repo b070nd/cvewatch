@@ -17,7 +17,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/b070nd/cvewatch/app/src/catalog"
 	shipped "github.com/b070nd/cvewatch/app/src/defaults"
+	"github.com/b070nd/cvewatch/app/src/httpx"
 	"github.com/b070nd/cvewatch/app/src/matrix"
 	"github.com/b070nd/cvewatch/app/src/model"
 )
@@ -30,10 +32,11 @@ type Settings struct {
 	AlertsDir string        `yaml:"alerts_dir"` // markdown reports land here
 	HTTP      HTTP          `yaml:"http"`
 	Slack     Slack         `yaml:"slack"`
-	Notify    Notify        `yaml:"notify"`  // channels besides Slack, and the digest
-	Policy    Policy        `yaml:"policy"`  // deadlines the report command checks
-	Enrich    Enrich        `yaml:"enrich"`  // optional outside lookups
-	Storage   Storage       `yaml:"storage"` // where state lives
+	Notify    Notify        `yaml:"notify"`    // channels besides Slack, and the digest
+	Policy    Policy        `yaml:"policy"`    // deadlines the report command checks
+	Enrich    Enrich        `yaml:"enrich"`    // optional outside lookups
+	Storage   Storage       `yaml:"storage"`   // where state lives
+	Dashboard Dashboard     `yaml:"dashboard"` // a static status page, refreshed by the daemon
 	// Access optionally limits who may see and change which projects, by the
 	// actor name (CVEWATCH_ACTOR or the OS user). Empty means everyone may do
 	// everything, which is right for a single operator. This is authorization
@@ -96,6 +99,13 @@ type Enrich struct {
 	EPSS bool `yaml:"epss"` // FIRST EPSS exploit probability for tracked CVEs
 }
 
+// Dashboard switches on the static HTML status page. The page lists findings
+// and feed errors, so it is written owner-only like every other output.
+type Dashboard struct {
+	Enabled bool   `yaml:"enabled"` // rewrite the page after every daemon cycle
+	File    string `yaml:"file"`    // default: dashboard.html inside alerts_dir
+}
+
 // Storage selects the state backend.
 type Storage struct {
 	Backend string `yaml:"backend"` // file (default) or sqlite
@@ -134,8 +144,9 @@ type Bundle struct {
 	Projects []model.Project
 	Warnings []string // non-fatal problems worth logging
 
-	DefaultTechs   bool // techs came from the binary, not from config/techs.yaml
-	DefaultSources bool // feeds came from the binary, not from sources/*.yaml
+	Catalog        *catalog.Catalog // shipped technologies layered with config/techs.yaml
+	DefaultTechs   bool             // no config/techs.yaml: only the shipped catalog
+	DefaultSources bool             // no sources/*.yaml: only the shipped feeds
 }
 
 func defaults() Settings {
@@ -170,21 +181,24 @@ func Load(root string) (*Bundle, error) {
 	b.DataDir = resolve(root, b.DataDir)
 	b.AlertsDir = resolve(root, b.AlertsDir)
 
-	// techs.yaml and the feed list ship inside the binary. A file of the same
-	// purpose in the folder replaces the shipped one completely.
-	var techs struct {
+	// The technology catalog and the feed list ship inside the binary. Files
+	// in the folder layer on top by name (technologies) or id (feeds): an entry
+	// replaces the shipped one, a new one is added, and `disabled: true` removes
+	// a shipped one.
+	var shippedTechs, userTechs struct {
 		Techs []model.Tech `yaml:"techs"`
+	}
+	if err := decodeBytes("shipped techs.yaml", shipped.Techs(), &shippedTechs); err != nil {
+		return nil, err
 	}
 	techsPath := filepath.Join(root, "config", "techs.yaml")
 	if _, err := os.Stat(techsPath); errors.Is(err, os.ErrNotExist) {
 		b.DefaultTechs = true
-		if err := decodeBytes("shipped techs.yaml", shipped.Techs(), &techs); err != nil {
-			return nil, err
-		}
-	} else if err := decode(techsPath, &techs, false); err != nil {
+	} else if err := decode(techsPath, &userTechs, false); err != nil {
 		return nil, err
 	}
-	b.Techs = techs.Techs
+	b.Techs = catalog.Merge(shippedTechs.Techs, userTechs.Techs)
+	b.Catalog = catalog.New(b.Techs)
 
 	err := each(filepath.Join(root, "config", "projects"), func(path string) error {
 		var p model.Project
@@ -201,6 +215,12 @@ func Load(root string) (*Bundle, error) {
 		return nil, err
 	}
 
+	var shippedSrc, userSrc struct {
+		Sources []model.Source `yaml:"sources"`
+	}
+	if err := decodeBytes("shipped sources", shipped.Sources(), &shippedSrc); err != nil {
+		return nil, err
+	}
 	err = each(filepath.Join(root, "sources"), func(path string) error {
 		var s struct {
 			Sources []model.Source `yaml:"sources"`
@@ -208,22 +228,15 @@ func Load(root string) (*Bundle, error) {
 		if err := decode(path, &s, false); err != nil {
 			return err
 		}
-		b.Sources = append(b.Sources, s.Sources...)
+		userSrc.Sources = append(userSrc.Sources, s.Sources...)
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-
-	if len(b.Sources) == 0 {
-		var s struct {
-			Sources []model.Source `yaml:"sources"`
-		}
-		if err := decodeBytes("shipped sources", shipped.Sources(), &s); err != nil {
-			return nil, err
-		}
-		b.Sources, b.DefaultSources = s.Sources, true
-	}
+	b.DefaultSources = len(userSrc.Sources) == 0
+	b.Sources = mergeSources(shippedSrc.Sources, userSrc.Sources)
+	b.Sources = b.withTechFeeds(b.Sources)
 
 	return b, b.validate()
 }
@@ -232,6 +245,9 @@ func (b *Bundle) validate() error {
 	var errs []error
 	fail := func(f string, a ...any) { errs = append(errs, fmt.Errorf(f, a...)) }
 
+	for _, err := range b.Catalog.Validate() {
+		errs = append(errs, err)
+	}
 	known := map[string]bool{}
 	for _, t := range b.Techs {
 		key := strings.ToLower(t.Name)
@@ -419,4 +435,62 @@ func (b *Bundle) Allowed(actor string) (projects []string, write, open bool) {
 		return nil, g.Write, true
 	}
 	return g.Projects, g.Write, false
+}
+
+// mergeSources layers user feeds over shipped ones by id, in shipped order.
+func mergeSources(shipped, user []model.Source) []model.Source {
+	out := slices.Clone(shipped)
+	for _, u := range user {
+		if i := slices.IndexFunc(out, func(s model.Source) bool { return s.ID == u.ID }); i >= 0 {
+			out[i] = u
+		} else {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+// withTechFeeds adds the vendor feeds of every technology a project runs, so
+// enabling a technology enables its advisories. A feed whose id already exists
+// (a user override, or a feed shared by several technologies) is left alone.
+func (b *Bundle) withTechFeeds(srcs []model.Source) []model.Source {
+	used := map[string]bool{}
+	for _, p := range b.Projects {
+		for _, t := range p.Techs {
+			used[strings.ToLower(t.Name)] = true
+		}
+		for _, ec := range p.Environments {
+			for name := range ec.Techs {
+				used[strings.ToLower(name)] = true
+			}
+		}
+	}
+	for _, t := range b.Techs {
+		if !used[strings.ToLower(t.Name)] {
+			continue
+		}
+		for _, f := range t.Feeds {
+			if !slices.ContainsFunc(srcs, func(s model.Source) bool { return s.ID == f.ID }) {
+				srcs = append(srcs, f)
+			}
+		}
+	}
+	return srcs
+}
+
+// Client builds the polite HTTP client the settings describe.
+func (h HTTP) Client() *httpx.Client {
+	return httpx.New(httpx.Options{
+		UserAgent: h.UserAgent, Timeout: h.Timeout, Retries: h.Retries, RetryDelay: h.RetryDelay,
+		Rate: h.Rate, HostRates: h.HostRates, MaxBody: h.MaxBody,
+		Threshold429: h.Threshold429, Cooldown429: h.Cooldown429, AllowPrivate: h.AllowPrivate,
+	})
+}
+
+// DashboardPath is where the dashboard page is written.
+func (b *Bundle) DashboardPath() string {
+	if b.Dashboard.File != "" {
+		return resolve(b.Root, b.Dashboard.File)
+	}
+	return filepath.Join(b.AlertsDir, "dashboard.html")
 }

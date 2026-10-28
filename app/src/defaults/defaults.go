@@ -1,7 +1,7 @@
 // Package defaults carries the configuration cvewatch ships with: supported
 // technologies, feeds, a commented settings file and a project example. They
-// are embedded in the binary, so one executable is enough to start; a file
-// with the same purpose in the user's folder takes over completely.
+// are embedded in the binary, so one executable is enough to start; files in
+// the user's folder are layered over them.
 package defaults
 
 import (
@@ -27,6 +27,13 @@ func Techs() []byte { return read("techs.yaml") }
 // Sources is the shipped feed list (a sources: key, like any file in sources/).
 func Sources() []byte { return read("sources.yaml") }
 
+// UserTechs is the commented techs.yaml `init` writes: shipped technologies
+// are always available, so it holds only the user's own additions.
+func UserTechs() []byte { return read("user-techs.yaml") }
+
+// UserSources is the commented feed file `init` writes, for the user's own feeds.
+func UserSources() []byte { return read("user-sources.yaml") }
+
 // Settings is a commented config.yaml for `init`; every key in it is optional.
 func Settings() []byte { return read("config.yaml") }
 
@@ -37,8 +44,8 @@ func ProjectExample() []byte { return read("project.example.yaml") }
 func Layout() map[string][]byte {
 	return map[string][]byte{
 		"config/config.yaml":                   Settings(),
-		"config/techs.yaml":                    Techs(),
-		"sources/default.yaml":                 Sources(),
+		"config/techs.yaml":                    UserTechs(),
+		"sources/custom.yaml":                  UserSources(),
 		"config/projects/example.yaml.example": ProjectExample(),
 	}
 }

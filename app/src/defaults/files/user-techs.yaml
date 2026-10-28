@@ -1,0 +1,14 @@
+# Your own technologies. The ones cvewatch ships (run `cvewatch catalog` to
+# list them) are always available: add an entry here only for something that
+# is missing, or to change a shipped one. An entry with the same name replaces
+# the shipped one; `disabled: true` removes it.
+#
+# techs:
+#   - name: acme-gateway
+#     title: ACME Gateway
+#     category: gateway
+#     keywords: [acme gateway]
+#     cpe: ["acme:gateway"]
+#   - name: wordpress
+#     disabled: true
+techs: []

@@ -28,6 +28,7 @@ import (
 type Getter struct {
 	mu     sync.Mutex
 	Bodies map[string]string
+	Errs   map[string]error // a URL listed here fails with this error
 	Asked  []string
 }
 
@@ -35,8 +36,21 @@ func (g *Getter) Get(_ context.Context, u string, _ model.Validators, _ map[stri
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.Asked = append(g.Asked, u)
+	if err, ok := g.Errs[u]; ok {
+		return nil, err
+	}
 	if body, ok := g.Bodies[u]; ok {
 		return &httpx.Response{Body: []byte(body)}, nil
+	}
+	best := ""
+	for key := range g.Bodies { // configured URLs may hold {since} style placeholders
+		prefix, _, _ := strings.Cut(key, "{")
+		if strings.HasPrefix(u, prefix) && len(prefix) > len(best) {
+			best = key
+		}
+	}
+	if best != "" {
+		return &httpx.Response{Body: []byte(g.Bodies[best])}, nil
 	}
 	return &httpx.Response{Body: []byte(`{"status":"OK","data":[]}`)}, nil // unknown URLs (EPSS and friends) are empty
 }

@@ -39,6 +39,45 @@ type Storage interface {
 	Close() error
 }
 
+// Reader loads a consistent snapshot of the state without taking any lock, so
+// viewers (list, dashboard, TUI) never block the daemon. State is replaced
+// atomically on every save, so a read always sees a complete state: the one
+// before or the one after a save, never half of one.
+type Reader interface {
+	Load() (ledger.State, error)
+	Close() error
+}
+
+// OpenReader returns a lock-free reader for a backend.
+func OpenReader(backend, dir string) (Reader, error) {
+	switch backend {
+	case "", "file":
+		return &fileReader{path: filepath.Join(dir, "state.json")}, nil
+	case "sqlite":
+		return OpenSQLite(filepath.Join(dir, "state.db")) // WAL readers do not block the writer
+	}
+	return nil, fmt.Errorf("unknown storage backend %q: valid backends are \"file\" and \"sqlite\"", backend)
+}
+
+type fileReader struct{ path string }
+
+func (r *fileReader) Load() (ledger.State, error) {
+	var s ledger.State
+	raw, err := os.ReadFile(r.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return s, nil
+	}
+	if err != nil {
+		return s, err
+	}
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return ledger.State{}, fmt.Errorf("%s is corrupt: %w", r.path, err)
+	}
+	return s, nil
+}
+
+func (r *fileReader) Close() error { return nil }
+
 // ErrConflict means the stored state moved on since it was loaded. Load again,
 // redo the change and Save. Test with errors.Is.
 var ErrConflict = errors.New("state changed since it was loaded")
