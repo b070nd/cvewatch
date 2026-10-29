@@ -267,16 +267,22 @@ func printOpen(s *ops.Session, o listOpts, fresh map[string]bool) error {
 	if err != nil {
 		return err
 	}
-	if o.FailOn != model.SevUnknown {
-		n := 0
-		for _, is := range issues {
-			if is.Severity.AtLeast(o.FailOn) {
-				n++
-			}
+	return failGate(issues, o.FailOn)
+}
+
+// failGate is the CI gate behind -fail-on: no level set means no gate.
+func failGate(issues []query.Issue, level model.Severity) error {
+	if level == "" {
+		return nil
+	}
+	n := 0
+	for _, is := range issues {
+		if is.Severity.AtLeast(level) {
+			n++
 		}
-		if n > 0 {
-			return fmt.Errorf("%d open finding(s) at or above %s", n, o.FailOn)
-		}
+	}
+	if n > 0 {
+		return fmt.Errorf("%d open finding(s) at or above %s", n, level)
 	}
 	return nil
 }
