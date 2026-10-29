@@ -159,6 +159,7 @@ var emptyFeed = map[string]string{
 	"nvd":  `{"vulnerabilities":[]}`,
 	"ghsa": `[]`,
 	"kev":  `{"vulnerabilities":[]}`,
+	"cve":  `[]`,
 }
 
 // Run executes one cycle and moves the clock an hour ahead.

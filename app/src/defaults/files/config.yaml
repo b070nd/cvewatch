@@ -15,6 +15,7 @@ http:
   rate: 1                       # requests per second, per host
   host_rates:                   # stricter limits for touchy hosts
     services.nvd.nist.gov: 0.1  # NVD allows ~5 requests / 30s without a key
+    raw.githubusercontent.com: 5  # cve-records fetches one small file per new CVE (default)
   threshold_429: 3              # consecutive 429s before a host cooldown
   cooldown_429: 2m
   allow_private: false          # true permits http:// and internal addresses, e.g. an internal feed or proxy

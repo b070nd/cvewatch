@@ -1,4 +1,4 @@
-# Feeds to poll. type: rss | hn | nvd | kev | ghsa
+# Feeds to poll. type: rss | hn | nvd | kev | ghsa | csaf | cve
 # {since}, {since_date}, {since_unix}, {now} become the last successful fetch (or the lookback on first run).
 sources:
   - id: cisa-kev
@@ -9,6 +9,10 @@ sources:
     url: https://services.nvd.nist.gov/rest/json/cves/2.0?pubStartDate={since}&pubEndDate={now}
     match_structured: true   # techs with CPE names match on NVD's product data, not on words in the description
     match_title_only: true   # techs without CPE names: read the title only (the first sentence names the product)
+  - id: cve-records     # the CVE Program's own records: vendors such as Adobe, Cisco and Microsoft publish here first
+    type: cve
+    url: https://raw.githubusercontent.com/CVEProject/cvelistV5/main/cves/deltaLog.json
+    match_title_only: true
   - id: ghsa
     type: ghsa
     url: https://api.github.com/advisories?per_page=100&type=reviewed&published=%3E%3D{since_date}

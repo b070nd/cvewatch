@@ -162,6 +162,7 @@ func defaults() Settings {
 			Retries:      3,
 			RetryDelay:   2 * time.Second,
 			Rate:         1,
+			HostRates:    map[string]float64{"raw.githubusercontent.com": 5}, // cve-records fetches one small file per new CVE
 			MaxBody:      16 << 20,
 			Threshold429: 3,
 			Cooldown429:  2 * time.Minute,

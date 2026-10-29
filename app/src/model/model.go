@@ -108,7 +108,7 @@ func SeverityFromCVSS(score float64) Severity {
 // Source is one feed to poll (app/sources/*.yaml).
 type Source struct {
 	ID       string            `yaml:"id"`
-	Type     string            `yaml:"type"` // rss | hn | nvd | kev | ghsa
+	Type     string            `yaml:"type"` // rss | hn | nvd | kev | ghsa | csaf | cve
 	URL      string            `yaml:"url"`  // may contain {since} (RFC3339) and {since_unix}
 	Headers  map[string]string `yaml:"headers"`
 	Disabled bool              `yaml:"disabled"`
