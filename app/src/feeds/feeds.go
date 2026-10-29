@@ -50,6 +50,7 @@ var parsers = map[string]parser{
 // fetchers is consulted before parsers.
 var fetchers = map[string]fetchFunc{
 	"csaf": fetchCSAF,
+	"cve":  fetchCVE,
 }
 
 // Types lists the source types Fetch understands, sorted, so config and
@@ -107,7 +108,9 @@ func Fetch(ctx context.Context, g Getter, src model.Source, st model.FeedState, 
 		}
 		valids = resp.Validators
 	}
-	items = recent(items, since)
+	if src.Type != "cve" { // its cursor, not the date, decides what is new
+		items = recent(items, since)
+	}
 	for i := range items {
 		items[i].SourceType = src.Type
 		items[i].TitleOnly = src.MatchTitleOnly

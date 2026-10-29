@@ -72,6 +72,17 @@ techs: [{name: php, version: "8.2"}]
 
 `cvewatch status` shows the daemon (running, overdue, or only manual runs), each feed (last success, failures in a row), each channel and the last cycles. It exits non-zero when something fails. `cvewatch dashboard` writes a static HTML page with the same plus open findings. Set `dashboard: {enabled: true}` in `config.yaml` and the daemon refreshes it every cycle. The page has no scripts and makes no external requests.
 
+## Vendor records (CVE Program)
+
+Vendors that issue their own CVE ids (Adobe, Cisco, Microsoft, Oracle and hundreds more) write the record themselves. The `cve-records` source reads these records from the official CVE Program repository (`cvelistV5`), usually before NVD has added its analysis. Vendor knowledge-base pages and bulletins are web pages without a feed, so this is the reliable way to get the same data.
+
+How it works, in short:
+- The repository's change log is read from the newest end, in small steps, until the last change already handled.
+- Each newly published record is fetched, oldest first, at most 500 per cycle. The place reached is stored, so a failed or interrupted cycle repeats instead of losing records. A record that is gone (404) is skipped; any other error repeats the cycle.
+- The title names the affected products, so technology matching works on it. Versions are checked only when the record has CPE names and plain version numbers; free text such as `2.4.9, 2.4.8-p5` stays `unchecked` for a person to confirm.
+- The first run takes only the newest 100 records. Older ones come from NVD and the lookback. Changes older than about a week (a week-long outage) are not recovered from this source.
+- Requests go to `raw.githubusercontent.com` at up to 5 a second (`host_rates`). Switch it off with `- {id: cve-records, disabled: true}` in a file in `sources/`.
+
 ## Inventory
 
 | Source | `type:` | Notes |
