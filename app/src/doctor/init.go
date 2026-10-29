@@ -3,17 +3,20 @@ package doctor
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/b070nd/cvewatch/app/src/config"
 	"github.com/b070nd/cvewatch/app/src/defaults"
 	"github.com/b070nd/cvewatch/app/src/discovery"
-	"github.com/b070nd/cvewatch/app/src/model"
+	"github.com/b070nd/cvewatch/app/src/ops"
 	"github.com/b070nd/cvewatch/app/src/projectfile"
+	"github.com/b070nd/cvewatch/app/src/projectflow"
+	"github.com/b070nd/cvewatch/app/src/setup"
+	"github.com/b070nd/cvewatch/app/src/store"
 )
 
 // InitOptions controls Init.
@@ -51,14 +54,14 @@ func Init(root string, o InitOptions) (InitResult, error) {
 		return res, nil
 	}
 
-	repo, err := filepath.Abs(o.Repo)
+	repo, err := projectflow.ResolveFolder(o.Repo)
 	if err != nil {
 		return res, err
 	}
-	if fi, err := os.Stat(repo); err != nil || !fi.IsDir() {
-		return res, fmt.Errorf("repository %s is not a folder", o.Repo)
+	name := o.Project
+	if _, err := projectfile.New(name); err != nil {
+		name = setup.FolderName(cmpOr(o.Project, repo))
 	}
-	name := sanitize(cmpOr(o.Project, filepath.Base(repo)))
 	cfg, err := config.Load(root)
 	if err != nil {
 		return res, err
@@ -67,56 +70,52 @@ func Init(root string, o InitOptions) (InitResult, error) {
 	if err != nil {
 		return res, err
 	}
-	data, maybe, err := projectFromDiscovery(name, root, det)
+	// A memory store keeps init from leaving state files behind; the project file still goes through EditProject.
+	s, err := ops.OpenWith(cfg, store.NewMemory(), slog.New(slog.DiscardHandler))
 	if err != nil {
 		return res, err
 	}
-	if data == nil {
+	defer s.Close()
+	rel := "config/projects/" + name + ".yaml"
+	_, statErr := os.Lstat(filepath.Join(root, filepath.FromSlash(rel)))
+	exists := statErr == nil
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return res, statErr
+	}
+	req := projectflow.Request{}
+	if exists && o.Force {
+		req.Project = name
+	}
+	opened, err := projectflow.Open(s, req)
+	if err != nil {
+		return res, err
+	}
+	opened.Flow.UseDiscovery(det.Root, det)
+	edits := projectflow.Edits(s, opened.Flow)
+	var maybe []discovery.TechProposal
+	for _, t := range det.Techs {
+		if t.Confidence == discovery.Low {
+			maybe = append(maybe, t)
+		}
+	}
+	if len(edits) == 0 {
 		res.Notes = append(res.Notes, fmt.Sprintf(
 			"Found no lockfile or technology in %s: copy config/projects/example.yaml.example to config/projects/%s.yaml and edit it.", repo, name), next)
 		return res, nil
 	}
-	if err := res.write(root, "config/projects/"+name+".yaml", data, o.Force); err != nil {
-		return res, err
+	if exists && !o.Force {
+		res.Skipped = append(res.Skipped, rel)
+	} else {
+		if _, err := s.EditProject(ops.ProjectChange{Project: name, Ops: edits, Save: true}); err != nil {
+			return res, err
+		}
+		res.Written = append(res.Written, rel)
 	}
 	res.Notes = append(res.Notes, discoveryNotes(repo, det, maybe)...)
 	res.Notes = append(res.Notes,
 		fmt.Sprintf("Project %q is in config/projects/%s.yaml: check the versions, they are only what the repository declares.", name, name),
 		"Lockfile paths are relative to "+shellArg(root)+". In a container, mount the repository at the same place relative to the root folder.", next)
 	return res, nil
-}
-
-// projectFromDiscovery builds the project file. High and medium confidence
-// technologies are declared; low ones are returned so they can be offered.
-// It returns nil data when there is nothing to declare.
-func projectFromDiscovery(name, root string, det discovery.Result) (data []byte, maybe []discovery.TechProposal, err error) {
-	f, err := projectfile.New(name)
-	if err != nil {
-		return nil, nil, err
-	}
-	var ops []projectfile.Op
-	for _, t := range det.Techs {
-		if t.Confidence == discovery.Low {
-			maybe = append(maybe, t)
-			continue
-		}
-		ops = append(ops, projectfile.Op{Kind: "set_tech", Tech: t.Tech, Version: t.Version})
-	}
-	for _, l := range det.Lockfiles {
-		path := filepath.Join(det.Root, filepath.FromSlash(l.Path))
-		if rel, err := filepath.Rel(root, path); err == nil {
-			path = rel
-		}
-		ops = append(ops, projectfile.Op{Kind: "add_lockfile", Lockfile: model.Lockfile{Type: l.Type, Path: filepath.ToSlash(path)}})
-	}
-	if len(ops) == 0 {
-		return nil, maybe, nil
-	}
-	if err := f.Apply(ops...); err != nil {
-		return nil, nil, err
-	}
-	data, err = f.Bytes()
-	return data, maybe, err
 }
 
 func discoveryNotes(repo string, det discovery.Result, maybe []discovery.TechProposal) []string {
@@ -179,17 +178,6 @@ func cmpOr(a, b string) string {
 func shellArg(s string) string {
 	if strings.ContainsAny(s, " \t'\"") {
 		return strconv.Quote(s)
-	}
-	return s
-}
-
-var nonName = regexp.MustCompile(`[^a-z0-9]+`)
-
-// sanitize makes a project name of [a-z0-9-].
-func sanitize(s string) string {
-	s = strings.Trim(nonName.ReplaceAllString(strings.ToLower(s), "-"), "-")
-	if s == "" {
-		return "project"
 	}
 	return s
 }

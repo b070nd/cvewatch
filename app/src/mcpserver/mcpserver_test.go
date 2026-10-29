@@ -200,3 +200,46 @@ func TestSetupToolsReadOnlyAndWrite(t *testing.T) {
 		t.Fatal("an unknown change kind must be an error")
 	}
 }
+
+func TestCheckProjectsReportsProblemsWithFixes(t *testing.T) {
+	root := fixture(t)
+	os.WriteFile(filepath.Join(root, "config", "projects", "shop.yaml"),
+		[]byte("name: shop\nenvs: [dev, prod]\ntechs: [{name: pph, version: \"8.2\"}]\nlockfiles: [{type: composer, path: gone/composer.lock}]\n"), 0o644)
+
+	cs := connect(t, root, false)
+	if !strings.Contains(toolNames(t, cs), "check_projects") {
+		t.Fatal("check_projects is a read tool and must be listed without allow-write")
+	}
+	_, out := call(t, cs, "check_projects", map[string]any{})
+	for _, want := range []string{`"Project":"shop"`, `"Field":"lockfiles[0].path"`, `"label":"remove lockfile gone/composer.lock"`, `"kind":"remove_lockfile"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %s in %s", want, out)
+		}
+	}
+	_, out = call(t, cs, "check_projects", map[string]any{"project": "shop"})
+	if !strings.Contains(out, `"Project":"shop"`) {
+		t.Errorf("one project: %s", out)
+	}
+	if res, _ := call(t, cs, "check_projects", map[string]any{"project": "nope"}); !res.IsError {
+		t.Error("an unknown project must be an error")
+	}
+	os.WriteFile(filepath.Join(root, "config", "projects", "blog.yaml"), []byte("name: [oops\n"), 0o644)
+	if res, out := call(t, cs, "check_projects", map[string]any{}); res.IsError || !strings.Contains(out, `"Project":"blog"`) || !strings.Contains(out, `"Field":"file"`) {
+		t.Errorf("a broken file must be reported, not fail the tool: %v %s", res.IsError, out)
+	}
+}
+
+func TestEditProjectTakesTheLockfileObjectOfAFix(t *testing.T) {
+	root := fixture(t)
+	file := filepath.Join(root, "config", "projects", "shop.yaml")
+	os.WriteFile(file, []byte("name: shop\nenvs: [dev, prod]\ntechs: [{name: pph, version: \"8.2\"}]\nlockfiles: [{type: composer, path: gone/composer.lock}]\n"), 0o644)
+
+	cs := connect(t, root, true)
+	fix := map[string]any{"kind": "remove_lockfile", "lockfile": map[string]any{"type": "composer", "path": "gone/composer.lock"}}
+	if res, out := call(t, cs, "edit_project", map[string]any{"project": "shop", "changes": []any{fix}}); res.IsError {
+		t.Fatalf("edit_project: %s %v", out, res.Content[0].(*mcp.TextContent).Text)
+	}
+	if b, _ := os.ReadFile(file); strings.Contains(string(b), "gone/composer.lock") {
+		t.Fatalf("the lockfile is still there:\n%s", b)
+	}
+}

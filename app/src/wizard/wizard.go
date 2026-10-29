@@ -9,17 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"unicode"
 
-	"github.com/b070nd/cvewatch/app/src/discovery"
-	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/ops"
-	"github.com/b070nd/cvewatch/app/src/projectfile"
+	"github.com/b070nd/cvewatch/app/src/projectflow"
 	"github.com/b070nd/cvewatch/app/src/setup"
 )
 
@@ -168,41 +165,11 @@ func hasValue(opts []setup.Option, v string) bool {
 
 // setup builds the flow for one project and drives it to a save.
 func (w *wiz) setup(sess *ops.Session, dir, existing string) error {
-	cat := sess.Cfg.Catalog
-	var cur *model.Project
-	var src []byte
-	if existing != "" {
-		names, err := sess.ProjectNames() // scoped to what the actor may see
-		if err != nil {
-			return err
-		}
-		path, err := projectfile.Path(projectsDir(sess), existing)
-		if err != nil || !slices.Contains(names, existing) {
-			return fmt.Errorf("unknown project %q", existing)
-		}
-		if src, err = os.ReadFile(path); err != nil {
-			return err
-		}
-		file, err := projectfile.Parse(src)
-		if err != nil {
-			return err
-		}
-		p := file.Project()
-		cur = &p
+	o, err := projectflow.Open(sess, projectflow.Request{Project: existing, Folder: dir})
+	if err != nil {
+		return err
 	}
-	f := setup.NewFlow(cat, cur)
-	f.SetExistingBytes(src)
-	f.NameTaken = func(n string) bool {
-		names, _ := sess.ProjectNames()
-		return slices.Contains(names, n)
-	}
-	if dir != "" {
-		res, err := discovery.Scan(dir, cat, discovery.Options{})
-		if err != nil {
-			return err
-		}
-		f.UseDiscovery(res.Root, res)
-	}
+	f := o.Flow
 
 	w.printf("Type back for the previous question, ? for help, quit to stop without saving.\n")
 	review := func(st setup.Step) setup.Step {
@@ -258,7 +225,7 @@ func (w *wiz) drive(f *setup.Flow, adjust func(setup.Step) setup.Step) error {
 // reviewText is the help of the review step: the diff and the issues of the
 // change as it would be saved (lockfile paths relative to the root).
 func reviewText(sess *ops.Session, f *setup.Flow, fallback string) string {
-	p, err := sess.EditProject(ops.ProjectChange{Project: f.Draft().Project.Name, Ops: relOps(sess, f.Ops())})
+	p, err := sess.EditProject(ops.ProjectChange{Project: f.Draft().Project.Name, Ops: projectflow.Edits(sess, f)})
 	if err != nil {
 		return fallback + "\n! " + err.Error()
 	}
@@ -275,7 +242,7 @@ func reviewText(sess *ops.Session, f *setup.Flow, fallback string) string {
 
 // save writes the confirmed change.
 func (w *wiz) save(sess *ops.Session, f *setup.Flow) error {
-	p, err := sess.EditProject(ops.ProjectChange{Project: f.Draft().Project.Name, Ops: relOps(sess, f.Ops()), Save: true})
+	p, err := sess.EditProject(ops.ProjectChange{Project: f.Draft().Project.Name, Ops: projectflow.Edits(sess, f), Save: true})
 	if err != nil {
 		for _, is := range p.Issues {
 			w.printf("  %s: %s: %s\n", is.Level, is.Field, clean(is.Message))
@@ -290,32 +257,6 @@ func (w *wiz) save(sess *ops.Session, f *setup.Flow) error {
 		clean(relPath(sess, p.Path)))
 	return nil
 }
-
-// relOps makes the lockfiles being added relative to the config root, so the
-// config keeps working when it is moved or mounted elsewhere.
-func relOps(sess *ops.Session, in []projectfile.Op) []projectfile.Op {
-	root := realPath(sess.Cfg.Root)
-	out := slices.Clone(in)
-	for i, op := range out {
-		if op.Kind != "add_lockfile" || !filepath.IsAbs(op.Lockfile.Path) {
-			continue
-		}
-		if rel, err := filepath.Rel(root, realPath(op.Lockfile.Path)); err == nil {
-			out[i].Lockfile.Path = filepath.ToSlash(rel)
-		}
-	}
-	return out
-}
-
-// realPath resolves symlinks (a temp dir may be one) so paths compare equal.
-func realPath(p string) string {
-	if r, err := filepath.EvalSymlinks(p); err == nil {
-		return r
-	}
-	return p
-}
-
-func projectsDir(sess *ops.Session) string { return filepath.Join(sess.Cfg.Root, "config", "projects") }
 
 func relPath(sess *ops.Session, p string) string {
 	if rel, err := filepath.Rel(sess.Cfg.Root, p); err == nil {

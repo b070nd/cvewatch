@@ -60,13 +60,15 @@ var ErrReadOnly = errors.New("this session is read-only")
 
 // Open loads the configuration under root and locks and loads the state.
 func Open(root string, log *slog.Logger) (*Session, error) {
-	cfg, err := config.Load(root)
+	return openLoaded(root, log, config.Load)
+}
+
+func openLoaded(root string, log *slog.Logger, loader func(string) (*config.Bundle, error)) (*Session, error) {
+	cfg, err := loader(root)
 	if err != nil {
 		return nil, err
 	}
-	for _, w := range cfg.Warnings {
-		log.Warn(w)
-	}
+	logLoaded(cfg, log)
 	st, err := store.Open(cfg.Storage.Backend, cfg.DataDir)
 	if err != nil {
 		return nil, err
@@ -77,6 +79,15 @@ func Open(root string, log *slog.Logger) (*Session, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+func logLoaded(cfg *config.Bundle, log *slog.Logger) {
+	for _, w := range cfg.Warnings {
+		log.Warn(w)
+	}
+	for _, b := range cfg.Broken {
+		log.Warn("skipping broken project", "project", b.Name, "file", b.File, "error", b.Err)
+	}
 }
 
 // OpenWith builds a session on any storage adapter.
@@ -110,13 +121,15 @@ func (s *Session) Commit() error {
 // Viewers use it so they never block the daemon or each other; anything that
 // would change state returns ErrReadOnly.
 func OpenReadOnly(root string, log *slog.Logger) (*Session, error) {
-	cfg, err := config.Load(root)
+	return openReadOnlyLoaded(root, log, config.Load)
+}
+
+func openReadOnlyLoaded(root string, log *slog.Logger, loader func(string) (*config.Bundle, error)) (*Session, error) {
+	cfg, err := loader(root)
 	if err != nil {
 		return nil, err
 	}
-	for _, w := range cfg.Warnings {
-		log.Warn(w)
-	}
+	logLoaded(cfg, log)
 	rd, err := store.OpenReader(cfg.Storage.Backend, cfg.DataDir)
 	if err != nil {
 		return nil, err

@@ -200,12 +200,12 @@ type ProjectTech struct {
 
 // Lockfile is read on every run, so the tech matrix follows the repository.
 type Lockfile struct {
-	Type string `yaml:"type"` // see matrix.Types(): composer, npm, go, pip, ...
-	Path string `yaml:"path"`
-	Env  Env    `yaml:"env"` // applies to this environment only; empty means all
+	Type string `yaml:"type" json:"type"` // see matrix.Types(): composer, npm, go, pip, ...
+	Path string `yaml:"path" json:"path"`
+	Env  Env    `yaml:"env" json:"env,omitempty"` // applies to this environment only; empty means all
 	// Dev includes development-only packages (composer require-dev and the
 	// like) in every environment. By default they count only in dev and int.
-	Dev bool `yaml:"dev"`
+	Dev bool `yaml:"dev" json:"dev,omitempty"`
 }
 
 func (p Project) EffectiveEnvs() []Env {

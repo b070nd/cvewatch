@@ -9,6 +9,7 @@ import (
 
 	"github.com/b070nd/cvewatch/app/src/config"
 	"github.com/b070nd/cvewatch/app/src/defaults"
+	"github.com/b070nd/cvewatch/app/src/setup"
 )
 
 func TestInitWritesLayoutAndSkips(t *testing.T) {
@@ -168,7 +169,7 @@ func TestInitOffersLowConfidenceTechsOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := os.ReadFile(filepath.Join(root, "config", "projects", sanitize(filepath.Base(repo))+".yaml"))
+	raw, _ := os.ReadFile(filepath.Join(root, "config", "projects", setup.FolderName(repo)+".yaml"))
 	if strings.Contains(string(raw), "wordpress") || !strings.Contains(string(raw), "requirements.txt") {
 		t.Errorf("project file:\n%s", raw)
 	}
@@ -177,7 +178,7 @@ func TestInitOffersLowConfidenceTechsOnly(t *testing.T) {
 	}
 }
 
-func TestInitNothingFoundAndSanitize(t *testing.T) {
+func TestInitNothingFound(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "!!!")
 	put(t, repo, "README.md", "hi")
 	root := t.TempDir()
@@ -194,11 +195,6 @@ func TestInitNothingFoundAndSanitize(t *testing.T) {
 		t.Errorf("notes = %s", n)
 	}
 
-	for in, want := range map[string]string{"Shop & Co.": "shop-co", "ÄÖ": "project", "a--b": "a-b", "": "project"} {
-		if got := sanitize(in); got != want {
-			t.Errorf("sanitize(%q) = %q, want %q", in, got, want)
-		}
-	}
 	if _, err := Init(root, InitOptions{Repo: filepath.Join(root, "nope")}); err == nil {
 		t.Error("missing repo must be an error")
 	}
@@ -206,5 +202,129 @@ func TestInitNothingFoundAndSanitize(t *testing.T) {
 	res, err = Init(t.TempDir(), InitOptions{Repo: repo, Project: "Given Name"})
 	if err != nil || !strings.Contains(strings.Join(res.Notes, "\n"), "given-name") {
 		t.Errorf("res %+v err %v", res, err)
+	}
+}
+
+func projectFile(t *testing.T, root, name string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(root, "config", "projects", name+".yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+func TestInitDotRootKeepsLockfilesRelative(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	put(t, root, "config/techs.yaml", stack)
+	put(t, root, "repos/app/composer.lock", `{"packages":[{"name":"monolog/monolog","version":"3.0.0"}]}`)
+	res, err := Init(".", InitOptions{Repo: "repos/app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(res.Written, "config/projects/app.yaml") {
+		t.Fatalf("written = %v", res.Written)
+	}
+	raw := projectFile(t, root, "app")
+	if !strings.Contains(raw, "path: repos/app/composer.lock") || strings.Contains(raw, root) {
+		t.Errorf("lockfile path is not root-relative:\n%s", raw)
+	}
+}
+
+func TestInitLongFolderNameIsCapped(t *testing.T) {
+	long := strings.Repeat("abcdefghij", 10)
+	repo := filepath.Join(t.TempDir(), long)
+	put(t, repo, "composer.lock", `{"packages":[]}`)
+	root := t.TempDir()
+	res, err := Init(root, InitOptions{Repo: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := long[:63]
+	if !slices.Contains(res.Written, "config/projects/"+name+".yaml") {
+		t.Fatalf("written = %v", res.Written)
+	}
+	b, err := config.Load(root)
+	if err != nil || len(b.Projects) != 1 || b.Projects[0].Name != name || len(b.Broken) != 0 {
+		t.Errorf("projects %+v broken %v err %v", b.Projects, b.Broken, err)
+	}
+}
+
+func TestInitRepoWithHomeAndRelativeSpelling(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	put(t, home, "code/shop/composer.lock", `{"packages":[]}`)
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	put(t, cwd, "other/composer.lock", `{"packages":[]}`)
+
+	root := t.TempDir()
+	for repo, name := range map[string]string{"~/code/shop": "shop", "other": "other"} {
+		res, err := Init(root, InitOptions{Repo: repo})
+		if err != nil || !slices.Contains(res.Written, "config/projects/"+name+".yaml") {
+			t.Errorf("%s: res %+v err %v", repo, res, err)
+		}
+	}
+}
+
+func TestInitSymlinkedRoot(t *testing.T) {
+	real, links := t.TempDir(), t.TempDir()
+	link := filepath.Join(links, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skip("symlinks are not available")
+	}
+	put(t, real, "config/techs.yaml", stack)
+	put(t, real, "repos/app/composer.lock", `{"packages":[]}`)
+	if _, err := Init(link, InitOptions{Repo: filepath.Join(link, "repos", "app")}); err != nil {
+		t.Fatal(err)
+	}
+	if raw := projectFile(t, real, "app"); !strings.Contains(raw, "path: repos/app/composer.lock") {
+		t.Errorf("project file:\n%s", raw)
+	}
+}
+
+func TestInitKeepsExistingProjectFileWithoutForce(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "app")
+	put(t, repo, "composer.lock", `{"packages":[]}`)
+	root := t.TempDir()
+	put(t, root, "config/projects/app.yaml", "name: app\n# mine\n")
+	res, err := Init(root, InitOptions{Repo: repo})
+	if err != nil || !slices.Contains(res.Skipped, "config/projects/app.yaml") || slices.Contains(res.Written, "config/projects/app.yaml") {
+		t.Fatalf("res %+v err %v", res, err)
+	}
+	if raw := projectFile(t, root, "app"); raw != "name: app\n# mine\n" {
+		t.Errorf("existing file changed:\n%s", raw)
+	}
+	if _, err := os.Stat(filepath.Join(root, "data", "audit.log")); err == nil {
+		t.Error("a skipped file must not be audited")
+	}
+
+	res, err = Init(root, InitOptions{Repo: repo, Force: true})
+	if err != nil || !slices.Contains(res.Written, "config/projects/app.yaml") {
+		t.Fatalf("force: res %+v err %v", res, err)
+	}
+	if raw := projectFile(t, root, "app"); !strings.Contains(raw, "# mine") || !strings.Contains(raw, "composer.lock") {
+		t.Errorf("forced file:\n%s", raw)
+	}
+}
+
+func TestInitAuditsAndLeavesNoStateFile(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "app")
+	put(t, repo, "composer.lock", `{"packages":[]}`)
+	root := t.TempDir()
+	if _, err := Init(root, InitOptions{Repo: repo}); err != nil {
+		t.Fatal(err)
+	}
+	log, err := os.ReadFile(filepath.Join(root, "data", "audit.log"))
+	if err != nil || !strings.Contains(string(log), `"project"`) || !strings.Contains(string(log), "created project file") {
+		t.Fatalf("audit log %q err %v", log, err)
+	}
+	entries, _ := os.ReadDir(filepath.Join(root, "data"))
+	for _, e := range entries {
+		if e.Name() != "audit.log" {
+			t.Errorf("init left %s in the data folder", e.Name())
+		}
 	}
 }
