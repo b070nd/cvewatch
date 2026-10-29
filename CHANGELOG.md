@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-29
+
+### Added
+- `cve-records` source (type `cve`): the CVE Program's own records, so vendor-published CVEs (Adobe, Cisco, Microsoft and more) arrive before NVD's analysis. A cursor keeps interrupted runs from losing records.
+
+### Fixed
+- `list` and `update` exited with an error when open findings existed and `-fail-on` was not used.
+
 ## [1.1.0] - 2026-10-28
 
 ### Added

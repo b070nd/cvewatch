@@ -58,6 +58,7 @@ What the tool defends against, how, and how to deploy it.
 - Project files are changed only through `ops`: names are restricted to letters, digits, dash and underscore (no path separators), access rules apply (creating a project needs access to all projects), the result is validated, the old file is backed up, the write is atomic, and the audit log records it before anything is written.
 - The dashboard is static HTML with escaped text, a restrictive content security policy, no scripts and no external requests. It lists your exposure: store it as carefully as `data/`.
 - Vendor advisory feeds (CSAF) are fetched over https only; a provider index may only point to files on the same host.
+- The `cve-records` source builds every record address from a validated CVE id under the configured https directory; nothing the log says can send it to another host. Records are untrusted feed text like any other.
 - A technology the catalog does not contain is never guessed: unknown means unknown.
 
 ## Deploying

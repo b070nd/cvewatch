@@ -42,7 +42,7 @@ func Serve(ctx context.Context, root string, log *slog.Logger, allowWrite bool) 
 
 func build(root string, log *slog.Logger, allowWrite bool) *mcp.Server {
 	s := &server{root: root, log: log}
-	srv := mcp.NewServer(&mcp.Implementation{Name: "cvewatch", Version: "1.1.0"}, &mcp.ServerOptions{Instructions: instructions})
+	srv := mcp.NewServer(&mcp.Implementation{Name: "cvewatch", Version: "1.2.0"}, &mcp.ServerOptions{Instructions: instructions})
 	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_findings", Annotations: ro,

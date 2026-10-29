@@ -31,7 +31,7 @@ HIGH (1)
 
 | | |
 |---|---|
-| **Watches** | NVD, GitHub advisories, CISA KEV, Hacker News and any RSS or Atom feed |
+| **Watches** | NVD, the CVE Program's own records (vendors such as Adobe, Cisco, Microsoft), GitHub advisories, CISA KEV, Hacker News, vendor CSAF feeds and any RSS or Atom feed |
 | **Tech-agnostic** | a built-in catalog of ~145 open and closed source technologies, and any other in a few lines of YAML |
 | **Knows what you run** | declared techs and versions, lockfiles and SBOMs, per project **and environment**; `setup` finds them in your repository, with evidence |
 | **Decides** | what matters to you, whether your version is affected, and what to do first |
