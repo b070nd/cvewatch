@@ -41,7 +41,34 @@ Three front ends share one setup flow, so the questions and checks are the same:
 - `cvewatch tui`: full-screen interface. It runs `cvewatch-tui`, a separate program shipped next to `cvewatch`, so other commands start fast.
 - MCP tools and the skills in `skills/`: the same steps for an agent.
 
+The package `projectflow` is the one place that turns a typed folder or an existing project into a setup flow, and the answers into project-file edits. The TUI, the wizard and `cvewatch init` all use it.
+
 Project edits keep the file's comments, are checked before saving, back up the old file in `data/project-backups/` and go to the audit log. For scripts, `cvewatch project NAME -set php=8.2 -lock composer:PATH` shows the diff and `-save` writes it.
+
+`cvewatch init -repo DIR` writes the starter files and a project file for what it finds, through the same save path. An existing project file is kept unless you pass `-force`. With `-force`, the project file is edited in place: its comments stay and the old version goes to `data/project-backups/`. The starter files are rewritten. Lockfile paths are stored relative to the config root (`-root`), so with the default `-root .` they stay relative too.
+
+`check_projects` (MCP, read-only) lists the problems in project files, each with the edits that would fix it. See [agents.md](agents.md).
+
+### Adding a project from a folder (TUI)
+
+On the Projects screen, `d` opens a folder box:
+
+- Type a path (`~` is your home folder), or pick a row with Up and Down. Enter uses the picked folder, or the typed text when no row is picked.
+- Tab completes the name. With one match it adds the folder and a slash. With several it adds the part they share, if that is longer than what you typed.
+- Shift+Tab goes up one folder. Tab on a picked row opens that folder.
+- Each row shows the lockfiles and manifests found directly inside it, for example `composer.lock` or `go.mod`. A `project` tag marks a folder that has a lockfile or a manifest. Only the first 300 subfolders of a folder are looked into for marks, and at most 200 rows are listed.
+
+Picking a folder reads folder and file names only. Nothing in the folder is run.
+
+### Fixing projects (TUI)
+
+The Projects screen has a PROBLEMS column: `-` for none, or counts such as `2 err` and `1 warn`. A project file that cannot be read is shown as `BROKEN` with its error, and the rest of the TUI keeps working.
+
+- `p` and `P` select the next or previous problem of the selected project.
+- `f` shows the first fix of the selected problem as a diff. `y` applies it, `n` or Esc cancels.
+- `o` opens the project file in `$EDITOR`, then reloads.
+
+Problems are worked out when the screen loads or refreshes (`r`), not on every key. If loading fails, the screen offers `r` to try again and `q` to quit.
 
 ## Start date per project
 
@@ -96,7 +123,7 @@ How it works, in short:
 | gradle.lockfile, pom.xml | `gradle`, `maven` | pom properties resolved; parent poms are not read |
 | CycloneDX / SPDX JSON | `cyclonedx`, `spdx` | packages by purl: npm, composer, go, pypi, maven |
 
-Lockfiles can be limited to one environment (`env: prod`, so a prod SBOM differs from dev) and read every cycle. Development-only packages count in `dev` and `int` unless the lockfile sets `dev: true`. Per environment you can also record the deployed versions and an image reference (`image:` is recorded only; no registry is queried).
+Lockfiles can be limited to one environment (`env: prod`, so a prod SBOM differs from dev) and read every cycle. A lockfile whose `env` is not in the project's `envs` is never read; the project editor and `check_projects` warn about it. Development-only packages count in `dev` and `int` unless the lockfile sets `dev: true`. Per environment you can also record the deployed versions and an image reference (`image:` is recorded only; no registry is queried).
 
 ```yaml
 name: shop
