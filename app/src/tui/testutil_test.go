@@ -265,5 +265,3 @@ func (d *driver) wantNot(parts ...string) {
 }
 
 func tea_window(w, h int) tea.WindowSizeMsg { return tea.WindowSizeMsg{Width: w, Height: h} }
-
-func lock(p string) model.Lockfile { return model.Lockfile{Type: "composer", Path: p} }

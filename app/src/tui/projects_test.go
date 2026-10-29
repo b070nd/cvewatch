@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/b070nd/cvewatch/app/src/projectfile"
+	"github.com/b070nd/cvewatch/app/src/config"
 )
 
 func projectFile(t *testing.T, b *fake, name string) string {
@@ -240,20 +240,55 @@ func TestOptionsDirStartsTheSetupFlowOnTheFolder(t *testing.T) {
 	d.want("[3 Projects]", "New project", "Project name", "ok: scanned")
 }
 
-func TestRelativize(t *testing.T) {
-	root, _ := filepath.Abs(filepath.Join(string(filepath.Separator), "srv", "app"))
-	in := []projectfile.Op{
-		{Kind: "add_lockfile", Lockfile: lock(filepath.Join(root, "web", "composer.lock"))},
-		{Kind: "add_lockfile", Lockfile: lock("already/relative.lock")},
-		{Kind: "remove_lockfile", Lockfile: lock(filepath.Join(root, "old.lock"))},
-		{Kind: "set_tech", Tech: "php"},
+func TestEditProjectRemovesALockfileAndSaves(t *testing.T) {
+	b := newFake(t, nil)
+	dir := filepath.Join(b.cfg.Root, "config", "projects")
+	os.MkdirAll(dir, 0o700)
+	os.WriteFile(filepath.Join(dir, "shop.yaml"), []byte("name: shop\ntechs:\n  - {name: php, version: \"8.2\"}\n  - {name: nginx}\nlockfiles:\n  - {type: composer, path: repos/shop/composer.lock}\n"), 0o600)
+	d := start(t, b, Options{})
+	d.press("3", "e")
+	d.want("Edit project: shop")
+	d.press("up", "up", "enter") // Inventory sources (the menu starts on Review and save)
+	d.want("Inventory sources", "composer")
+	d.press(" ") // untick the lockfile
+	d.press("enter")
+	d.want("What do you want to change?")
+	d.press("enter")
+	d.want("Save this project?")
+	d.press("y")
+	d.want("ok: saved project shop")
+	f := projectFile(t, b, "shop")
+	if strings.Contains(f, "composer.lock") || !strings.Contains(f, "php") {
+		t.Fatalf("the lockfile must be removed, the rest kept:\n%s", f)
 	}
-	out := relativize(root, in)
-	if out[0].Lockfile.Path != "web/composer.lock" || out[1].Lockfile.Path != "already/relative.lock" ||
-		out[2].Lockfile.Path != filepath.Join(root, "old.lock") || out[3].Tech != "php" {
-		t.Fatalf("got %+v", out)
+}
+
+func TestCreateFromFolderUnderLoadedConfigRoot(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	cfg, err := config.Load(".")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if in[0].Lockfile.Path == "web/composer.lock" {
-		t.Fatal("the input ops must not change")
+	b := &fake{cfg: cfg, st: seed(t, nil)}
+	repo := filepath.Join(root, "repos", "shop")
+	os.MkdirAll(repo, 0o755)
+	os.WriteFile(filepath.Join(repo, "composer.lock"), []byte(`{"packages":[]}`), 0o644)
+
+	d := start(t, b, Options{})
+	d.press("3", "d")
+	d.typ(repo)
+	d.press("enter")
+	d.want("ok: scanned")
+	for i := 0; i < 10 && !strings.Contains(d.view(), "Save this project?"); i++ {
+		d.press("enter")
+	}
+	d.want("Save this project?", "repos/shop/composer.lock")
+	d.press("y")
+	d.want("ok: created project shop")
+	f := projectFile(t, b, "shop")
+	real, _ := filepath.EvalSymlinks(root)
+	if !strings.Contains(f, "repos/shop/composer.lock") || strings.Contains(f, real) {
+		t.Fatalf("lockfile paths must be saved relative to the config root:\n%s", f)
 	}
 }

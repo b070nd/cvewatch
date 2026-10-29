@@ -32,13 +32,20 @@ type prompt struct {
 	hint   string
 	fields []field
 	idx    int
+	box    *folderBox // pkPath
 
 	change ops.Change     // pkStatus
 	assign ops.Assignment // pkAssign
 }
 
-func (p *prompt) view(w int) []string {
+func (p *prompt) view(w, h int) []string {
 	lines := []string{stBold.Render(trunc(p.title, w))}
+	if p.box != nil {
+		bl := p.box.view(w, h)
+		lines = append(lines, bl[:2]...)
+		lines = append(lines, stMuted.Render(trunc("  "+p.hint, w)))
+		return append(lines, bl[2:]...)
+	}
 	lw := 0
 	for _, f := range p.fields {
 		lw = max(lw, width(f.label))
@@ -108,7 +115,7 @@ func (m *app) startPath() {
 		what = "Scan a folder and merge what it finds into this project"
 	}
 	m.prm = &prompt{kind: pkPath, title: what, hint: "a repository or monorepo folder; nothing in it is executed",
-		fields: []field{{label: "Folder"}}}
+		box: newFolderBox()}
 }
 
 func (m *app) promptKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -117,6 +124,15 @@ func (m *app) promptKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.prm = nil
 		return m, nil
+	}
+	if p.box != nil {
+		if k.String() == "enter" {
+			return m.promptSubmit()
+		}
+		p.box.key(k)
+		return m, nil
+	}
+	switch k.String() {
 	case "tab", "down":
 		p.idx = min(p.idx+1, len(p.fields)-1)
 		return m, nil
@@ -150,7 +166,7 @@ func (m *app) promptSubmit() (tea.Model, tea.Cmd) {
 		m.busy = "saving..."
 		return m, assignCmd(m.b, a)
 	}
-	path := val(0)
+	path := p.box.chosen()
 	if path == "" {
 		m.fail("no folder given")
 		return m, nil
