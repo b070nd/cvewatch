@@ -103,20 +103,21 @@ func TestFolderBoxUpMovesTheHighlightBack(t *testing.T) {
 func TestFolderBoxKeepsTheHomeForm(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	os.MkdirAll(filepath.Join(home, "work", "shop"), 0o755)
 	os.WriteFile(filepath.Join(home, "work", "shop", "go.mod"), []byte("x"), 0o644)
 	t.Chdir(t.TempDir())
 	d := start(t, newFake(t, nil), Options{})
 	d.press("3", "d")
-	d.typ("~/wo")
+	d.typ(filepath.FromSlash("~/wo"))
 	d.press("tab")
-	d.want("Folder: ~/work/▏", "shop")
+	d.want(filepath.FromSlash("Folder: ~/work/▏"), "shop")
 	d.press("down", "tab")
-	d.want("Folder: ~/work/shop/▏")
+	d.want(filepath.FromSlash("Folder: ~/work/shop/▏"))
 	d.send(shiftTab())
-	d.want("Folder: ~/work/▏")
+	d.want(filepath.FromSlash("Folder: ~/work/▏"))
 	d.send(shiftTab())
-	d.want("Folder: ~/▏")
+	d.want(filepath.FromSlash("Folder: ~/▏"))
 }
 
 func TestFolderBoxStatusLine(t *testing.T) {
@@ -204,6 +205,7 @@ func TestFolderBoxPure(t *testing.T) {
 
 func TestParentText(t *testing.T) {
 	t.Setenv("HOME", filepath.Join(pathSep+"home", "me"))
+	t.Setenv("USERPROFILE", filepath.Join(pathSep+"home", "me"))
 	for in, want := range map[string]string{
 		"~/Projects/shop/": "~/Projects/",
 		"~/Projects/sho":   "~/Projects/",

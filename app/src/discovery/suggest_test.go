@@ -55,7 +55,7 @@ func TestSuggestRanking(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
 			makeTree(t, root, tt.folders)
-			_, entries, err := Suggest(root + tt.typed)
+			_, entries, err := Suggest(root + filepath.FromSlash(tt.typed))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -83,7 +83,7 @@ func TestSuggestHiddenAndSkipped(t *testing.T) {
 	})
 	for _, tt := range tests {
 		t.Run(tt.typed, func(t *testing.T) {
-			_, entries, err := Suggest(root + tt.typed)
+			_, entries, err := Suggest(root + filepath.FromSlash(tt.typed))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -106,7 +106,7 @@ func TestSuggestSymlinks(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "note.txt"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, entries, err := Suggest(root + "/")
+	_, entries, err := Suggest(root + string(filepath.Separator))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestSuggestTrailingSeparator(t *testing.T) {
 	makeTree(t, base, map[string][]string{"alpha/sub": nil, "alps": nil})
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parent, entries, err := Suggest(base + tt.typed)
+			parent, entries, err := Suggest(base + filepath.FromSlash(tt.typed))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -168,6 +168,7 @@ func TestSuggestHome(t *testing.T) {
 	home := t.TempDir()
 	makeTree(t, home, map[string][]string{"projects": {"go.mod"}, "Music": nil})
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	tests := []struct {
 		typed     string
 		wantNames []string
@@ -178,7 +179,7 @@ func TestSuggestHome(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.typed, func(t *testing.T) {
-			parent, entries, err := Suggest(tt.typed)
+			parent, entries, err := Suggest(filepath.FromSlash(tt.typed))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -211,7 +212,7 @@ func TestSuggestErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parent, entries, err := Suggest(base + tt.typed)
+			parent, entries, err := Suggest(base + filepath.FromSlash(tt.typed))
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
@@ -238,7 +239,7 @@ func TestSuggestCapsAt200(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	_, entries, err := Suggest(root + "/")
+	_, entries, err := Suggest(root + string(filepath.Separator))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +266,7 @@ func TestSuggestMarksAndScore(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
 			makeTree(t, root, map[string][]string{"svc": tt.marks})
-			_, entries, err := Suggest(root + "/")
+			_, entries, err := Suggest(root + string(filepath.Separator))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -309,7 +310,7 @@ func TestComplete(t *testing.T) {
 			for _, n := range tt.names {
 				entries = append(entries, Entry{Name: n})
 			}
-			if got := Complete(tt.typed, entries); got != tt.want {
+			if got := Complete(filepath.FromSlash(tt.typed), entries); got != filepath.FromSlash(tt.want) {
 				t.Errorf("Complete(%q) = %q, want %q", tt.typed, got, tt.want)
 			}
 		})
