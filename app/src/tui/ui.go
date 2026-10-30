@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/b070nd/cvewatch/app/src/config"
+	"github.com/b070nd/cvewatch/app/src/query"
 )
 
 // Options configure the program.
@@ -102,7 +103,9 @@ type app struct {
 	ret *returnPoint // where the last jump came from
 
 	scope    string       // the project the overview and the findings are narrowed to; empty for all
-	narrowed scopedIssues // the issues of the snapshot in that scope
+	narrowed scopedIssues // the issues of the snapshot in that scope and time filter
+
+	published query.TimeRange // the time filter on the publication date; the zero value is any time
 }
 
 // ---- tea.Model ----

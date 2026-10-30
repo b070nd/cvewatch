@@ -48,7 +48,7 @@ func (m *app) page(scr screen, w int) *textPage {
 		return c.page
 	}
 	if scr == scrStatus {
-		return renderStatus(m.data.Status, m.data.At, w, projectNames(m.data))
+		return renderStatus(m.data.Status, m.data.At, w, projectNames(m.data), m.data.horizonText())
 	}
 	return renderViolations(m.violations(), append(slices.Clone(m.data.Status.Warnings), m.data.Warnings...), w)
 }

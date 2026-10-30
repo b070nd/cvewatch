@@ -184,3 +184,41 @@ func TestFlowHintsForANewProject(t *testing.T) {
 		}
 	}
 }
+
+func TestReplaceTechPutsACatalogNameInPlaceOfATypoAndKeepsTheVersions(t *testing.T) {
+	f := NewFlow(customCatalog(), &model.Project{Name: "svc", Envs: []model.Env{model.EnvProd}, Techs: []model.ProjectTech{{Name: "myssql", Version: "8"}, {Name: "php"}},
+		Environments: map[model.Env]model.EnvConfig{model.EnvProd: {Techs: map[string]string{"myssql": "8.0.1"}}}})
+	if err := f.ReplaceTech("myssql", "mysql"); err != nil {
+		t.Fatal(err)
+	}
+	d := f.Draft().Project
+	if len(d.Techs) != 2 || d.Techs[0].Name != "mysql" || d.Techs[0].Version != "8" {
+		t.Fatalf("techs %+v", d.Techs)
+	}
+	if got := d.Environments[model.EnvProd].Techs; len(got) != 1 || got["mysql"] != "8.0.1" {
+		t.Fatalf("the version per environment follows: %v", got)
+	}
+	if err := f.ReplaceTech("nginx", "mysql"); err == nil {
+		t.Fatal("a technology the project does not have")
+	}
+	if err := f.ReplaceTech("php", "nope"); err == nil {
+		t.Fatal("a name the catalog does not have")
+	}
+	if err := f.ReplaceTech("php", "mysql"); err != nil || len(f.Draft().Project.Techs) != 1 {
+		t.Fatalf("already listed: the typo just goes: %v %+v", err, f.Draft().Project.Techs)
+	}
+}
+
+func TestAddCustomClearsTheProblemOfTheRefusedAnswer(t *testing.T) {
+	f := NewFlow(customCatalog(), nil)
+	toAddTechs(t, f)
+	if err := f.Answer("algolia"); err == nil || f.Current().Problem == "" {
+		t.Fatal("refused with a reason")
+	}
+	if err := f.AddCustom(model.Tech{Name: "algolia"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.Current().Problem; got != "" {
+		t.Fatalf("the reason is stale once the word is added: %q", got)
+	}
+}

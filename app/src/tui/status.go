@@ -9,7 +9,7 @@ import (
 
 // renderStatus lists the health of the tool itself: the daemon, each feed and
 // channel, and the recent cycles.
-func renderStatus(rep status.Report, now time.Time, w int, projects []string) *textPage {
+func renderStatus(rep status.Report, now time.Time, w int, projects []string, horizon string) *textPage {
 	var out []string
 	var rows []pageRow
 	add := func(l ...string) { out = append(out, l...) }
@@ -31,6 +31,9 @@ func renderStatus(rep status.Report, now time.Time, w int, projects []string) *t
 	}
 	if !rep.Daemon.NextRun.IsZero() {
 		add("          next run   " + rep.Daemon.NextRun.UTC().Format("2006-01-02 15:04") + " UTC")
+	}
+	if horizon != "" {
+		add("          alert horizon: " + horizon + " (only vulnerabilities published then are judged and alerted)")
 	}
 	add("")
 

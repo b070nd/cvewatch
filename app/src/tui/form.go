@@ -35,6 +35,8 @@ type form struct {
 	infra map[string]bool // the technologies a scan found only in container or orchestration files, by lowercase name
 	grp   bool            // the technologies step lists the infrastructure apart, after the others
 	split int             // the options before it are the others
+
+	ta *techAssist // the add-techs step: what can be done about the words the catalog did not take
 }
 
 // groupHeads is the most heading lines the technologies step shows in a window.
@@ -56,6 +58,7 @@ func newForm(fl *setup.Flow, creating bool, name string) *form {
 func (f *form) load() {
 	f.step = f.flow.Current()
 	f.regroup()
+	f.ta = nil
 	f.sel = map[string]bool{}
 	f.vp.reset(len(f.step.Options))
 	f.rev.reset(0)
@@ -257,6 +260,7 @@ func (m *app) formAnswer(v string) tea.Cmd {
 	if err := f.flow.Answer(v); err != nil {
 		f.step = f.flow.Current() // carries the problem; the typed answer stays
 		f.regroup()
+		f.buildAssist()
 		return nil
 	}
 	f.touched = true
@@ -328,7 +332,10 @@ func (f *form) frame(w, h int) (head, tail []string, room int) {
 	}
 	head = append(head, "")
 	if st.Problem != "" {
-		tail = append(tail, "", stErr.Render("problem: ")+trunc(oneLine(st.Problem), w-9))
+		// a refused answer can name several words, each with its suggestions
+		ls := clip(indentWrap("problem: ", oneLine(st.Problem), w), 4)
+		tail = append(tail, "", stErr.Render("problem: ")+strings.TrimPrefix(ls[0], "problem: "))
+		tail = append(tail, ls[1:]...)
 	}
 	return head, tail, max(h-len(head)-len(tail), 1)
 }
@@ -361,6 +368,7 @@ func (f *form) view(w, h int) []string {
 	switch st.Kind {
 	case setup.KindText:
 		out = append(out, "> "+f.in.view(w-2, true))
+		out = append(out, f.assistRows(w, room-1)...)
 	case setup.KindChoice, setup.KindMulti:
 		out = append(out, f.optionRows(w, room)...)
 	default:
@@ -452,7 +460,8 @@ func (f *form) reviewBody(w int) []string {
 		body = append(body, stErr.Render("error: ")+trunc(oneLine(f.prevErr), w-7))
 	}
 	if f.prev != nil {
-		body = append(body, previewRows(f.prev, w)...)
+		body = append(body, previewBody(f.prev, w, hintFields(f.prev.Hints))...)
+		body = append(body, hintRows(f.prev.Hints, w)...)
 	}
 	return body
 }
@@ -468,9 +477,23 @@ func (f *form) reviewRows(w, room int) []string {
 	return append(out, "", ask)
 }
 
-func previewRows(p *ops.ProjectPreview, w int) []string {
+func previewRows(p *ops.ProjectPreview, w int) []string { return previewBody(p, w, nil) }
+
+// previewBody is the preview as rows. A warning on a field that skip names is
+// left out: a hint under it says the same with what to do about it.
+func previewBody(p *ops.ProjectPreview, w int, skip map[string]bool) []string {
 	body := diffRows(p.Diff, w)
+	if p.TechsDiff != "" {
+		body = append(body, "", section("config/techs.yaml: your own technologies"))
+		body = append(body, diffRows(p.TechsDiff, w)...)
+	}
+	for _, mv := range p.Moved {
+		body = append(body, stBold.Render(trunc("environment "+oneLine(mv.From)+" becomes "+oneLine(mv.To)+": "+plural(mv.Findings, "finding moves", "findings move")+" with it", w)))
+	}
 	for _, is := range p.Issues {
+		if is.Level != "error" && skip[is.Field] {
+			continue
+		}
 		lvl := stMuted.Render(oneLine(is.Level))
 		if is.Level == "error" {
 			lvl = stErr.Render("error")

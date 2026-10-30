@@ -34,7 +34,18 @@ func onLockRow(m *app) bool {
 
 func canAdd(m *app) bool {
 	_, ed, ok := m.fieldCtx()
-	return ok && (ed.open == fldTechs || ed.open == fldLocks)
+	return ok && (ed.open == fldEnvs || ed.open == fldTechs || ed.open == fldLocks)
+}
+
+func onEnvRow(m *app) bool {
+	_, ed, ok := m.fieldCtx()
+	return ok && ed.open == fldEnvs && onFieldRow(m, false, true)
+}
+
+// envsUnset is whether the open project has no envs in its file.
+func envsUnset(m *app) bool {
+	p, ed, ok := m.fieldCtx()
+	return ok && ed.open == fldEnvs && p.EnvsUnset
 }
 
 func canRemove(m *app) bool { return onFieldRow(m, false, true) }
@@ -45,7 +56,7 @@ func init() {
 		moveShort: "field",
 		click:     func(m *app, x, y int) tea.Cmd { return m.clickField(y) },
 		binds: []binding{
-			{keys: ks("enter", "right", "l"), disp: "enter", help: "change the field: environments and since open an editor, the others open their list", short: "edit", prio: 1, do: plain((*app).fieldOpen)},
+			{keys: ks("enter", "right", "l"), disp: "enter", help: "change the field: since opens an editor, the others open their list", short: "edit", prio: 1, do: plain((*app).fieldOpen)},
 			bindBack("back to the problems of the project", (*app).closeFields),
 			bindJump(), bindRefresh(), bindTabs(), bindHelp(),
 		},
@@ -57,9 +68,12 @@ func init() {
 		click:     func(m *app, x, y int) tea.Cmd { return m.clickField(y) },
 		binds: []binding{
 			{keys: ks("d", "enter"), disp: "enter/d", help: "lockfiles: include or leave out development packages in every environment", short: "toggle dev", prio: 1, when: onLockRow, do: plain((*app).fieldDev)},
-			{keys: ks("enter", "right", "l"), disp: "enter", help: "change the selected item (its version, deployed version or image); on the last row, add one", short: "edit", prio: 1, do: plain((*app).fieldOpen)},
-			{keys: ks("+", "a"), disp: "+", help: "add a technology, or a lockfile by picking its file (the type is taken from its name)", short: "add", prio: 2, when: canAdd, do: plain((*app).fieldAdd)},
-			{keys: ks("-", "x", "delete"), disp: "-", help: "remove the selected item after asking (a deployed version or an image is cleared); x does the same", short: "remove", prio: 2, when: canRemove, do: plain((*app).fieldRemove)},
+			{keys: ks("r"), help: "environments: rename the selected one; its findings, versions, image and lockfiles move with it (enter does the same)", short: "rename", prio: 1, when: onEnvRow, do: plain((*app).fieldRename)},
+			{keys: ks("f"), help: "environments: the file has no envs and the old default counts; write it into the file, or start from local", short: "fix envs", prio: 1, when: envsUnset, do: plain((*app).fieldEnvsFix)},
+			{keys: ks("enter", "right", "l"), disp: "enter", help: "change the selected item (an environment's name, a version, deployed version or image); on the last row, add one", short: "edit", prio: 1, do: plain((*app).fieldOpen)},
+			{keys: ks("+", "a"), disp: "+", help: "add an environment, a technology, or a lockfile by picking its file (the type is taken from its name)", short: "add", prio: 2, when: canAdd, do: plain((*app).fieldAdd)},
+			{keys: ks("-", "x", "delete"), disp: "-", help: "remove the selected item after asking (an environment, a technology, a lockfile; a deployed version or an image is cleared); x does the same", short: "remove", prio: 2, when: canRemove, do: plain((*app).fieldRemove)},
+			{keys: ks("K"), help: "technologies: add one of your own that the catalog does not have, with the keywords advisories are matched on; it is written to techs.yaml and added to the project", short: "own tech", prio: 3, when: canOwnTech, do: plain((*app).fieldOwnTech)},
 			bindBack("back to the list of fields", (*app).closeFieldList),
 			bindJump(), bindRefresh(), bindTabs(), bindHelp(),
 		},

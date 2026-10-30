@@ -437,8 +437,8 @@ func TestProjectsKeysAreTheSameInTheTablesAndTheHelp(t *testing.T) {
 		}
 	}
 	for _, md := range []*mode{mo.fieldSub} {
-		h := strings.Join(helpLines(md, 100), "\n")
-		if !strings.Contains(h, "add a technology, or a lockfile by picking its file") || !strings.Contains(h, "remove the selected item after asking") {
+		h := strings.Join(strings.Fields(strings.Join(helpLines(md, 100), " ")), " ") // the help wraps where it likes
+		if !strings.Contains(h, "add an environment, a technology, or a lockfile by picking its file") || !strings.Contains(h, "remove the selected item after asking") {
 			t.Errorf("%s: help lacks the new keys", md.name)
 		}
 	}

@@ -175,6 +175,19 @@ func (m *app) refitLists() {
 	m.ovw.refit(all)
 }
 
+// noneText is what an empty list says: nothing is open, or nothing in the scope or the time filter.
+func (m *app) noneText() string {
+	switch {
+	case m.scope != "" && !m.published.Any():
+		return "Nothing open in project " + oneLine(m.scope) + " published " + m.published.Label() + ". Press 0 to widen the scope and the time filter."
+	case m.scope != "":
+		return "Nothing open in project " + oneLine(m.scope) + ". Press 0 to see all projects."
+	case !m.published.Any():
+		return "Nothing open published " + m.published.Label() + ". Press t for another period, 0 for any time."
+	}
+	return "Nothing open. No open vulnerabilities to act on."
+}
+
 func (m *app) cycleSeverity() tea.Cmd {
 	l := m.list()
 	l.min = minCycle[(l.min.Rank()+1)%len(minCycle)] // the cycle is in rank order
@@ -260,7 +273,7 @@ func (m *app) findingsBody(w, h int) []string {
 		}
 		return d.view(w, h)
 	}
-	return renderFindings(len(m.dataIssues()), &m.fnd.issueList, m.scope, w, h)
+	return renderFindings(len(m.dataIssues()), &m.fnd.issueList, m.noneText(), w, h)
 }
 
 // projectEnvs summarises where an issue is open, e.g. "shop:dev,prod mw:prod".
@@ -300,8 +313,8 @@ func owners(is query.Issue) string {
 func findingsRoom(h int) int { return max(h-2, 1) }
 
 // renderFindings draws the table: a count line, a header and the rows around
-// the cursor. total is the unfiltered count.
-func renderFindings(total int, st *issueList, scope string, w, h int) []string {
+// the cursor. total is the unfiltered count; none is what to say when nothing is open.
+func renderFindings(total int, st *issueList, none string, w, h int) []string {
 	rows := st.vis
 	info := fmt.Sprintf("%d of %d open issues   min severity: %s", len(rows), total, minLabel(st.min))
 	if n := len(st.sel); n > 0 {
@@ -315,10 +328,7 @@ func renderFindings(total int, st *issueList, scope string, w, h int) []string {
 	}
 	lines := []string{stMuted.Render(trunc(info, w))}
 	if len(rows) == 0 {
-		msg := "Nothing open. No open vulnerabilities to act on."
-		if scope != "" {
-			msg = "Nothing open in project " + oneLine(scope) + ". Press 0 to see all projects."
-		}
+		msg := none
 		if total > 0 {
 			msg = "No issue matches the filter. Press s to lower the severity, / to change the text."
 		}

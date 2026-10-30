@@ -162,23 +162,23 @@ func renderProjects(rows []projectRow, st *projectsState, w, h int) []string {
 	for _, p := range rows {
 		nameW = max(nameW, min(width(oneLine(p.Name)), 24))
 	}
-	const envW, lockW, probW = 22, 9, 13
-	techW := max(w-2-nameW-1-envW-1-lockW-1-probW-1, 10)
-	lines := []string{stHead.Render(trunc("  "+pad("PROJECT", nameW)+" "+pad("ENVIRONMENTS", envW)+" "+pad("LOCKFILES", lockW)+" "+pad("PROBLEMS", probW)+" TECHNOLOGIES", w))}
+	const envW, lockW, probW, hintW = 22, 9, 13, 8
+	techW := max(w-2-nameW-1-envW-1-lockW-1-probW-1-hintW-1, 10)
+	lines := []string{stHead.Render(trunc("  "+pad("PROJECT", nameW)+" "+pad("ENVIRONMENTS", envW)+" "+pad("LOCKFILES", lockW)+" "+pad("PROBLEMS", probW)+" "+pad("HINTS", hintW)+" TECHNOLOGIES", w))}
 
 	detail, room := projectsPanel(rows, st, w, h)
 	start, end := st.proj.window(room)
 	for i := start; i < end; i++ {
 		p := rows[i]
-		envs := "all"
-		if len(p.Envs) > 0 && len(p.Envs) < 4 {
-			envs = strings.Join(p.Envs, ",")
+		envs := orDash(strings.Join(p.Envs, ","))
+		if p.EnvsUnset {
+			envs = "old default"
 		}
 		techs := techList(p)
 		if p.Broken != "" {
 			envs, techs = "-", oneLine(p.Broken)
 		}
-		cells := pad(oneLine(p.Name), nameW) + " " + pad(envs, envW) + " " + pad(fmt.Sprint(len(p.Lockfiles)), lockW) + " " + pad(problemBadge(p), probW) + " " + trunc(techs, techW)
+		cells := pad(oneLine(p.Name), nameW) + " " + pad(envs, envW) + " " + pad(fmt.Sprint(len(p.Lockfiles)), lockW) + " " + pad(problemBadge(p), probW) + " " + pad(hintBadge(p), hintW) + " " + trunc(techs, techW)
 		if i == st.proj.at() {
 			lines = append(lines, stSel.Render(pad("> "+cells, w)))
 		} else {
@@ -254,6 +254,7 @@ func projectDetail(p projectRow, st *projectsState, w, room int, deep bool) []st
 	}
 	if deep {
 		out = append(out, securityLines(&st.sec, w)...)
+		out = append(out, projectHintLines(p, w)...)
 	}
 	return out
 }

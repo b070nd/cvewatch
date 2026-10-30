@@ -49,12 +49,12 @@ func narrow(issues []query.Issue, project string) []query.Issue {
 }
 
 // dataIssues are the issues the lists and counts work on: all of them, or
-// those of the scope.
+// those of the scope and the time filter.
 func (m *app) dataIssues() []query.Issue {
 	switch {
 	case m.data == nil:
 		return nil
-	case m.scope == "":
+	case m.scope == "" && m.published.Any():
 		return m.data.Issues
 	}
 	return m.narrowed
@@ -80,8 +80,12 @@ func (m *app) violations() []priority.Violation {
 // rescope narrows the snapshot again and drops what was drawn from the old one.
 func (m *app) rescope() {
 	m.narrowed = nil
-	if m.scope != "" && m.data != nil {
-		m.narrowed = narrow(m.data.Issues, m.scope)
+	if m.data != nil && (m.scope != "" || !m.published.Any()) {
+		issues := m.data.Issues
+		if m.scope != "" {
+			issues = narrow(issues, m.scope)
+		}
+		m.narrowed = inRange(issues, m.published, m.timeNow())
 	}
 	m.cache[scrOverview] = textCache{}
 	m.refitLists()
@@ -141,12 +145,20 @@ func (m *app) scopeChip() string {
 	return "scope: " + trunc(oneLine(m.scope), 24) + " ×"
 }
 
-// clickChip clears the scope when the click on the breadcrumb line is on the chip.
+// clickChip clears the scope or the time filter when the click on the breadcrumb line is on its chip.
 func (m *app) clickChip(x, w int) bool {
-	chip := m.scopeChip()
-	if chip == "" || w <= width(chip)+12 || x < w-width(chip) || x >= w {
-		return false
+	tchip, chip := m.chips(w)
+	end := w
+	if chip != "" {
+		if x >= w-width(chip) && x < w {
+			m.clearScope()
+			return true
+		}
+		end = w - width(chip) - 1
 	}
-	m.clearScope()
-	return true
+	if tchip != "" && !m.published.Any() && x >= end-width(tchip) && x < end {
+		m.clearTime()
+		return true
+	}
+	return false
 }

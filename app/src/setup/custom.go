@@ -95,6 +95,39 @@ func (f *Flow) AddCustom(t model.Tech) error {
 		return err
 	}
 	f.stage(c)
+	f.problem = "" // what the person was told about the old answer no longer holds
+	return nil
+}
+
+// ReplaceTech puts another catalog technology in the place of one of the
+// draft, for a typo: the version, and the versions per environment, stay.
+func (f *Flow) ReplaceTech(old, with string) error {
+	i := techIndex(f.draft.Techs, old)
+	if i < 0 {
+		return fmt.Errorf("%s is not in the project", old)
+	}
+	t, ok := f.cat.Get(with)
+	if !ok {
+		return fmt.Errorf("%q is not in the catalog", with)
+	}
+	from := f.draft.Techs[i].Name
+	if j := techIndex(f.draft.Techs, t.Name); j >= 0 && j != i {
+		f.draft.Techs = slices.Delete(f.draft.Techs, i, i+1) // already listed: the typo just goes
+	} else {
+		f.draft.Techs[i].Name = t.Name
+	}
+	for _, cfg := range f.draft.Environments {
+		for n, v := range cfg.Techs {
+			if strings.EqualFold(n, from) {
+				delete(cfg.Techs, n)
+				if _, taken := cfg.Techs[t.Name]; !taken {
+					cfg.Techs[t.Name] = v
+				}
+			}
+		}
+	}
+	f.forgetCustom()
+	f.problem = ""
 	return nil
 }
 

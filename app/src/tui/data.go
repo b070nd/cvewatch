@@ -12,6 +12,7 @@ import (
 
 	"github.com/b070nd/cvewatch/app/src/audit"
 	"github.com/b070nd/cvewatch/app/src/catalog"
+	"github.com/b070nd/cvewatch/app/src/config"
 	"github.com/b070nd/cvewatch/app/src/discovery"
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/ops"
@@ -32,7 +33,8 @@ type snapshot struct {
 	Status     status.Report
 	Violations []priority.Violation
 	Projects   []projectRow
-	Warnings   []string // parts that could not be read; the rest is still shown
+	Warnings   []string       // parts that could not be read; the rest is still shown
+	Horizon    config.Horizon // which publication dates the daemon judges and alerts
 }
 
 type projectRow struct {
@@ -41,11 +43,13 @@ type projectRow struct {
 	File     string              // that file
 	Broken   string              // why the file does not load; the row then shows only its name
 	Problems []projectfile.Issue // what is wrong with the file, errors first
+	Hints    []projectfile.Hint  // what may not be covered or cause trouble; not errors
 
 	Written []ops.LockEntry // the lockfiles as the file spells them (the loaded ones have resolved paths), for the editor
 
 	Disabled     bool                          // the file is switched off (<name>.yaml.disabled): listed, not loaded
 	Environments map[model.Env]model.EnvConfig // deployed versions and image per environment
+	EnvsUnset    bool                          // the file has no envs: Envs is the old default
 }
 
 func (p projectRow) counts() (errs, warns int) {
@@ -66,7 +70,7 @@ func loadSnapshot(s *ops.Session) (*snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	sn := &snapshot{At: s.Now(), Root: s.Cfg.Root, Issues: issues}
+	sn := &snapshot{At: s.Now(), Root: s.Cfg.Root, Issues: issues, Horizon: s.Cfg.Horizon}
 	warn := func(what string, err error) { sn.Warnings = append(sn.Warnings, what+": "+oneLine(err.Error())) }
 	if sn.Status, err = s.Status(); err != nil {
 		warn("status", err)
@@ -86,6 +90,14 @@ func loadSnapshot(s *ops.Session) (*snapshot, error) {
 	for _, i := range problems {
 		byProject[i.Project] = append(byProject[i.Project], i)
 	}
+	hints, err := s.ProjectHints("")
+	if err != nil {
+		warn("project hints", err)
+	}
+	hintsOf := map[string][]projectfile.Hint{}
+	for _, h := range hints {
+		hintsOf[h.Project] = append(hintsOf[h.Project], h.Hint)
+	}
 	fileOf := func(name string) string {
 		path, _ := s.ProjectFile(name)
 		return path
@@ -100,7 +112,7 @@ func loadSnapshot(s *ops.Session) (*snapshot, error) {
 		for _, e := range p.EffectiveEnvs() {
 			v.Envs = append(v.Envs, string(e))
 		}
-		row := projectRow{ProjectView: v, HasFile: slices.Contains(files, p.Name), File: fileOf(p.Name), Problems: byProject[p.Name], Environments: p.Environments}
+		row := projectRow{ProjectView: v, HasFile: slices.Contains(files, p.Name), File: fileOf(p.Name), Problems: byProject[p.Name], Hints: hintsOf[p.Name], Environments: p.Environments, EnvsUnset: len(p.Envs) == 0}
 		if row.HasFile {
 			row.Written = writtenLockfiles(row.File)
 		}
@@ -504,7 +516,7 @@ func previewCmd(b Backend, f *form, seq int, name string, flow *setup.Flow) tea.
 	return func() tea.Msg {
 		var p ops.ProjectPreview
 		err := b.Read(func(s *ops.Session) (e error) {
-			p, e = s.EditProject(ops.ProjectChange{Project: name, Ops: projectflow.Edits(s, flow)})
+			p, e = s.EditProject(projectflow.Change(s, flow, false))
 			return e
 		})
 		return previewMsg{f: f, seq: seq, prev: p, err: err}
@@ -516,7 +528,7 @@ func saveCmd(b Backend, f *form, name string, flow *setup.Flow) tea.Cmd {
 	return func() tea.Msg {
 		var p ops.ProjectPreview
 		err := b.Write(func(s *ops.Session) (e error) {
-			p, e = s.EditProject(ops.ProjectChange{Project: name, Ops: projectflow.Edits(s, flow), Save: true})
+			p, e = s.EditProject(projectflow.Change(s, flow, true))
 			return e
 		})
 		return savedMsg{f: f, prev: p, err: err}

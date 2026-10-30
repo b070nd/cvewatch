@@ -6,6 +6,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/b070nd/cvewatch/app/src/model"
+	"github.com/b070nd/cvewatch/app/src/query"
 )
 
 type targetKind uint8
@@ -140,6 +141,11 @@ func (m *app) goTo(t target) tea.Cmd {
 		if i < 0 && !t.open { // the cursor has to land somewhere: show everything
 			m.fnd.text, m.fnd.min = "", model.SevUnknown
 			m.fnd.refit(m.dataIssues())
+			i = m.visibleIssue(t.issue)
+		}
+		if i < 0 && !t.open && !m.published.Any() { // it may be outside the time filter
+			m.published = query.TimeRange{}
+			m.rescope()
 			i = m.visibleIssue(t.issue)
 		}
 		if i >= 0 {
