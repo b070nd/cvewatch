@@ -30,6 +30,8 @@ type target struct {
 	row     string // tgIssue: the environment row to select on the page, as targetID names it
 	project string // tgProject
 	field   string // tgProject: the problem on this field of the project's file
+	deep    bool   // tgProject: inside the project
+	issues  bool   // tgProject: with the focus on its security issues
 	filter  string // tgFindings
 	setting string // tgSetting: its path
 }
@@ -110,7 +112,9 @@ func (m *app) here() (target, bool) {
 		if (m.prj.deep || m.prj.fix != nil) && m.prj.prob.at() < len(p.Problems) {
 			field = p.Problems[m.prj.prob.at()].Field
 		}
-		return projectTarget(p.Name, field), true
+		t := projectTarget(p.Name, field)
+		t.deep, t.issues = m.prj.deep, m.prj.deep && m.prj.sec.focus
+		return t, true
 	default:
 		return target{kind: tgScreen, scr: m.scr}, true
 	}
@@ -167,7 +171,7 @@ func (m *app) goTo(t target) tea.Cmd {
 		before := m.prj.proj.id()
 		m.prj.proj.to(i)
 		m.refitProjects(before)
-		m.prj.deep = false
+		m.prj.deep, m.prj.sec.focus = false, false
 		for j, is := range m.data.Projects[i].Problems {
 			if t.field != "" && is.Field == t.field {
 				m.prj.prob.to(j)
@@ -175,6 +179,10 @@ func (m *app) goTo(t target) tea.Cmd {
 				break
 			}
 		}
+		if t.deep && !m.prj.deep {
+			m.prj.deep, level = true, lvProblem
+		}
+		m.prj.sec.focus = t.issues && m.prj.deep
 	case tgSetting:
 		m.scr = scrSettings
 		m.focusSetting(t.setting)

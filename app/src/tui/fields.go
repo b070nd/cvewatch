@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -33,6 +34,7 @@ type landing struct {
 // landOn puts the screen on l, or on the list when the project is gone.
 func (m *app) landOn(l landing) {
 	m.prj.fix, m.prj.life, m.prj.ed, m.prj.deep = nil, nil, nil, false
+	m.prj.sec.focus = false
 	for i, p := range m.data.Projects {
 		if p.Name == l.project {
 			before := m.prj.proj.id()
@@ -76,10 +78,10 @@ var fieldHeads = map[string][]string{
 
 var fieldHints = map[string]string{
 	"":          "enter changes a field or opens its list; every change is previewed before it is saved",
-	fldTechs:    "enter changes the version, a adds a technology, x removes it",
-	fldLocks:    "enter or d toggles dev (development packages count in every environment), a adds a lockfile, x removes it",
-	fldVersions: "enter sets the version deployed in that environment (empty removes it), x removes the override",
-	fldImages:   "enter sets the image tag or digest of the environment (empty clears it), x clears it",
+	fldTechs:    "enter changes the version, + adds a technology, - or x removes it (after asking)",
+	fldLocks:    "enter or d toggles dev (development packages count in every environment), + adds a lockfile by its file, - or x removes it (after asking)",
+	fldVersions: "enter sets the version deployed in that environment (empty removes it), - or x removes the override",
+	fldImages:   "enter sets the image tag or digest of the environment (empty clears it), - or x clears it",
 }
 
 // fieldRow is one row of the field list or of the list inside a field.
@@ -409,7 +411,7 @@ func (m *app) fieldOpen() tea.Cmd {
 		}
 	case fldLocks:
 		if row.add {
-			m.pickLockType(p)
+			m.startLockPath(p.Name)
 		} else {
 			return m.fieldDev()
 		}
@@ -430,7 +432,7 @@ func (m *app) fieldAdd() tea.Cmd {
 	case fldTechs:
 		m.promptAddTech(p)
 	case fldLocks:
-		m.pickLockType(p)
+		m.startLockPath(p.Name)
 	}
 	return nil
 }
@@ -465,21 +467,28 @@ func (m *app) fieldRemove() tea.Cmd {
 		m.fail("nothing to remove here")
 		return nil
 	}
-	var label string
+	var label, ask string
 	var op projectfile.Op
 	switch ed.open {
 	case fldTechs:
 		label, op = "remove technology "+oneLine(row.tech), projectfile.Op{Kind: "remove_tech", Tech: row.tech}
+		ask = "Remove technology " + oneLine(row.tech) + " from " + oneLine(p.Name) + "?"
 	case fldLocks:
 		label, op = "remove lockfile "+oneLine(row.lock.Path), projectfile.Op{Kind: "remove_lockfile", Lockfile: row.lock}
+		ask = "Remove lockfile " + oneLine(row.lock.Path) + " from " + oneLine(p.Name) + "?"
 	case fldVersions:
 		label, op = fmt.Sprintf("remove the %s version of %s", row.env, oneLine(row.tech)), projectfile.Op{Kind: "remove_env_tech", Env: row.env, Tech: row.tech}
+		ask = fmt.Sprintf("Remove the %s version of %s from %s?", row.env, oneLine(row.tech), oneLine(p.Name))
 	case fldImages:
 		label, op = fmt.Sprintf("clear the %s image", row.env), projectfile.Op{Kind: "set_image", Env: row.env}
+		ask = fmt.Sprintf("Clear the %s image of %s?", row.env, oneLine(p.Name))
 	default:
 		return nil
 	}
-	return m.previewEdit(p.Name, p.Problems, label, []projectfile.Op{op}, "", nil)
+	m.cfm = &confirm{ask: ask, yes: func(m *app) tea.Cmd {
+		return m.previewEdit(p.Name, p.Problems, label, []projectfile.Op{op}, "", nil)
+	}}
+	return nil
 }
 
 // ---- the editors ----
@@ -582,35 +591,88 @@ func (m *app) pickEnvs(p projectRow) {
 	m.openPicker(pk)
 }
 
-// pickLockType asks for the type of a new lockfile, then for its path.
-func (m *app) pickLockType(p projectRow) {
-	pk := &picker{title: "Type of the new lockfile", hint: "the format decides how the file is read", crumb: "add lockfile"}
+// lockPicked takes the file chosen in the lockfile box: its type comes from
+// its name, and a name that tells nothing asks for the type.
+func (m *app) lockPicked(p *prompt) tea.Cmd {
+	typed := p.box.chosen()
+	refuse := func(why string) tea.Cmd { p.problem = why; return nil }
+	if typed == "" {
+		return refuse("no lockfile given: type the path of a lockfile")
+	}
+	abs, err := expandTyped(typed)
+	if err != nil {
+		return refuse(oneLine(err.Error()))
+	}
+	switch fi, err := os.Stat(abs); {
+	case err != nil:
+		return refuse("no such file: " + oneLine(typed))
+	case fi.IsDir():
+		return refuse("that is a folder, not a lockfile: tab opens it, then pick a lockfile")
+	case !fi.Mode().IsRegular():
+		return refuse("that is not a file")
+	}
+	m.prm = nil
+	if typ, ok := matrix.DetectType(filepath.Base(abs)); ok {
+		return m.lockTyped(p.project, abs, typ)
+	}
+	pk := &picker{title: "Type of " + oneLine(filepath.Base(abs)), hint: "the name does not tell the format, and the format decides how the file is read", crumb: "lockfile type"}
 	for _, t := range matrix.Types() {
 		pk.items = append(pk.items, pickItem{value: t, label: t})
 	}
 	pk.done = func(m *app, vals []string) tea.Cmd {
-		typ := vals[0]
-		m.editPrompt(p, "Add a "+typ+" lockfile to "+p.Name,
-			"path relative to the config folder; env empty means every environment; dev is yes or no",
-			[]field{{label: "Path"}, {label: "Env"}, {label: "Dev"}},
-			func(v []string) (string, []projectfile.Op, error) {
-				if v[0] == "" {
-					return "", nil, errors.New("give the path of the lockfile")
-				}
-				dev := false
-				switch strings.ToLower(v[2]) {
-				case "", "n", "no", "false":
-				case "y", "yes", "true":
-					dev = true
-				default:
-					return "", nil, errors.New("dev is yes or no")
-				}
-				l := model.Lockfile{Type: typ, Path: filepath.ToSlash(v[0]), Env: model.Env(v[1]), Dev: dev}
-				return "add " + typ + " lockfile " + l.Path, []projectfile.Op{{Kind: "add_lockfile", Lockfile: l}}, nil
-			})
+		m.chs = nil
+		return m.lockTyped(p.project, abs, vals[0])
+	}
+	m.choose(pk)
+	return nil
+}
+
+// lockTyped adds the lockfile to the project being set up, or asks for the
+// environment and the dev flag of one added to a project file.
+func (m *app) lockTyped(project, abs, typ string) tea.Cmd {
+	if project == "" {
+		return m.addFormLock(typ, abs)
+	}
+	p, ok := m.selectedProject()
+	if !ok || p.Name != project || m.data == nil {
 		return nil
 	}
-	m.openPicker(pk)
+	path := relPath(m.data.Root, abs)
+	m.editPrompt(p, "Add a "+typ+" lockfile to "+p.Name,
+		path+": env empty means every environment; dev is yes or no",
+		[]field{{label: "Env"}, {label: "Dev"}},
+		func(v []string) (string, []projectfile.Op, error) {
+			dev := false
+			switch strings.ToLower(v[1]) {
+			case "", "n", "no", "false":
+			case "y", "yes", "true":
+				dev = true
+			default:
+				return "", nil, errors.New("dev is yes or no")
+			}
+			l := model.Lockfile{Type: typ, Path: path, Env: model.Env(v[0]), Dev: dev}
+			return "add " + typ + " lockfile " + l.Path, []projectfile.Op{{Kind: "add_lockfile", Lockfile: l}}, nil
+		})
+	return nil
+}
+
+// relPath spells a file as the project file does: relative to the config folder.
+func relPath(root, p string) string {
+	real := func(s string) string {
+		if r, err := filepath.EvalSymlinks(s); err == nil {
+			return r
+		}
+		return s
+	}
+	r, err := filepath.Abs(root)
+	if err != nil {
+		return filepath.ToSlash(p)
+	}
+	rel, err := filepath.Rel(real(r), real(p))
+	if err != nil {
+		return filepath.ToSlash(p)
+	}
+	return filepath.ToSlash(rel)
 }
 
 func (m *app) openPicker(pk *picker) {

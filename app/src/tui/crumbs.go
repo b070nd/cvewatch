@@ -27,6 +27,9 @@ func (m *app) crumbs() []crumb {
 	if f := screens[m.scr].crumbs; f != nil {
 		cs = f(m, cs)
 	}
+	if pk := m.chs; pk != nil && pk.crumb != "" {
+		cs = append(cs, crumb{label: pk.crumb})
+	}
 	return cs
 }
 
@@ -165,11 +168,13 @@ func (m *app) projectCrumbs(cs []crumb) []crumb {
 	if !ok {
 		return cs
 	}
-	cs[0].back = popTo(func(m *app) { m.prj.deep, m.prj.fix, m.prj.life, m.prj.ed = false, nil, nil, nil })
+	cs[0].back = popTo(func(m *app) {
+		m.prj.deep, m.prj.fix, m.prj.life, m.prj.ed, m.prj.sec.focus = false, nil, nil, nil, false
+	})
 	level := func(label string, to func(m *app)) {
 		cs = append(cs, crumb{label: label, back: popTo(func(m *app) { m.prj.fix, m.prj.life = nil, nil; to(m) })})
 	}
-	level(oneLine(p.Name), func(m *app) { m.prj.deep, m.prj.ed = true, nil })
+	level(oneLine(p.Name), func(m *app) { m.prj.deep, m.prj.ed, m.prj.sec.focus = true, nil, false })
 	fx := m.prj.fix
 	switch ed := m.prj.ed; {
 	case ed != nil:
@@ -198,6 +203,8 @@ func (m *app) projectCrumbs(cs []crumb) []crumb {
 		}
 	case m.prj.life != nil:
 	case fx != nil && fx.edit:
+	case m.prj.sec.focus:
+		level("security issues", func(*app) {})
 	case len(p.Problems) > 0 && m.prj.prob.at() < len(p.Problems):
 		level("problem: "+oneLine(p.Problems[m.prj.prob.at()].Message), func(m *app) { m.prj.deep = true })
 	}

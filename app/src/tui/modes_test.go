@@ -133,6 +133,9 @@ func TestFootersFitInEveryLiveState(t *testing.T) {
 
 func crumbOf(d *driver) string {
 	line := strings.Split(d.view(), "\n")[1]
+	if i := strings.LastIndex(line, " scope: "); i >= 0 { // the chip of the scope sits at the right end
+		line = line[:i]
+	}
 	return strings.TrimSpace(strings.TrimRight(line, "─ "))
 }
 

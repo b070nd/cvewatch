@@ -95,6 +95,7 @@ type app struct {
 	set settingsState
 	frm *form
 	prm *prompt
+	chs *picker // a list to choose from, over the screen
 	cfm *confirm
 	jmp *jumpBox
 	nt  *notice
@@ -254,6 +255,7 @@ func (m *app) flowStarted(msg flowMsg) outcome {
 	}
 	m.scr = scrProjects
 	m.frm = newForm(msg.flow, msg.creating, msg.name)
+	m.frm.infra = msg.infra
 	return outcome{note: msg.note, then: m.frm.enter(m)}
 }
 
@@ -266,6 +268,14 @@ func (m *app) scanned(msg scanMsg) outcome {
 	}
 	m.frm.flow.UseDiscovery(msg.res.Root, msg.res)
 	m.frm.touched = true
+	if inf := infraOf(msg.res); len(inf) > 0 {
+		if m.frm.infra == nil {
+			m.frm.infra = map[string]bool{}
+		}
+		for k := range inf {
+			m.frm.infra[k] = true
+		}
+	}
 	m.frm.load()
 	return outcome{note: scanNote(msg.res), then: m.frm.enter(m)}
 }
@@ -348,6 +358,9 @@ func (m *app) layout() {
 	default:
 		screens[m.scr].layout(m, w, h)
 	}
+	if m.chs != nil {
+		m.chs.vp.fit(max(h-pickHead-2, 1))
+	}
 	if m.jmp != nil {
 		_, th := m.size()
 		m.jmp.vp.fit(jumpRows(th))
@@ -368,6 +381,8 @@ func (m *app) View() string {
 		lines := m.helpText(w)
 		start, end := m.helpVP.window(bodyH)
 		body = lines[min(start, len(lines)):min(end, len(lines))]
+	case m.chs != nil:
+		body = m.chs.view(w, bodyH)
 	case m.frm != nil:
 		body = m.frm.view(w, bodyH)
 	default:

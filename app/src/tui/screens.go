@@ -116,6 +116,9 @@ func init() {
 		s := []*mode{mo.projects}
 		if m.prj.deep {
 			s = append(s, mo.project)
+			if m.prj.sec.focus && m.prj.ed == nil {
+				s = append(s, mo.projectIssues)
+			}
 			if ed := m.prj.ed; ed != nil {
 				if ed.open == "" {
 					s = append(s, mo.fields)
@@ -150,11 +153,16 @@ func init() {
 			return ed.view(p, w, h)
 		}
 		if p, ok := m.selectedProject(); ok && m.prj.deep {
+			if m.prj.sec.focus {
+				return securityPage(p, &m.prj.sec, w, h)
+			}
 			return projectDetail(p, &m.prj, w, deepRoom(h), true)
 		}
 		return renderProjects(m.data.Projects, &m.prj, w, h)
 	}
 	p.layout = func(m *app, w, h int) {
+		m.syncSecurity()
+		m.prj.sec.vp.fit(max(h-secHead-1, 1))
 		switch {
 		case m.prj.fix != nil:
 			m.prj.fix.layout(w, h)

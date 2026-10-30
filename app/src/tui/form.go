@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/b070nd/cvewatch/app/src/discovery"
 	"github.com/b070nd/cvewatch/app/src/ops"
 	"github.com/b070nd/cvewatch/app/src/setup"
 )
@@ -29,7 +31,14 @@ type form struct {
 	saving  bool
 	touched bool         // an answer was given, so leaving loses something
 	pick    *sectionPick // the review is choosing a step to go back to
+
+	infra map[string]bool // the technologies a scan found only in container or orchestration files, by lowercase name
+	grp   bool            // the technologies step lists the infrastructure apart, after the others
+	split int             // the options before it are the others
 }
+
+// groupHeads is the most heading lines the technologies step shows in a window.
+const groupHeads = 2
 
 // sectionPick is the list of steps the review can go back to.
 type sectionPick struct {
@@ -46,6 +55,7 @@ func newForm(fl *setup.Flow, creating bool, name string) *form {
 // load shows the flow's current step with the flow's own defaults.
 func (f *form) load() {
 	f.step = f.flow.Current()
+	f.regroup()
 	f.sel = map[string]bool{}
 	f.vp.reset(len(f.step.Options))
 	f.rev.reset(0)
@@ -68,6 +78,35 @@ func (f *form) load() {
 	if f.step.ID != "review" {
 		f.prev, f.prevErr = nil, ""
 	}
+}
+
+// regroup puts the infrastructure technologies after the others on the technologies step.
+func (f *form) regroup() {
+	f.grp, f.split = false, 0
+	if f.step.ID != "techs" || len(f.infra) == 0 {
+		return
+	}
+	var apps, infra []setup.Option
+	for _, o := range f.step.Options {
+		if f.infra[strings.ToLower(o.Value)] {
+			infra = append(infra, o)
+		} else {
+			apps = append(apps, o)
+		}
+	}
+	if len(infra) == 0 {
+		return
+	}
+	f.step.Options = append(apps, infra...)
+	f.grp, f.split = true, len(apps)
+}
+
+// reserve is the rows of the list that the headings of its groups take.
+func (f *form) reserve() int {
+	if f.grp {
+		return groupHeads
+	}
+	return 0
 }
 
 // enter starts what a freshly shown step needs: on the review step, the
@@ -192,8 +231,11 @@ func (f *form) pickRows(w, room int) []string {
 func (m *app) clickOption(line int) tea.Cmd {
 	f := m.frm
 	w, _ := m.size()
-	head, _, _ := f.frame(w, m.bodyH())
-	i := rowAt(&f.vp, line-len(head))
+	head, _, room := f.frame(w, m.bodyH())
+	i := -1
+	if _, lines := f.optionLines(room); line-len(head) >= 0 && line-len(head) < len(lines) {
+		i = lines[line-len(head)]
+	}
 	switch {
 	case i < 0:
 		return nil
@@ -214,6 +256,7 @@ func (m *app) formAnswer(v string) tea.Cmd {
 	f := m.frm
 	if err := f.flow.Answer(v); err != nil {
 		f.step = f.flow.Current() // carries the problem; the typed answer stays
+		f.regroup()
 		return nil
 	}
 	f.touched = true
@@ -298,7 +341,7 @@ func (f *form) layout(w, h int) {
 	}
 	switch f.step.Kind {
 	case setup.KindChoice, setup.KindMulti:
-		f.vp.fit(room)
+		f.vp.fit(room - f.reserve())
 	default:
 		if f.step.ID == "review" {
 			f.rev.refit(len(f.reviewBody(w)), nil)
@@ -330,15 +373,34 @@ func (f *form) view(w, h int) []string {
 	return append(out, tail...)
 }
 
+// optionLines is the window of options that fit in room lines and what each
+// line of it shows: the index of an option, or -1 for the heading of a group.
+func (f *form) optionLines(room int) (start int, lines []int) {
+	start, end := f.vp.window(max(room-f.reserve(), 1))
+	for i := start; i < end; i++ {
+		if f.grp && (i == start || i == f.split) {
+			lines = append(lines, -1)
+		}
+		lines = append(lines, i)
+	}
+	return start, lines
+}
+
 func (f *form) optionRows(w, room int) []string {
 	opts := f.step.Options
 	if len(opts) == 0 {
 		return []string{stMuted.Render("  nothing to choose here; press enter to continue")}
 	}
-	start, end := f.vp.window(room)
+	_, lines := f.optionLines(room)
 	var out []string
-	for i := start; i < end; i++ {
+	for _, i := range lines {
+		if i < 0 {
+			continue
+		}
 		o := opts[i]
+		if f.grp && (i == f.split || len(out) == 0) {
+			out = append(out, section(trunc(groupName(i >= f.split), w)))
+		}
 		mark := "  "
 		if i == f.vp.at() {
 			mark = "> "
@@ -369,6 +431,13 @@ func (f *form) optionRows(w, room int) []string {
 		out = append(out, line)
 	}
 	return out
+}
+
+func groupName(infra bool) string {
+	if infra {
+		return "Infrastructure"
+	}
+	return "Technologies"
 }
 
 func (f *form) reviewBody(w int) []string {
@@ -433,4 +502,69 @@ func diffRows(diff string, w int) []string {
 		body = append(body, l)
 	}
 	return body
+}
+
+// ---- lockfiles of the project being set up ----
+
+func onLockStep(m *app) bool { return m.frm != nil && m.frm.step.ID == "lockfiles" }
+
+// onLockStepOrReview is where + adds a lockfile.
+func onLockStepOrReview(m *app) bool {
+	return m.frm != nil && (m.frm.step.ID == "lockfiles" || m.frm.step.ID == "review")
+}
+
+func (m *app) formLockPrompt() tea.Cmd {
+	m.startLockPath("")
+	return nil
+}
+
+// addFormLock puts a lockfile into the draft of the flow, as if the scan had found it.
+func (m *app) addFormLock(typ, abs string) tea.Cmd {
+	f := m.frm
+	if f == nil || f.waiting() || f.saving { // a preview or save is reading the flow right now
+		m.fail("the preview is still loading: add the lockfile again in a moment")
+		return nil
+	}
+	ticked := map[string]bool{}
+	if f.step.ID == "lockfiles" {
+		for _, o := range f.step.Options {
+			ticked[o.Label] = f.sel[o.Value]
+		}
+	}
+	f.flow.UseDiscovery(f.flow.Draft().Dir, discovery.Result{Lockfiles: []discovery.LockProposal{{Type: typ, Path: abs}}})
+	f.touched = true
+	f.load()
+	if f.step.ID == "lockfiles" {
+		for i, o := range f.step.Options {
+			if on, ok := ticked[o.Label]; ok { // the ticks the user set stay; the new one is ticked
+				f.sel[o.Value] = on
+			}
+			if strings.Contains(o.Label, filepath.Base(abs)) {
+				f.vp.to(i)
+			}
+		}
+	}
+	m.say("added " + typ + " lockfile " + oneLine(filepath.Base(abs)))
+	return f.enter(m)
+}
+
+// formRemoveLock is - on the lockfiles step: after a question, the lockfile is left out of the project.
+func (m *app) formRemoveLock() tea.Cmd {
+	f := m.frm
+	if len(f.step.Options) == 0 {
+		return nil
+	}
+	o := f.step.Options[f.vp.at()]
+	if !f.sel[o.Value] {
+		m.fail(oneLine(o.Label) + " is not in the project")
+		return nil
+	}
+	m.cfm = &confirm{ask: "Remove lockfile " + oneLine(o.Label) + " from the project?", yes: func(m *app) tea.Cmd {
+		if m.frm == f {
+			f.sel[o.Value] = false
+			m.say("left out " + oneLine(o.Label))
+		}
+		return nil
+	}}
+	return nil
 }

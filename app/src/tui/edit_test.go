@@ -19,6 +19,9 @@ const (
 
 // diskFake is a backend whose configuration is read from files on every
 // session, like the real one, so a change made on disk is seen by the next call.
+// dropFile as the content of a default file leaves that file out.
+const dropFile = "\x00drop"
+
 func diskFake(t *testing.T, files map[string]string) (*fake, string) {
 	t.Helper()
 	root := t.TempDir()
@@ -27,6 +30,10 @@ func diskFake(t *testing.T, files map[string]string) (*fake, string) {
 		"repos/shop/composer.lock": `{"packages":[]}`, "repos/other/composer.lock": `{"packages":[]}`,
 	}
 	for k, v := range files {
+		if v == dropFile {
+			delete(all, k)
+			continue
+		}
 		all[k] = v
 	}
 	for rel, body := range all {
@@ -155,6 +162,8 @@ func TestFieldEditorEditsEveryKindOfFieldAndKeepsComments(t *testing.T) {
 	d.press("enter")
 	save("add technology nodejs 20", "set_tech")
 	d.press("down", "x") // nginx
+	d.want("Remove technology nginx from shop?")
+	d.press("y")
 	d.want("remove technology nginx", "- {name: nginx}")
 	save("remove technology nginx", "remove_tech")
 	if strings.Contains(fileAt(t, root, "config/projects/shop.yaml"), "nginx") {
@@ -172,12 +181,13 @@ func TestFieldEditorEditsEveryKindOfFieldAndKeepsComments(t *testing.T) {
 	d.want("dev")
 	d.press("d")
 	save("mark lockfile repos/shop/composer.lock as not dev", "set_lockfile_dev")
-	d.press("a")
-	d.want("Type of the new lockfile", "> composer")
+	d.press("+")
+	d.want("Add a lockfile to shop", "Lockfile:")
+	d.typ(filepath.Join(root, "repos", "other", "composer.lock"))
+	d.want("a composer lockfile")
 	d.press("enter")
-	d.want("Add a composer lockfile to shop", "Path", "Env", "Dev")
-	d.typ(filepath.FromSlash("repos/other/composer.lock"))
-	d.press("tab")
+	d.want("Add a composer lockfile to shop", "Env", "Dev")
+	d.wantNot("Path")
 	d.typ("prod")
 	d.press("tab")
 	d.typ("yes")
@@ -187,7 +197,9 @@ func TestFieldEditorEditsEveryKindOfFieldAndKeepsComments(t *testing.T) {
 	if got := fileAt(t, root, "config/projects/shop.yaml"); !strings.Contains(got, "repos/other/composer.lock") || !strings.Contains(got, "dev: true") {
 		t.Fatalf("lockfile:\n%s", got)
 	}
-	d.press("down", "x")
+	d.press("down", "-")
+	d.want("Remove lockfile repos/other/composer.lock from shop?")
+	d.press("y")
 	d.want("remove lockfile repos/other/composer.lock")
 	save("remove lockfile repos/other/composer.lock", "remove_lockfile")
 
@@ -202,6 +214,8 @@ func TestFieldEditorEditsEveryKindOfFieldAndKeepsComments(t *testing.T) {
 	d.press("enter")
 	save("set php in dev to 8.1.1", "set_env_tech")
 	d.press("down", "down", "down", "down", "x") // prod php
+	d.want("Remove the prod version of php from shop?")
+	d.press("y")
 	d.want("remove the prod version of php")
 	save("remove the prod version of php", "remove_env_tech")
 	d.press("home", "down", "enter") // an empty answer where nothing is set is refused
@@ -220,6 +234,8 @@ func TestFieldEditorEditsEveryKindOfFieldAndKeepsComments(t *testing.T) {
 	d.press("enter")
 	save("set the prod image to reg/shop:2", "set_image")
 	d.press("x")
+	d.want("Clear the prod image of shop?")
+	d.press("y")
 	d.want("clear the prod image")
 	save("clear the prod image", "set_image")
 	if strings.Contains(fileAt(t, root, "config/projects/shop.yaml"), "reg/shop") {
@@ -277,22 +293,21 @@ func TestEditRejectionKeepsTheTypedText(t *testing.T) {
 	// an environment that does not exist is refused by the project file edit, text kept
 	d.press("esc")
 	d.toField(2)
-	d.press("enter", "a", "enter")
-	d.typ("repos/other/composer.lock")
-	d.press("tab")
+	other := filepath.Join(root, "repos", "other", "composer.lock")
+	d.press("enter", "+")
+	d.typ(other)
+	d.press("enter")
 	d.typ("qa")
 	d.press("enter", "enter")
-	d.want("problem:", "invalid lockfile env", "Add a composer lockfile to shop", "repos/other/composer.lock", "qa")
+	d.want("problem:", "invalid lockfile env", "Add a composer lockfile to shop", "qa")
 	d.wantNot("Save this change?")
-	d.press("esc")
-	d.want("Type of the new lockfile")
 	d.press("esc")
 	d.want("TYPE", "+ add a lockfile")
 
 	// a dev answer that is neither yes nor no
-	d.press("a", "enter")
-	d.typ("repos/other/composer.lock")
-	d.press("tab", "tab")
+	d.press("+")
+	d.typ(other)
+	d.press("enter", "tab")
 	d.typ("maybe")
 	d.press("enter")
 	d.want("problem: dev is yes or no", "maybe")
@@ -307,16 +322,18 @@ func TestEditPreviewCanBeCancelledAndNothingIsWritten(t *testing.T) {
 	d.press("3", "down", "c")
 	d.toField(1)
 	d.press("enter", "x")
+	d.want("Remove technology php from shop?")
+	d.press("y")
 	d.want("remove technology php", "Save this change?")
 	d.press("esc")
 	d.want("cancelled, nothing was saved", "TECHNOLOGY", "> php")
-	d.press("x")
+	d.press("x", "y")
 	d.press("q") // q works like esc in a preview
 	d.wantNot("Save this change?")
 	if b.writes != 0 || fileAt(t, root, "config/projects/shop.yaml") != editShop {
 		t.Fatal("cancelling wrote something")
 	}
-	d.press("x")
+	d.press("x", "y")
 	d.press("y")
 	d.want("ok: saved shop: remove technology php")
 	if strings.Contains(fileAt(t, root, "config/projects/shop.yaml"), "name: php") {
@@ -348,7 +365,7 @@ func TestFieldEditorBreadcrumbAndBack(t *testing.T) {
 	if got := crumbOf(d); got != "Projects › shop › Technologies › add a technology" {
 		t.Errorf("add row: %q", got)
 	}
-	d.press("up", "up", "x")
+	d.press("up", "up", "x", "y")
 	if got := crumbOf(d); got != "Projects › shop › Technologies › php › review" {
 		t.Errorf("review: %q", got)
 	}
@@ -466,11 +483,11 @@ func TestFieldEditorFootersAndHelp(t *testing.T) {
 	if f := foot(); !strings.Contains(f, "c fields") {
 		t.Errorf("projects footer: %q", f)
 	}
-	d.want("c edit fields", "R rename", "D duplicate", "Z disable", "X delete")
+	d.want("+ add", "- remove", "c edit fields", "R rename", "D duplicate", "Z disable")
 	d.press("?")
-	d.want("rename the project", "new empty project")
+	d.want("add a project: from a folder")
 	all := strings.Join(helpLines(mo.projects, 80), "\n")
-	for _, w := range []string{"duplicate the project", "delete the project", "disable the project"} {
+	for _, w := range []string{"duplicate the project", "remove the project", "disable the project"} {
 		if !strings.Contains(all, w) {
 			t.Errorf("help lacks %q", w)
 		}
@@ -483,12 +500,12 @@ func TestFieldEditorFootersAndHelp(t *testing.T) {
 	d.press("?")
 	d.want("Keys in the fields of a project", "change the field", "back to the problems")
 	d.press("?", "down", "down", "enter")
-	if f := foot(); !strings.Contains(f, "toggle dev") || !strings.Contains(f, "a add") || width(f) > 80 {
+	if f := foot(); !strings.Contains(f, "toggle dev") || !strings.Contains(f, "+ add") || width(f) > 80 {
 		t.Errorf("lockfile list footer: %q", f)
 	}
 	d.press("?")
 	d.want("Keys in the list of a field", "include or leave out development packages")
-	d.press("?", "a")
+	d.press("?", "esc", "home", "enter")
 	if f := foot(); !strings.Contains(f, "choose") {
 		t.Errorf("picker footer: %q", f)
 	}

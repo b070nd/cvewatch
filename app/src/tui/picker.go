@@ -70,6 +70,9 @@ func (pk *picker) view(w, h int) []string {
 
 // pickerOf is the open picker, nil when there is none.
 func (m *app) pickerOf() *picker {
+	if m.chs != nil {
+		return m.chs
+	}
 	if m.scr == scrSettings {
 		return m.set.pick
 	}
@@ -130,6 +133,10 @@ func (m *app) clickPicker(line int) tea.Cmd {
 }
 
 func (m *app) pickBack() tea.Cmd {
+	if m.chs != nil {
+		m.chs = nil
+		return nil
+	}
 	if m.scr == scrSettings {
 		m.set.pick = nil
 		return nil
@@ -139,3 +146,32 @@ func (m *app) pickBack() tea.Cmd {
 }
 
 func isMultiPick(m *app) bool { pk := m.pickerOf(); return pk != nil && pk.multi }
+
+// choose opens a list to choose from over the screen, whichever it is.
+func (m *app) choose(pk *picker) {
+	pk.vp.reset(len(pk.items))
+	m.chs = pk
+}
+
+// addChooser is + on the projects: where the new project comes from.
+func (m *app) addChooser() tea.Cmd {
+	m.choose(&picker{title: "Add a project", hint: "enter chooses, esc cancels; nothing is written until you save the project", crumb: "add project",
+		items: []pickItem{
+			{value: "folder", label: "From a folder", detail: "scan a repository or monorepo folder for technologies and lockfiles"},
+			{value: "file", label: "From a Dockerfile or compose file", detail: "its base images, services and packages become the infrastructure of the project"},
+			{value: "empty", label: "Empty project", detail: "a name and its environments; add the rest later"},
+		},
+		done: func(m *app, vals []string) tea.Cmd {
+			m.chs = nil
+			switch vals[0] {
+			case "folder":
+				m.startPath()
+			case "file":
+				m.startFilePath()
+			default:
+				return m.newProject()
+			}
+			return nil
+		}})
+	return nil
+}

@@ -79,8 +79,11 @@ func TestProjectGoesToItsFindingsFiltered(t *testing.T) {
 	d.press("esc") // a filter typed afterwards is cleared first
 	d.wantNot("filter:")
 	d.want("[2 Findings (3)]")
-	d.press("esc")
-	d.want("[3 Projects]", "> shop")
+	d.press("esc") // back inside the project it came from
+	d.want("[3 Projects]")
+	if got := crumbOf(d); got != "Projects › shop" {
+		t.Fatalf("crumb %q", got)
+	}
 }
 
 func TestOverviewViolationsAreSelectableAndOpenTheirIssue(t *testing.T) {

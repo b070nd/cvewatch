@@ -15,7 +15,7 @@ var mo struct {
 	formText, formChoice, formMulti, formConfirm, formReview, formBusy         *mode
 	prompt, promptBusy, folder, confirm, help, doc                             *mode
 	jump, notice, formPick, violations                                         *mode
-	fields, fieldSub, picker, life                                             *mode
+	fields, fieldSub, picker, life, projectIssues                              *mode
 	settings, setFields, setFilter, setReview                                  *mode
 }
 
@@ -232,19 +232,21 @@ func init() {
 		},
 		click: func(m *app, x, y int) tea.Cmd { return m.clickProject(y - 1) },
 		binds: rootBinds(
-			binding{keys: ks("enter"), help: "open the project: its problems, each with its fix", short: "open", prio: 1, do: plain((*app).enterProject)},
+			binding{keys: ks("enter"), help: "open the project: its problems and its security issues; the overview and the findings show only this project until 0 clears it", short: "open", prio: 1, do: plain((*app).enterProject)},
 			binding{keys: ks("c"), help: "open the project's fields: environments, technologies, lockfiles, versions, images, since", short: "fields", prio: 1, do: plain((*app).openFields)},
 			binding{keys: ks("e"), help: "edit the project step by step in a guided form (to change one field directly, press c)", short: "guided edit", prio: 3, do: plain((*app).editProject)},
-			binding{keys: ks("a", "n"), disp: "a", help: "add a project with the guided form", short: "add", prio: 2, do: plain((*app).addProject)},
-			binding{keys: ks("N"), help: "new empty project: a name and its environments, no folder needed", short: "new", prio: 3, do: plain((*app).newProject)},
-			binding{keys: ks("d"), help: "add a project from a folder: it is scanned and proposals are offered", short: "scan folder", prio: 2, do: plain((*app).scanFolder)},
+			binding{keys: ks("+"), help: "add a project: from a folder, from a Dockerfile or compose file, or an empty one", short: "add", prio: 1, do: plain((*app).addChooser)},
+			binding{keys: ks("a", "n"), disp: "a", help: "add a project with the guided form", short: "guided add", prio: 3, do: plain((*app).addProject)},
+			binding{keys: ks("N"), alias: true, help: "new empty project: a name and its environments, no folder needed", do: plain((*app).newProject)},
+			binding{keys: ks("d"), help: "add a project from a folder or a Dockerfile: it is scanned and proposals are offered", short: "scan", prio: 3, do: plain((*app).scanFolder)},
 			binding{keys: ks("x", "f"), disp: "x", help: "fix the selected problem: shows the change to the file, enter or y applies it", short: "fix", prio: 2, do: plain((*app).startFix)},
 			binding{keys: ks("E", "o"), disp: "E", help: "open the project's file in $EDITOR (also when it is broken), then reload", short: "editor", prio: 3, do: plain((*app).openEditor)},
 			binding{keys: ks("p", "P"), alias: true, help: "next or previous problem of the project", do: (*app).stepProblem},
 			binding{keys: ks("i"), help: "the issues of this project: the findings screen filtered by it", short: "issues", prio: 2, do: plain((*app).goFindings)},
 			binding{keys: ks("R"), help: "rename the project: its findings and access rules follow the new name", short: "rename", prio: 4, do: lifeKey(ops.VerbRename)},
 			binding{keys: ks("D"), help: "duplicate the project under another name", short: "duplicate", prio: 5, do: lifeKey(ops.VerbDuplicate)},
-			binding{keys: ks("X"), help: "delete the project: its file moves to the project backups", short: "delete", prio: 5, do: lifeKey(ops.VerbDelete)},
+			binding{keys: ks("-"), help: "remove the project: shows what it affects, then asks for its name; the file moves to the project backups", short: "remove", prio: 2, do: lifeKey(ops.VerbDelete)},
+			binding{keys: ks("X"), alias: true, help: "delete the project", do: lifeKey(ops.VerbDelete)},
 			binding{keys: ks("Z"), help: "disable the project (its file is switched off), or enable a disabled one", short: "disable/enable", prio: 4, do: lifeKey(ops.VerbDisable)},
 			bindReturn(lvList),
 		),
@@ -253,17 +255,21 @@ func init() {
 		move:      viewportOf(func(m *app) *viewport { return &m.prj.prob }),
 		moveShort: "problem",
 		binds: []binding{
-			{keys: ks("enter", "right", "l", "x", "f"), disp: "enter", help: "preview the fix of the selected problem; enter or y applies it", short: "fix", prio: 1, do: plain((*app).startFix)},
+			{keys: ks("enter"), help: "open the security issues of the project (when it has no problem to fix)", short: "security issues", prio: 1, when: onlySecurity, do: plain((*app).focusSecurity)},
+			{keys: ks("enter", "right", "l", "x", "f"), disp: "enter", help: "preview the fix of the selected problem; enter or y applies it", short: "fix", prio: 1, when: func(m *app) bool { return !onlySecurity(m) }, do: plain((*app).startFix)},
+			{keys: ks("s"), help: "select among the security issues of the project: enter opens one", short: "security", prio: 2, when: hasSecurity, do: plain((*app).focusSecurity)},
+			{keys: ks("+"), help: "add a project: from a folder, from a Dockerfile or compose file, or an empty one", short: "add", prio: 3, do: plain((*app).addChooser)},
+			{keys: ks("-"), help: "remove the project: shows what it affects, then asks for its name; the file moves to the project backups", short: "remove", prio: 3, do: lifeKey(ops.VerbDelete)},
 			{keys: ks("c"), help: "edit the project's fields directly: environments, technologies, lockfiles, versions, images, since", short: "fields", prio: 1, do: plain((*app).openFields)},
 			{keys: ks("e"), help: "edit the project step by step in a guided form (to change one field directly, press c)", short: "guided edit", prio: 4, do: plain((*app).editProject)},
 			{keys: ks("E", "o"), disp: "E", help: "open the project's file in $EDITOR (also when it is broken), then reload", short: "editor", prio: 3, do: plain((*app).openEditor)},
 			{keys: ks("R"), help: "rename the project: its findings and access rules follow the new name", short: "rename", prio: 4, do: lifeKey(ops.VerbRename)},
 			{keys: ks("D"), help: "duplicate the project under another name", short: "duplicate", prio: 5, do: lifeKey(ops.VerbDuplicate)},
-			{keys: ks("X"), help: "delete the project: its file moves to the project backups", short: "delete", prio: 5, do: lifeKey(ops.VerbDelete)},
+			{keys: ks("X"), alias: true, help: "delete the project", do: lifeKey(ops.VerbDelete)},
 			{keys: ks("Z"), help: "disable the project (its file is switched off)", short: "disable", prio: 4, do: lifeKey(ops.VerbDisable)},
-			{keys: ks("N"), help: "new empty project: a name and its environments, no folder needed", prio: 4, do: plain((*app).newProject)},
+			{keys: ks("N"), alias: true, help: "new empty project", do: plain((*app).newProject)},
 			{keys: ks("a", "n"), disp: "a", help: "add a project with the guided form", prio: 4, do: plain((*app).addProject)},
-			{keys: ks("d"), help: "add a project from a folder", prio: 4, do: plain((*app).scanFolder)},
+			{keys: ks("d"), help: "add a project from a folder or a Dockerfile", prio: 4, do: plain((*app).scanFolder)},
 			{keys: ks("i"), help: "the issues of this project: the findings screen filtered by it", short: "issues", prio: 3, do: plain((*app).goFindings)},
 			{keys: ks("[", "]"), disp: "[/]", help: "choose another fix of the problem when it has several", short: "fix", prio: 2,
 				when: severalFixes, do: func(m *app, k tea.KeyMsg) tea.Cmd { m.chooseFix(k.String() == "]"); return nil }},
@@ -274,7 +280,17 @@ func init() {
 				m.prj.deep = false
 				return nil
 			}),
-			bindJump(), bindRefresh(), bindFetch(), bindTabs(), bindHelp(),
+			bindJump(), bindClearScope(), bindRefresh(), bindFetch(), bindTabs(), bindHelp(),
+		}}
+	mo.projectIssues = &mode{name: "project issues", title: "Keys in the security issues of a project", level: true,
+		move:      viewportOf(func(m *app) *viewport { return &m.prj.sec.vp }),
+		moveShort: "issue",
+		click:     func(m *app, x, y int) tea.Cmd { return m.clickSecurity(y) },
+		binds: []binding{
+			{keys: ks("enter", "right", "l"), disp: "enter", help: "open the selected issue: its environments and what to do; back comes to this list", short: "open", prio: 0, do: plain((*app).openSecurityIssue)},
+			{keys: ks("i"), help: "the same issues on the findings screen", short: "findings", prio: 2, do: plain((*app).goFindings)},
+			bindBack("back to the project", (*app).leaveSecurity),
+			bindJump(), bindClearScope(), bindRefresh(), bindTabs(), bindHelp(),
 		}}
 	mo.fix = &mode{name: "fix", title: "Keys in the fix preview", move: viewportOf(func(m *app) *viewport { return &m.prj.fix.vp }), moveShort: "scroll",
 		binds: []binding{
@@ -330,7 +346,10 @@ func init() {
 		} else {
 			md.binds = append(md.binds, next)
 		}
-		md.binds = append(md.binds, formBack(false), formScan("d", "ctrl+d"), bindHelp())
+		md.binds = append(md.binds,
+			binding{keys: ks("+"), help: "add a lockfile: pick its file; the type is taken from its name", short: "add lockfile", prio: 2, when: onLockStep, do: plain((*app).formLockPrompt)},
+			binding{keys: ks("-"), help: "leave the selected lockfile out of the project (asks first)", short: "remove", prio: 2, when: onLockStep, do: plain((*app).formRemoveLock)},
+			formBack(false), formScan("d", "ctrl+d"), bindHelp())
 		return md
 	}
 	mo.formChoice = choice("form choice", false)
@@ -351,6 +370,7 @@ func init() {
 			{keys: ks("enter", "y", "Y"), disp: "enter/y", help: "save the project file", short: "save", do: plain(func(m *app) tea.Cmd { return m.formAnswer("yes") })},
 			{keys: ks("n", "N"), alias: true, help: "do not save: back to the step before the review", do: plain(func(m *app) tea.Cmd { return m.formAnswer("no") })},
 			{keys: ks("e"), help: "change one step: pick it from a list; the review comes back after it", short: "edit step", prio: 1, do: plain((*app).openPick)},
+			{keys: ks("+"), help: "add a lockfile: pick its file; the type is taken from its name", short: "add lockfile", prio: 2, when: onLockStepOrReview, do: plain((*app).formLockPrompt)},
 			formBack(false), formScan("d", "ctrl+d"), bindHelp(),
 		}}
 	mo.formPick = &mode{name: "form pick", title: "Keys in the list of steps", move: viewportOf(func(m *app) *viewport { return &m.frm.pick.vp }), moveShort: "pick",
@@ -385,11 +405,11 @@ func init() {
 	mo.folder = &mode{name: "folder", title: "Keys in the folder box", modal: true,
 		typed: func(m *app, k tea.KeyMsg) bool { m.prm.box.key(k); return true },
 		binds: []binding{
-			{short: "type a path", help: "type a folder; the list narrows as you type"},
-			{keys: ks("tab"), help: "complete the name, or open the highlighted folder", short: "complete or open", prio: 1, do: boxKey},
+			{short: "type a path", help: "type a path: a folder, a file or the start of a name; the list narrows as you type"},
+			{keys: ks("tab"), help: "complete the name, or open the highlighted folder (a file is completed whole)", short: "complete or open", prio: 1, do: boxKey},
 			{keys: ks("shift+tab"), help: "go up one folder", short: "up", prio: 2, do: boxKey},
-			{keys: ks("up", "down", "pgup", "pgdown"), disp: "up/down", help: "pick a folder in the list (pgup/pgdn page)", short: "pick", prio: 1, do: boxKey},
-			{keys: ks("enter"), help: "use the highlighted folder, or the typed text when none is picked", short: "use", do: plain((*app).promptEnter)},
+			{keys: ks("up", "down", "pgup", "pgdown"), disp: "up/down", help: "pick a folder or file in the list (pgup/pgdn page)", short: "pick", prio: 1, do: boxKey},
+			{keys: ks("enter"), help: "use the highlighted folder or file, or the typed text when none is picked", short: "use", do: plain((*app).promptEnter)},
 			{keys: ks("esc"), help: "cancel", short: "cancel", do: plain(func(m *app) tea.Cmd { m.prm = nil; return nil })},
 			bindHelpTyped(),
 		}}
@@ -448,7 +468,7 @@ func formMode(f *form) *mode {
 func allModes() []*mode {
 	return []*mode{mo.noData, mo.overview, mo.violations, mo.status, mo.findings, mo.filter, mo.detail, mo.projects, mo.project, mo.fix,
 		mo.formBusy, mo.formText, mo.formChoice, mo.formMulti, mo.formConfirm, mo.formReview, mo.formPick, mo.prompt, mo.promptBusy, mo.folder, mo.confirm,
-		mo.jump, mo.notice, mo.help, mo.doc, mo.fields, mo.fieldSub, mo.picker, mo.life,
+		mo.jump, mo.notice, mo.help, mo.doc, mo.fields, mo.fieldSub, mo.picker, mo.life, mo.projectIssues,
 		mo.settings, mo.setFields, mo.setFilter, mo.setReview}
 }
 
