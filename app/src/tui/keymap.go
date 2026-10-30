@@ -12,7 +12,7 @@ import (
 var mo struct {
 	noData, overview, status, findings, detail, filter, projects, project, fix *mode
 	formText, formChoice, formMulti, formConfirm, formReview, formBusy         *mode
-	prompt, promptBusy, folder, confirm, help                                  *mode
+	prompt, promptBusy, folder, confirm, help, doc                             *mode
 	jump, notice, formPick                                                     *mode
 }
 
@@ -158,7 +158,7 @@ func init() {
 	mo.detail = &mode{name: "detail", title: "Keys in an issue", level: true,
 		move: (*app).detailMove, moveShort: "env", moveHelp: "up/down select an environment; pgup/pgdn, home/end (or space) scroll the page",
 		wheel: func(m *app, up bool) { m.fnd.det.body.move(wheelStep(up)) },
-		click: func(m *app, x, y int) tea.Cmd { m.clickEnv(y); return nil },
+		click: func(m *app, x, y int) tea.Cmd { return m.clickEnv(y) },
 		binds: []binding{
 			{keys: ks("f", "i", "n", "o"), disp: "f/i/n/o", help: "mark the selected environment fixed, ignored, not affected or reopened; not-affected needs a reason",
 				short: "status", prio: 1, do: m2(func(m *app, s string) { m.startStatus(statusKeys[s], false) })},
@@ -169,6 +169,19 @@ func init() {
 			{keys: ks("]", "J"), disp: "]", help: "open the next issue of the list (J does the same)", short: "next", prio: 1, do: func(m *app, k tea.KeyMsg) tea.Cmd { return m.stepIssue(1) }},
 			{keys: ks("[", "K"), disp: "[", help: "open the previous issue of the list (K does the same)", short: "prev", prio: 1, do: func(m *app, k tea.KeyMsg) tea.Cmd { return m.stepIssue(-1) }},
 			{keys: ks("p"), help: "go to the project of the selected environment", short: "to project", prio: 2, do: plain((*app).goProject)},
+			{keys: ks("l", "L"), disp: "l/L", help: "select the next or previous link of References (the page scrolls to it)", short: "links", prio: 2,
+				do: func(m *app, k tea.KeyMsg) tea.Cmd {
+					if k.String() == "L" {
+						return m.stepLink(-1)
+					}
+					return m.stepLink(1)
+				}},
+			{keys: ks("enter"), help: "open the selected link in the browser", short: "open link", prio: 1, when: hasLink, do: plain((*app).openLink)},
+			{keys: ks("c"), help: "copy the selected link to the clipboard; without a clipboard tool the link is shown", short: "copy link", prio: 1, when: hasLink, do: plain((*app).copyLink)},
+			{keys: ks("v"), help: "show the evidence pack of the issue: facts, per-environment truth and the audit trail", short: "evidence pack", prio: 3, do: plain((*app).openEvidence)},
+			{keys: ks("R"), help: "show the full report of the issue, as cvewatch show prints it", short: "report", prio: 3, do: plain((*app).openReport)},
+			{keys: ks("+"), help: "add evidence (a note, a link or both) to the selected environment", short: "add evidence", prio: 2, do: plain(func(m *app) tea.Cmd { m.startEvidence(); return nil })},
+			{keys: ks("esc"), help: "unselect the link", short: "unselect", prio: 4, when: hasLink, do: plain((*app).clearLink)},
 			bindBack("back to the list of issues", func(m *app) tea.Cmd {
 				if m.retAt(lvDetail) {
 					return m.goBack()
@@ -180,6 +193,18 @@ func init() {
 		}}
 
 	// ---- projects ----
+	mo.doc = &mode{name: "doc", title: "Keys in the report and the evidence pack", level: true,
+		move: func(m *app, key string) bool {
+			if key == " " {
+				key = "pgdown"
+			}
+			return m.fnd.det.doc.vp.handle(key)
+		},
+		moveShort: "scroll", moveHelp: "scroll; pgup/pgdn page (or space), home/end first and last (k j g G work too)",
+		binds: []binding{
+			bindBack("back to the issue", (*app).closeDoc),
+			bindJump(), bindTabs(), bindHelp(),
+		}}
 	mo.projects = &mode{name: "projects", title: "Keys on the projects screen", level: true,
 		move: func(m *app, key string) bool {
 			before := m.prj.proj.id()
@@ -395,7 +420,7 @@ func formMode(f *form) *mode {
 func allModes() []*mode {
 	return []*mode{mo.noData, mo.overview, mo.status, mo.findings, mo.filter, mo.detail, mo.projects, mo.project, mo.fix,
 		mo.formBusy, mo.formText, mo.formChoice, mo.formMulti, mo.formConfirm, mo.formReview, mo.formPick, mo.prompt, mo.promptBusy, mo.folder, mo.confirm,
-		mo.jump, mo.notice, mo.help}
+		mo.jump, mo.notice, mo.help, mo.doc}
 }
 
 func wheelStep(up bool) int {

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -34,6 +35,16 @@ func (m *app) crumbs() []crumb {
 		if !d.loading && d.err == nil && d.sel.at() >= 0 && d.sel.at() < len(d.is.Targets) {
 			t := d.is.Targets[d.sel.at()]
 			cs = append(cs, crumb{label: oneLine(t.Project) + ":" + oneLine(string(t.Env))})
+		}
+		switch {
+		case d.doc != nil:
+			closeDoc := popTo(func(m *app) { m.fnd.det.doc = nil })
+			for i := 1; i < len(cs); i++ {
+				cs[i].back = closeDoc
+			}
+			cs = append(cs, crumb{label: d.doc.kind})
+		case d.link > 0 && d.link <= len(d.links()):
+			cs = append(cs, crumb{label: fmt.Sprintf("References %d/%d", d.link, len(d.links()))})
 		}
 	case scrProjects:
 		switch {

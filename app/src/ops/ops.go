@@ -228,21 +228,8 @@ func (s *Session) List(f query.Filter) ([]query.Issue, error) {
 
 // Show returns one issue and its markdown report.
 func (s *Session) Show(id string) (query.Issue, string, error) {
-	f, err := s.scope(query.Filter{})
-	if err != nil {
-		return query.Issue{}, "", err
-	}
-	is, err := query.One(s.Ledger, id, f, s.Now())
-	if err != nil {
-		return is, "", err
-	}
-	var fs []model.Finding
-	for _, fd := range s.Ledger.FindingsOf(is.ID) {
-		if len(f.Projects) == 0 || slices.Contains(f.Projects, fd.Project) {
-			fs = append(fs, fd)
-		}
-	}
-	return is, report.Render(s.Ledger.Vuln(is.ID), fs, s.Now()), nil
+	d, err := s.IssueDetail(id)
+	return d.Issue, d.Markdown, err
 }
 
 // Calendar returns the issues published in a month.
@@ -574,25 +561,11 @@ func (s *Session) Export(f query.Filter) (export.Document, error) {
 // Evidence assembles the evidence pack for one issue: facts from the feeds,
 // the per-environment truth, and the audit trail, in time order.
 func (s *Session) Evidence(id string) (evidence.Pack, error) {
-	f, err := s.scope(query.Filter{})
+	p, err := s.issueParts(id)
 	if err != nil {
 		return evidence.Pack{}, err
 	}
-	is, err := query.One(s.Ledger, id, f, s.Now())
-	if err != nil {
-		return evidence.Pack{}, err
-	}
-	var fs []model.Finding
-	for _, fd := range s.Ledger.FindingsOf(is.ID) {
-		if len(f.Projects) == 0 || slices.Contains(f.Projects, fd.Project) {
-			fs = append(fs, fd)
-		}
-	}
-	events, aerr := s.Audit.Events()
-	if len(f.Projects) > 0 {
-		events = slices.DeleteFunc(events, func(e audit.Event) bool { return !visibleTo(f.Projects, e.Project) })
-	}
-	return evidence.Build(s.Ledger.Vuln(is.ID), fs, events, aerr, s.Now()), nil
+	return p.pack(s.Now()), nil
 }
 
 // visibleTo reports whether an audit record concerns no project or one of the allowed ones.

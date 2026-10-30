@@ -41,7 +41,7 @@ func Run(ctx context.Context, b Backend, o Options) error {
 
 // New returns the program's model; it is exported so tests can drive it.
 func New(b Backend, o Options) tea.Model {
-	m := &app{b: b, o: o, loading: true, helpVP: scrolling(), after: afterCmd}
+	m := &app{b: b, o: o, loading: true, helpVP: scrolling(), after: afterCmd, sys: newSysDesktop()}
 	for i := range m.txt {
 		m.txt[i] = scrolling()
 	}
@@ -79,6 +79,7 @@ type app struct {
 	loadErr error
 	loading bool
 	pend    pending // the writes and scans in flight
+	sys     desktop // the browser and the clipboard
 
 	flash    string
 	flashErr bool
@@ -311,6 +312,10 @@ func (m *app) layout() {
 	case m.frm != nil:
 		m.frm.layout(w, h)
 	case m.data == nil:
+	case m.scr == scrFindings && m.fnd.det != nil && m.fnd.det.doc != nil:
+		doc := m.fnd.det.doc
+		doc.vp.refit(len(doc.layout(w)), nil)
+		doc.vp.fit(h)
 	case m.scr == scrFindings && m.fnd.det != nil:
 		d := m.fnd.det
 		d.lay = d.layout(w)

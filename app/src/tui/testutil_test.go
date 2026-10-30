@@ -156,6 +156,7 @@ func start(t *testing.T, b Backend, o Options) *driver {
 		o.Refresh = time.Hour
 	}
 	d := &driver{t: t, m: New(b, o), b: b}
+	d.m.(*app).sys = &fakeDesktop{}
 	d.m.(*app).after = func(_ time.Duration, msg tea.Msg) tea.Cmd { d.timers = append(d.timers, msg); return nil }
 	d.send(tea.WindowSizeMsg{Width: 120, Height: 40})
 	d.run(loadCmd(b)) // what Init does, minus the timer that would only wait
@@ -299,3 +300,28 @@ func (d *driver) wheel(up bool, x, y int) {
 }
 
 func tea_window(w, h int) tea.WindowSizeMsg { return tea.WindowSizeMsg{Width: w, Height: h} }
+
+// fakeDesktop records what the TUI asked of the machine instead of doing it.
+type fakeDesktop struct {
+	opened   []string
+	copied   []string
+	openErr  error
+	copyErr  error // errNoClipboard for a machine without a tool
+	copyTool string
+}
+
+func (f *fakeDesktop) Open(url string) error {
+	f.opened = append(f.opened, url)
+	return f.openErr
+}
+
+func (f *fakeDesktop) Copy(text string) (string, error) {
+	if f.copyErr != nil {
+		return "", f.copyErr
+	}
+	f.copied = append(f.copied, text)
+	if f.copyTool == "" {
+		return "faketool", nil
+	}
+	return f.copyTool, nil
+}

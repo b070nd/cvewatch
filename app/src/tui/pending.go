@@ -140,6 +140,10 @@ func (m *app) result(msg tea.Msg) outcome {
 			delete(m.fnd.sel, id)
 		}
 		return outcome{note: msg.info, warn: msg.warn, err: msg.err}
+	case desktopMsg:
+		return outcome{note: msg.note, err: msg.err}
+	case evidenceMsg:
+		return m.evidenceLoaded(msg)
 	case detailMsg:
 		m.detailLoaded(msg)
 	case flowMsg:

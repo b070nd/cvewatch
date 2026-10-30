@@ -113,6 +113,9 @@ func (m *app) stack() []*mode {
 		switch {
 		case m.fnd.det != nil:
 			s = append(s, mo.detail)
+			if m.fnd.det.doc != nil {
+				s = append(s, mo.doc)
+			}
 		case m.fnd.filtering:
 			s = append(s, mo.filter)
 		}

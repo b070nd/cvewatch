@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -154,6 +155,8 @@ type (
 	detailMsg struct {
 		id    string
 		is    query.Issue
+		det   *query.Detail // the same issue with its links, installed versions, evidence and history; nil when not read
+		md    string        // its report
 		ex    *ops.Explanation
 		exErr error
 		err   error
@@ -207,13 +210,17 @@ func loadCmd(b Backend) tea.Cmd {
 	}
 }
 
+// detailCmd reads the page of an issue. Reading the audit trail for its
+// history makes this the dearest read, so it runs once per open and refresh.
 func detailCmd(b Backend, id string) tea.Cmd {
 	return func() tea.Msg {
 		m := detailMsg{id: id}
 		m.err = b.Read(func(s *ops.Session) (e error) {
-			if m.is, _, e = s.Show(id); e != nil {
+			full, e := s.IssueDetail(id)
+			if e != nil {
 				return e
 			}
+			m.is, m.det, m.md = full.Issue, &full.Detail, full.Markdown
 			ex, xe := s.Explain(id)
 			if xe != nil {
 				m.exErr = xe
@@ -223,6 +230,56 @@ func detailCmd(b Backend, id string) tea.Cmd {
 			return nil
 		})
 		return m
+	}
+}
+
+// attachCmd adds a note and link as evidence in one short write session.
+func attachCmd(b Backend, a ops.Attachment) tea.Cmd {
+	return func() tea.Msg {
+		var n int
+		var late error
+		err := b.Write(func(s *ops.Session) error {
+			var e error
+			if n, e = s.Attach(a); n > 0 {
+				late = e
+				return nil
+			}
+			return e
+		})
+		if err != nil {
+			return actionMsg{err: err}
+		}
+		return actionMsg{info: fmt.Sprintf("evidence added to %s in %s (%s)", a.ID, where(a.Project, a.Env), plural(n, "finding", "findings")), warn: late}
+	}
+}
+
+// desktopMsg is the end of opening or copying a link.
+type desktopMsg struct {
+	note string
+	err  error
+}
+
+func openLinkCmd(sys desktop, url string) tea.Cmd {
+	return func() tea.Msg {
+		if err := sys.Open(url); err != nil {
+			return desktopMsg{err: err}
+		}
+		return desktopMsg{note: "opened " + url + " in the browser"}
+	}
+}
+
+// copyLinkCmd puts the link on the clipboard. Without a tool for it the link
+// is shown in the note, so it can still be read off the screen.
+func copyLinkCmd(sys desktop, url string) tea.Cmd {
+	return func() tea.Msg {
+		tool, err := sys.Copy(url)
+		switch {
+		case errors.Is(err, errNoClipboard):
+			return desktopMsg{note: "no clipboard tool here; the link is " + url}
+		case err != nil:
+			return desktopMsg{err: fmt.Errorf("could not copy the link (%w); it is %s", err, url)}
+		}
+		return desktopMsg{note: "copied " + url + " to the clipboard (" + tool + ")"}
 	}
 }
 

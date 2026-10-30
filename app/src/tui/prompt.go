@@ -13,10 +13,11 @@ import (
 type promptKind int
 
 const (
-	pkStatus promptKind = iota // a note for a status change
-	pkAssign                   // owner, due date, ticket
-	pkPath                     // a folder to scan
-	pkBulk                     // a note for a status change of the selected issues
+	pkStatus   promptKind = iota // a note for a status change
+	pkAssign                     // owner, due date, ticket
+	pkPath                       // a folder to scan
+	pkBulk                       // a note for a status change of the selected issues
+	pkEvidence                   // a note and a link attached to an environment
 )
 
 type field struct {
@@ -42,6 +43,7 @@ type prompt struct {
 	change ops.Change     // pkStatus
 	assign ops.Assignment // pkAssign
 	bulk   model.Status   // pkBulk
+	attach ops.Attachment // pkEvidence
 }
 
 func (p *prompt) view(w, h int) []string {
@@ -147,6 +149,21 @@ func (m *app) startBulk(st model.Status) {
 	m.prm = &prompt{kind: pkBulk, bulk: st, title: title, fields: []field{{label: label}}, hint: noteHint(st)}
 }
 
+// startEvidence asks for a note and a link to attach to the selected
+// environment. ops decides whether they are acceptable.
+func (m *app) startEvidence() {
+	d := m.fnd.det
+	if d == nil || d.loading || d.err != nil || len(d.is.Targets) == 0 {
+		m.fail("nothing selected: open an issue with an environment first")
+		return
+	}
+	t := d.is.Targets[d.sel.at()]
+	a := ops.Attachment{ID: d.is.ID, Project: t.Project, Env: t.Env}
+	m.prm = &prompt{kind: pkEvidence, attach: a, title: oneLine("Add evidence to " + a.ID + " in " + where(a.Project, a.Env)),
+		hint:   "a note, a link or both; the link must be a plain http(s) address",
+		fields: []field{{label: "Note"}, {label: "Link"}}}
+}
+
 func (m *app) startAssign(whole bool) {
 	d := m.fnd.det
 	if d == nil || d.loading || d.err != nil || len(d.is.Targets) == 0 {
@@ -206,6 +223,10 @@ func (m *app) promptSubmit() tea.Cmd {
 			return nil
 		}
 		return m.start("saving...", "bulk", reList|reDetail, p, bulkCmd(m.b, cs))
+	case pkEvidence:
+		a := p.attach
+		a.Note, a.URL = val(0), val(1)
+		return m.start("saving...", "evidence "+a.ID+" "+where(a.Project, a.Env), reDetail, p, attachCmd(m.b, a))
 	case pkAssign:
 		a := p.assign
 		a.Owner, a.Due, a.Ticket = val(0), val(1), val(2)

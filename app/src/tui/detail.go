@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/b070nd/cvewatch/app/src/model"
+	"github.com/b070nd/cvewatch/app/src/query"
 )
 
 func sevTag(s model.Severity) string { return sevStyles[s.Rank()].Render(sevWord(s)) }
@@ -30,16 +31,19 @@ func orDash(s string) string {
 }
 
 // detailLayout is the issue laid out as text for one width. Each environment
-// row is there in two forms, plain and selected, and at says on which line.
+// row and each link is there in two forms, plain and selected, and at says on
+// which line it starts.
 type detailLayout struct {
 	w     int
 	lines []string
-	rows  []detailRow
+	rows  []detailRow // the environments
+	links []detailRow // the links of the References section
 }
 
+// detailRow is one or more lines; plain and hl have as many.
 type detailRow struct {
 	at        int
-	plain, hl string
+	plain, hl []string
 }
 
 // layout is the cached page when it fits the width, else a fresh one (kept
@@ -91,8 +95,15 @@ func (d *detail) build(w int) *detailLayout {
 		meta += "  aliases " + oneLine(strings.Join(is.Aliases, ", "))
 	}
 	add(stMuted.Render(trunc(meta, w)))
-	if len(is.Priority) > 0 {
-		add(indentWrap("priority: ", oneLine(strings.Join(is.Priority, "; ")), w)...)
+	if facts := exploitFacts(is); facts != "" {
+		add(indentWrap("exploitation: ", facts, w)...)
+	}
+	why := is.Priority
+	if d.det != nil {
+		why = d.det.Why
+	}
+	if len(why) > 0 {
+		add(indentWrap("priority: ", oneLine(strings.Join(why, "; ")), w)...)
 	}
 	add("")
 
@@ -124,12 +135,17 @@ func (d *detail) build(w int) *detailLayout {
 		}
 		rows = append(rows, detailRow{
 			at:    len(out),
-			plain: "  " + statusStyle(t.Status).Render(core) + " " + trunc(rest, max(w-width(core)-3, 1)),
-			hl:    stSel.Render(pad("> "+core+" "+rest, w)),
+			plain: []string{"  " + statusStyle(t.Status).Render(core) + " " + trunc(rest, max(w-width(core)-3, 1))},
+			hl:    []string{stSel.Render(pad("> "+core+" "+rest, w))},
 		})
-		add(rows[len(rows)-1].plain)
+		add(rows[len(rows)-1].plain...)
 		if t.Note != "" {
 			add(indentWrap("      note: ", oneLine(t.Note), w)...)
+		}
+		if d.det != nil {
+			if inst := installedText(d.det.TargetOf(t.Project, t.Env)); inst != "" {
+				add(indentWrap("      installed: ", inst, w)...)
+			}
 		}
 	}
 	add("")
@@ -169,6 +185,18 @@ func (d *detail) build(w int) *detailLayout {
 	}
 	add("")
 
+	if d.det != nil && len(d.det.Affected) > 0 {
+		add(section("Affected versions"))
+		for _, a := range d.det.Affected {
+			s := oneLine(a.Ecosystem+" "+a.Name) + ": " + oneLine(query.RangeText(a.Ranges))
+			if a.Fixed != "" {
+				s += " (first fixed " + oneLine(a.Fixed) + ")"
+			}
+			add(indentWrap("  ", s, w)...)
+		}
+		add("")
+	}
+
 	add(section("Why it matched"))
 	for _, t := range is.Targets {
 		if len(t.Reasons) == 0 && len(t.Matched) == 0 {
@@ -196,5 +224,114 @@ func (d *detail) build(w int) *detailLayout {
 			add("  relevant under the current configuration: no")
 		}
 	}
-	return &detailLayout{w: w, lines: out, rows: rows}
+	var links []detailRow
+	if d.det != nil {
+		add("")
+		links = d.buildReferences(w, &out)
+		d.buildEvidence(w, &out)
+		d.buildHistory(w, &out)
+	}
+	return &detailLayout{w: w, lines: out, rows: rows, links: links}
+}
+
+// exploitFacts is the line about known exploitation: the KEV listing with its
+// dates and the EPSS score with its percentile.
+func exploitFacts(is query.Issue) string {
+	var parts []string
+	if k := is.KEV; k != nil {
+		s := "on the CISA KEV list since " + day(k.DateAdded)
+		if !k.DueDate.IsZero() {
+			s += ", CISA remediation due " + day(k.DueDate)
+		}
+		if k.Ransomware {
+			s += ", known ransomware use"
+		}
+		parts = append(parts, s)
+	}
+	if e := is.EPSS; e != nil {
+		parts = append(parts, fmt.Sprintf("EPSS %.0f%% (percentile %.0f)", e.Score*100, e.Percentile*100))
+	}
+	return strings.Join(parts, "; ")
+}
+
+func installedText(t query.TargetDetail) string {
+	labels := make([]string, len(t.Installed))
+	for i, in := range t.Installed {
+		labels[i] = in.Label()
+	}
+	return oneLine(strings.Join(labels, ", "))
+}
+
+// buildReferences lists the links, numbered, each selectable. The report file
+// is named last.
+func (d *detail) buildReferences(w int, out *[]string) []detailRow {
+	add := func(l ...string) { *out = append(*out, l...) }
+	add(section("References") + stMuted.Render("  l/L select a link; enter opens it, c copies it"))
+	var rows []detailRow
+	for i, l := range d.det.Links {
+		head := fmt.Sprintf("  %2d. %s  %s", i+1, pad(l.Kind, 8), oneLine(l.Source))
+		if t := oneLine(l.Title); t != "" {
+			head += "  " + t
+		}
+		plain := []string{trunc(head, w)}
+		hl := []string{stSel.Render(pad(">"+head[1:], w))}
+		for _, u := range indentWrap("      ", oneLine(l.URL), w) {
+			plain = append(plain, stMuted.Render(u))
+			hl = append(hl, stSel.Render(pad(u, w)))
+		}
+		rows = append(rows, detailRow{at: len(*out), plain: plain, hl: hl})
+		add(plain...)
+	}
+	if len(rows) == 0 {
+		add("  no link is recorded for this issue")
+	}
+	if d.is.Report != "" {
+		add(indentWrap("  report file: ", oneLine(d.is.Report), w)...)
+	}
+	add(stMuted.Render("  R shows the report here, v the evidence pack"))
+	add("")
+	return rows
+}
+
+// buildEvidence lists the notes and links people attached, per environment.
+func (d *detail) buildEvidence(w int, out *[]string) {
+	add := func(l ...string) { *out = append(*out, l...) }
+	add(section("Evidence") + stMuted.Render("  + adds a note or a link to the selected environment"))
+	n := 0
+	for _, t := range d.det.Targets {
+		for _, e := range t.Evidence {
+			n++
+			s := day(e.Time) + " " + orDash(oneLine(e.Actor))
+			if e.Note != "" {
+				s += ": " + oneLine(e.Note)
+			}
+			add(indentWrap("  "+oneLine(t.Project)+"/"+string(t.Env)+" ", s, w)...)
+			if e.URL != "" {
+				add(indentWrap("      ", oneLine(e.URL), w)...)
+			}
+		}
+	}
+	if n == 0 {
+		add("  none attached")
+	}
+	add("")
+}
+
+// buildHistory lists what happened to the findings, oldest first.
+func (d *detail) buildHistory(w int, out *[]string) {
+	add := func(l ...string) { *out = append(*out, l...) }
+	add(section("History"))
+	for _, h := range d.det.History {
+		s := h.Time.UTC().Format("2006-01-02 15:04") + " " + oneLine(h.Detail)
+		if h.Actor != "" {
+			s += " (by " + oneLine(h.Actor) + ")"
+		}
+		if h.URL != "" {
+			s += " " + oneLine(h.URL)
+		}
+		add(indentWrap("  ", s, w)...)
+	}
+	if len(d.det.History) == 0 {
+		add("  nothing recorded")
+	}
 }

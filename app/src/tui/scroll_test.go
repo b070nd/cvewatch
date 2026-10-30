@@ -206,9 +206,9 @@ func TestDetailPageScrollsAndKeepsItsLayoutWhileTheRowMoves(t *testing.T) {
 	d.press("home")
 	d.want("CVE-2026-1")
 	d.press("G")
-	d.want("relevant under the current configuration")
+	d.want("first seen by cvewatch")
 	d.press("g")
-	d.wantNot("relevant under the current configuration")
+	d.wantNot("first seen by cvewatch")
 	d.press("down") // the selected row is scrolled into view
 	d.want("> shop")
 	d.send(tea_window(90, 12))
