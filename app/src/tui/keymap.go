@@ -4,6 +4,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/b070nd/cvewatch/app/src/model"
+	"github.com/b070nd/cvewatch/app/src/ops"
 	"github.com/b070nd/cvewatch/app/src/setup"
 )
 
@@ -14,6 +15,7 @@ var mo struct {
 	formText, formChoice, formMulti, formConfirm, formReview, formBusy         *mode
 	prompt, promptBusy, folder, confirm, help, doc                             *mode
 	jump, notice, formPick                                                     *mode
+	fields, fieldSub, picker, life                                             *mode
 }
 
 var statusKeys = map[string]model.Status{
@@ -217,13 +219,19 @@ func init() {
 		click: func(m *app, x, y int) tea.Cmd { return m.clickProject(y - 1) },
 		binds: rootBinds(
 			binding{keys: ks("enter"), help: "open the project: its problems, each with its fix", short: "open", prio: 1, do: plain((*app).enterProject)},
-			binding{keys: ks("e"), help: "edit the project (technologies, versions, lockfiles, environments)", short: "edit", prio: 1, do: plain((*app).editProject)},
-			binding{keys: ks("a", "n"), disp: "a", help: "add a project", short: "add", prio: 2, do: plain((*app).addProject)},
+			binding{keys: ks("c"), help: "open the project's fields: environments, technologies, lockfiles, versions, images, since", short: "fields", prio: 1, do: plain((*app).openFields)},
+			binding{keys: ks("e"), help: "edit the project step by step in a guided form (to change one field directly, press c)", short: "guided edit", prio: 3, do: plain((*app).editProject)},
+			binding{keys: ks("a", "n"), disp: "a", help: "add a project with the guided form", short: "add", prio: 2, do: plain((*app).addProject)},
+			binding{keys: ks("N"), help: "new empty project: a name and its environments, no folder needed", short: "new", prio: 3, do: plain((*app).newProject)},
 			binding{keys: ks("d"), help: "add a project from a folder: it is scanned and proposals are offered", short: "scan folder", prio: 2, do: plain((*app).scanFolder)},
 			binding{keys: ks("x", "f"), disp: "x", help: "fix the selected problem: shows the change to the file, enter or y applies it", short: "fix", prio: 2, do: plain((*app).startFix)},
 			binding{keys: ks("E", "o"), disp: "E", help: "open the project's file in $EDITOR (also when it is broken), then reload", short: "editor", prio: 3, do: plain((*app).openEditor)},
 			binding{keys: ks("p", "P"), alias: true, help: "next or previous problem of the project", do: (*app).stepProblem},
 			binding{keys: ks("i", "F"), disp: "i", help: "the issues of this project: the findings screen filtered by it", short: "issues", prio: 2, do: plain((*app).goFindings)},
+			binding{keys: ks("R"), help: "rename the project: its findings and access rules follow the new name", short: "rename", prio: 4, do: lifeKey(ops.VerbRename)},
+			binding{keys: ks("D"), help: "duplicate the project under another name", short: "duplicate", prio: 5, do: lifeKey(ops.VerbDuplicate)},
+			binding{keys: ks("X"), help: "delete the project: its file moves to the project backups", short: "delete", prio: 5, do: lifeKey(ops.VerbDelete)},
+			binding{keys: ks("Z"), help: "disable the project (its file is switched off), or enable a disabled one", short: "disable/enable", prio: 4, do: lifeKey(ops.VerbDisable)},
 			bindReturn(lvList),
 		),
 	}
@@ -232,9 +240,15 @@ func init() {
 		moveShort: "problem",
 		binds: []binding{
 			{keys: ks("enter", "right", "l", "x", "f"), disp: "enter", help: "preview the fix of the selected problem; enter or y applies it", short: "fix", prio: 1, do: plain((*app).startFix)},
-			{keys: ks("e"), help: "edit the project (technologies, versions, lockfiles, environments)", short: "edit", prio: 2, do: plain((*app).editProject)},
-			{keys: ks("E", "o"), disp: "E", help: "open the project's file in $EDITOR (also when it is broken), then reload", short: "editor", prio: 2, do: plain((*app).openEditor)},
-			{keys: ks("a", "n"), disp: "a", help: "add a project", prio: 4, do: plain((*app).addProject)},
+			{keys: ks("c"), help: "edit the project's fields directly: environments, technologies, lockfiles, versions, images, since", short: "fields", prio: 1, do: plain((*app).openFields)},
+			{keys: ks("e"), help: "edit the project step by step in a guided form (to change one field directly, press c)", short: "guided edit", prio: 4, do: plain((*app).editProject)},
+			{keys: ks("E", "o"), disp: "E", help: "open the project's file in $EDITOR (also when it is broken), then reload", short: "editor", prio: 3, do: plain((*app).openEditor)},
+			{keys: ks("R"), help: "rename the project: its findings and access rules follow the new name", short: "rename", prio: 4, do: lifeKey(ops.VerbRename)},
+			{keys: ks("D"), help: "duplicate the project under another name", short: "duplicate", prio: 5, do: lifeKey(ops.VerbDuplicate)},
+			{keys: ks("X"), help: "delete the project: its file moves to the project backups", short: "delete", prio: 5, do: lifeKey(ops.VerbDelete)},
+			{keys: ks("Z"), help: "disable the project (its file is switched off)", short: "disable", prio: 4, do: lifeKey(ops.VerbDisable)},
+			{keys: ks("N"), help: "new empty project: a name and its environments, no folder needed", prio: 4, do: plain((*app).newProject)},
+			{keys: ks("a", "n"), disp: "a", help: "add a project with the guided form", prio: 4, do: plain((*app).addProject)},
 			{keys: ks("d"), help: "add a project from a folder", prio: 4, do: plain((*app).scanFolder)},
 			{keys: ks("i", "F"), disp: "i", help: "the issues of this project: the findings screen filtered by it", short: "issues", prio: 3, do: plain((*app).goFindings)},
 			{keys: ks("[", "]"), disp: "[/]", help: "choose another fix of the problem when it has several", short: "fix", prio: 2,
@@ -250,7 +264,7 @@ func init() {
 		}}
 	mo.fix = &mode{name: "fix", title: "Keys in the fix preview", move: viewportOf(func(m *app) *viewport { return &m.prj.fix.vp }), moveShort: "scroll",
 		binds: []binding{
-			{keys: ks("enter", "y", "Y"), disp: "enter/y", help: "apply the fix to the project file", short: "apply",
+			{keys: ks("enter", "y", "Y"), disp: "enter/y", help: "apply the fix or the change to the project file", short: "apply",
 				when: notSaving, do: plain((*app).applyFix)},
 			{keys: ks("[", "]", "left", "right", "h", "l"), disp: "[/]", help: "choose another fix of the problem: left and right work too", short: "fix", prio: 1,
 				when: fixChoice, do: func(m *app, k tea.KeyMsg) tea.Cmd {
@@ -420,7 +434,7 @@ func formMode(f *form) *mode {
 func allModes() []*mode {
 	return []*mode{mo.noData, mo.overview, mo.status, mo.findings, mo.filter, mo.detail, mo.projects, mo.project, mo.fix,
 		mo.formBusy, mo.formText, mo.formChoice, mo.formMulti, mo.formConfirm, mo.formReview, mo.formPick, mo.prompt, mo.promptBusy, mo.folder, mo.confirm,
-		mo.jump, mo.notice, mo.help, mo.doc}
+		mo.jump, mo.notice, mo.help, mo.doc, mo.fields, mo.fieldSub, mo.picker, mo.life}
 }
 
 func wheelStep(up bool) int {

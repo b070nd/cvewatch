@@ -353,7 +353,7 @@ func TestHelpIsPerModeAndScrolls(t *testing.T) {
 	d := start(t, b, Options{})
 	d.send(tea_window(80, 12))
 	d.press("3", "?")
-	d.want("Keys on the projects screen", "add a project")
+	d.want("Keys on the projects screen", "open the project")
 	d.press("end")
 	d.want("NO_COLOR")
 	d.press("esc", "enter", "?")

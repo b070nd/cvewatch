@@ -154,6 +154,12 @@ func (m *app) result(msg tea.Msg) outcome {
 		return m.saved(msg)
 	case fixSavedMsg:
 		return m.fixSaved(msg)
+	case editCheckedMsg:
+		return m.editChecked(msg)
+	case lifePreviewMsg:
+		return m.lifePreviewed(msg)
+	case lifeAppliedMsg:
+		return m.lifeApplied(msg)
 	case editedMsg:
 		if msg.err != nil {
 			return outcome{err: fmt.Errorf("editor: %w", msg.err)}

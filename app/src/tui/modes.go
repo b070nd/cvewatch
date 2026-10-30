@@ -123,6 +123,16 @@ func (m *app) stack() []*mode {
 		s = append(s, mo.projects)
 		if m.prj.deep {
 			s = append(s, mo.project)
+			if ed := m.prj.ed; ed != nil {
+				if ed.open == "" {
+					s = append(s, mo.fields)
+				} else {
+					s = append(s, mo.fieldSub)
+				}
+				if ed.pick != nil {
+					s = append(s, mo.picker)
+				}
+			}
 		}
 	}
 	switch {
@@ -130,6 +140,8 @@ func (m *app) stack() []*mode {
 		s = append(s, formMode(m.frm))
 	case m.scr == scrProjects && m.prj.fix != nil:
 		s = append(s, mo.fix)
+	case m.scr == scrProjects && m.prj.life != nil:
+		s = append(s, mo.life)
 	}
 	switch {
 	case m.prm != nil && m.prm.submitting:

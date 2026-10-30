@@ -190,6 +190,9 @@ func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loadErr, m.data = nil, msg.snap
 		m.fnd.refit(m.data.Issues)
 		m.refitProjects(before)
+		if msg.land != nil {
+			m.landOn(*msg.land)
+		}
 		return m, nil
 	case detailMsg:
 		m.detailLoaded(msg)
@@ -325,6 +328,12 @@ func (m *app) layout() {
 		m.fnd.vp.fit(findingsRoom(h))
 	case m.scr == scrProjects && m.prj.fix != nil:
 		m.prj.fix.layout(w, h)
+	case m.scr == scrProjects && m.prj.life != nil:
+		m.prj.life.layout(w, h)
+	case m.scr == scrProjects && m.prj.ed != nil:
+		if p, ed, ok := m.fieldCtx(); ok {
+			ed.layout(p, w, h)
+		}
 	case m.scr == scrProjects && m.prj.deep:
 		m.prj.prob.fit(deepRoom(h))
 	case m.scr == scrProjects:
@@ -394,6 +403,15 @@ func (m *app) screenBody(w, h int) []string {
 	case scrProjects:
 		if m.prj.fix != nil {
 			return m.prj.fix.view(w, h)
+		}
+		if m.prj.life != nil {
+			return m.prj.life.view(w, h)
+		}
+		if p, ed, ok := m.fieldCtx(); ok {
+			if ed.pick != nil {
+				return ed.pick.view(w, h)
+			}
+			return ed.view(p, w, h)
 		}
 		if p, ok := m.selectedProject(); ok && m.prj.deep {
 			return projectDetail(p, &m.prj, w, deepRoom(h), true)

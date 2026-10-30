@@ -41,6 +41,7 @@ type fake struct {
 	reads  int
 	writes int
 	active atomic.Int32 // backend calls started and not yet finished
+	disk   string       // when set, every session loads the configuration from this folder, like the real backend
 }
 
 func (f *fake) busy() bool { return f.active.Load() > 0 }
@@ -49,10 +50,16 @@ func (f *fake) session(write bool) (*ops.Session, error) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	var s *ops.Session
 	var err error
+	cfg := f.cfg
+	if f.disk != "" {
+		if cfg, err = config.LoadLenient(f.disk); err != nil {
+			return nil, err
+		}
+	}
 	if write {
-		s, err = ops.OpenWith(f.cfg, f.st, log)
+		s, err = ops.OpenWith(cfg, f.st, log)
 	} else {
-		s, err = ops.OpenReadOnlyWith(f.cfg, f.st, log)
+		s, err = ops.OpenReadOnlyWith(cfg, f.st, log)
 	}
 	if err != nil {
 		return nil, err

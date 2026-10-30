@@ -158,7 +158,7 @@ func (m *app) goTo(t target) tea.Cmd {
 			m.fail("project " + oneLine(t.project) + " is not listed here")
 			return nil
 		}
-		m.scr, m.prj.fix = scrProjects, nil
+		m.scr, m.prj.fix, m.prj.life, m.prj.ed = scrProjects, nil, nil, nil
 		before := m.prj.proj.id()
 		m.prj.proj.to(i)
 		m.refitProjects(before)

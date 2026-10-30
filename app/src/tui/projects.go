@@ -13,7 +13,9 @@ type projectsState struct {
 	proj viewport // the project rows, followed by name
 	prob viewport // the problems of the selected project, followed by field and message
 	fix  *fixState
-	deep bool // inside the selected project: up/down move between its problems
+	deep bool         // inside the selected project: up/down move between its problems
+	ed   *fieldEditor // the focus is on the fields of the selected project
+	life *lifeState   // a change to the whole project awaits its confirmation
 
 	fixOf string // the problem whose fix was chosen (see chosenFix)
 	fixAt int
@@ -44,6 +46,12 @@ func (m *app) refitProjects(before string) {
 	if !ok {
 		m.prj.deep = false
 	}
+	if ed := m.prj.ed; ed != nil && (!ok || p.Name != ed.project) {
+		m.prj.ed = nil
+	}
+	if lf := m.prj.life; lf != nil && !lf.saving && (!ok || p.Name != lf.req.Project) {
+		m.prj.life = nil // the project is gone or the cursor is elsewhere: the question no longer fits
+	}
 	m.prj.prob.refit(len(probs), func(i int) string { return problemID(probs[i]) })
 }
 
@@ -73,6 +81,10 @@ func (m *app) editProject() tea.Cmd {
 	}
 	if p.Broken != "" {
 		m.fail("the file of " + p.Name + " does not load; press E to edit it")
+		return nil
+	}
+	if p.Disabled {
+		m.fail(p.Name + " is disabled; press Z to enable it first")
 		return nil
 	}
 	return m.start("opening "+oneLine(p.Name)+"...", "flow", 0, nil, startFlowCmd(m.b, p.Name, ""))
@@ -173,6 +185,8 @@ func renderProjects(rows []projectRow, st *projectsState, w, h int) []string {
 func problemBadge(p projectRow) string {
 	errs, warns := p.counts()
 	switch {
+	case p.Disabled:
+		return "disabled"
 	case p.Broken != "":
 		return "BROKEN"
 	case errs+warns == 0:
@@ -190,6 +204,11 @@ func projectDetail(p projectRow, st *projectsState, w, room int, deep bool) []st
 	if !p.HasFile {
 		out[0] += stMuted.Render("  defined in the main config, not editable here")
 	}
+	if p.Disabled {
+		out = append(out, "  "+stMuted.Render("disabled: the file is switched off, so no findings are matched; Z enables it, X deletes it"))
+		out = append(out, "  file: "+trunc(oneLine(p.File), w-8))
+		return out
+	}
 	if p.Broken != "" {
 		out = append(out, clip(indentWrap("  "+stErr.Render("broken: "), oneLine(p.Broken), w), 3)...)
 		out = append(out, "  file: "+trunc(oneLine(p.File), w-8))
@@ -199,6 +218,11 @@ func projectDetail(p projectRow, st *projectsState, w, room int, deep bool) []st
 	out = append(out, problemLines(p.Problems, st, w, room, deep)...)
 	if p.Broken != "" {
 		return out
+	}
+	if deep {
+		out = append(out, stMuted.Render("  c edits the fields (environments, technologies, lockfiles, versions, images, since)"))
+	} else {
+		out = append(out, stMuted.Render("  c edit fields   R rename   D duplicate   Z disable   X delete   N new empty project"))
 	}
 	if len(p.Lockfiles) == 0 {
 		return append(out, "  lockfiles: none")

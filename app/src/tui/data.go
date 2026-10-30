@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -41,6 +42,11 @@ type projectRow struct {
 	File     string              // that file
 	Broken   string              // why the file does not load; the row then shows only its name
 	Problems []projectfile.Issue // what is wrong with the file, errors first
+
+	Written []ops.LockEntry // the lockfiles as the file spells them (the loaded ones have resolved paths), for the editor
+
+	Disabled     bool                          // the file is switched off (<name>.yaml.disabled): listed, not loaded
+	Environments map[model.Env]model.EnvConfig // deployed versions and image per environment
 }
 
 func (p projectRow) counts() (errs, warns int) {
@@ -96,7 +102,11 @@ func loadSnapshot(s *ops.Session) (*snapshot, error) {
 		for _, e := range p.EffectiveEnvs() {
 			v.Envs = append(v.Envs, string(e))
 		}
-		sn.Projects = append(sn.Projects, projectRow{ProjectView: v, HasFile: slices.Contains(files, p.Name), File: fileOf(p.Name), Problems: byProject[p.Name]})
+		row := projectRow{ProjectView: v, HasFile: slices.Contains(files, p.Name), File: fileOf(p.Name), Problems: byProject[p.Name], Environments: p.Environments}
+		if row.HasFile {
+			row.Written = writtenLockfiles(row.File)
+		}
+		sn.Projects = append(sn.Projects, row)
 	}
 	for _, br := range s.Cfg.Broken {
 		if !open && !slices.Contains(allowed, br.Name) {
@@ -106,7 +116,31 @@ func loadSnapshot(s *ops.Session) (*snapshot, error) {
 		rest := slices.DeleteFunc(slices.Clone(byProject[br.Name]), func(i projectfile.Issue) bool { return i.Field == "file" })
 		sn.Projects = append(sn.Projects, projectRow{ProjectView: ops.ProjectView{Name: br.Name}, HasFile: true, File: br.File, Broken: strings.TrimPrefix(br.Err, br.File+": "), Problems: rest})
 	}
+	off, err := s.DisabledProjects()
+	if err != nil {
+		warn("disabled projects", err)
+	}
+	for _, name := range off {
+		if slices.ContainsFunc(sn.Projects, func(p projectRow) bool { return p.Name == name }) {
+			continue // a live file of the same name wins; the disabled one is a leftover
+		}
+		sn.Projects = append(sn.Projects, projectRow{ProjectView: ops.ProjectView{Name: name}, HasFile: true, File: fileOf(name) + ".disabled", Disabled: true})
+	}
 	return sn, nil
+}
+
+// writtenLockfiles reads the lockfiles of a project file as they are written
+// there, which is what an edit has to name; nil when the file does not parse.
+func writtenLockfiles(path string) []ops.LockEntry {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	f, err := projectfile.Parse(data)
+	if err != nil {
+		return nil
+	}
+	return ops.ViewOf(f.Project()).Lockfiles
 }
 
 // counts is the overview's arithmetic, kept apart so it can be tested.
@@ -151,6 +185,7 @@ type (
 	dataMsg struct {
 		snap *snapshot
 		err  error
+		land *landing // where the Projects screen settles once this snapshot is in
 	}
 	detailMsg struct {
 		id    string
@@ -202,11 +237,15 @@ func tickCmd(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(time.Time) tea.Msg { return tickMsg{} })
 }
 
-func loadCmd(b Backend) tea.Cmd {
+func loadCmd(b Backend) tea.Cmd { return loadLandCmd(b, nil) }
+
+// loadLandCmd reads the snapshot and, once it is in, puts the Projects screen
+// on a project (see landing).
+func loadLandCmd(b Backend, land *landing) tea.Cmd {
 	return func() tea.Msg {
 		var sn *snapshot
 		err := b.Read(func(s *ops.Session) (e error) { sn, e = loadSnapshot(s); return e })
-		return dataMsg{snap: sn, err: err}
+		return dataMsg{snap: sn, err: err, land: land}
 	}
 }
 

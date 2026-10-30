@@ -8,16 +8,22 @@ import (
 
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/ops"
+	"github.com/b070nd/cvewatch/app/src/projectfile"
 )
 
 type promptKind int
 
 const (
-	pkStatus   promptKind = iota // a note for a status change
-	pkAssign                     // owner, due date, ticket
-	pkPath                       // a folder to scan
-	pkBulk                       // a note for a status change of the selected issues
-	pkEvidence                   // a note and a link attached to an environment
+	pkStatus    promptKind = iota // a note for a status change
+	pkAssign                      // owner, due date, ticket
+	pkPath                        // a folder to scan
+	pkBulk                        // a note for a status change of the selected issues
+	pkEvidence                    // a note and a link attached to an environment
+	pkEdit                        // the value of one field of a project file
+	pkNew                         // a project made from a name, without scanning a folder
+	pkRename                      // the new name of a project
+	pkDuplicate                   // the name of the copy of a project
+	pkDelete                      // the name of the project to delete, typed to confirm
 )
 
 type field struct {
@@ -44,6 +50,10 @@ type prompt struct {
 	assign ops.Assignment // pkAssign
 	bulk   model.Status   // pkBulk
 	attach ops.Attachment // pkEvidence
+
+	project string                                                                // pkEdit, pkRename, pkDuplicate, pkDelete: the project
+	known   []projectfile.Issue                                                   // pkEdit: the problems the file had before
+	build   func(vals []string) (label string, edits []projectfile.Op, err error) // pkEdit
 }
 
 func (p *prompt) view(w, h int) []string {
@@ -231,6 +241,35 @@ func (m *app) promptSubmit() tea.Cmd {
 		a := p.assign
 		a.Owner, a.Due, a.Ticket = val(0), val(1), val(2)
 		return m.start("saving...", "assign "+a.ID+" "+where(a.Project, a.Env), reList|reDetail, p, assignCmd(m.b, a))
+	case pkEdit:
+		vals := make([]string, len(p.fields))
+		for i := range vals {
+			vals[i] = val(i)
+		}
+		label, edits, err := p.build(vals)
+		if err != nil {
+			p.problem = err.Error()
+			return nil
+		}
+		return m.previewEdit(p.project, p.known, label, edits, "", p)
+	case pkNew:
+		return m.submitNew(p, val(0), val(1))
+	case pkRename, pkDuplicate:
+		verb := ops.VerbRename
+		if p.kind == pkDuplicate {
+			verb = ops.VerbDuplicate
+		}
+		if val(0) == "" {
+			p.problem = "give the new name"
+			return nil
+		}
+		return m.previewLife(ops.LifecycleRequest{Verb: verb, Project: p.project, NewName: val(0)}, p)
+	case pkDelete:
+		if val(0) != p.project || m.prj.life == nil {
+			p.problem = "type the name of the project exactly, " + p.project + ", to delete it"
+			return nil
+		}
+		return m.applyLife(p)
 	}
 	path := p.box.chosen()
 	if path == "" {
