@@ -29,6 +29,8 @@ func addSetupTools(srv *mcp.Server, s *server, allowWrite bool) {
 		Description: "Health of the monitor itself: whether the daemon is running, whether each feed and notification channel works, and what the last cycles did."}, s.status)
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_projects", Annotations: ro,
 		Description: "List the monitored projects with their environments, declared technologies and lockfiles."}, s.projects)
+	mcp.AddTool(srv, &mcp.Tool{Name: "check_projects", Annotations: ro,
+		Description: "Find problems in project files: unknown or misspelled technologies, lockfiles that are missing, unreadable or of the wrong type, environments that are not monitored. Each problem names its project and field and may list fixes, each a label and the changes to pass to preview_project_change and edit_project. Without a project, every project you may see is checked."}, s.checkProjects)
 	mcp.AddTool(srv, &mcp.Tool{Name: "preview_project_change", Annotations: ro,
 		Description: "Show what a change to a project file would do (diff and problems) without writing anything. A project that does not exist yet is created by its first change."}, s.previewProject)
 	if allowWrite {
@@ -143,6 +145,24 @@ func (s *server) projects(_ context.Context, _ *mcp.CallToolRequest, _ struct{})
 	return nil, out, err
 }
 
+type checkIn struct {
+	Project string `json:"project,omitempty" jsonschema:"only this project; empty checks every project"`
+}
+
+type checkOut struct {
+	Issues []projectfile.Issue `json:"issues"`
+}
+
+func (s *server) checkProjects(_ context.Context, _ *mcp.CallToolRequest, in checkIn) (*mcp.CallToolResult, checkOut, error) {
+	out := checkOut{Issues: []projectfile.Issue{}}
+	err := s.withReadRepair(func(sess *ops.Session) error {
+		issues, err := sess.ProjectProblems(strings.TrimSpace(in.Project))
+		out.Issues = append(out.Issues, issues...)
+		return err
+	})
+	return nil, out, err
+}
+
 func contains(list []string, s string) bool {
 	for _, x := range list {
 		if x == s {
@@ -162,6 +182,13 @@ type opIn struct {
 	LockType string   `json:"lockfile_type,omitempty" jsonschema:"composer, npm, go, pip and so on, for the lockfile kinds"`
 	LockPath string   `json:"lockfile_path,omitempty" jsonschema:"path of the lockfile on the monitor's machine"`
 	LockEnv  string   `json:"lockfile_env,omitempty" jsonschema:"only this environment; empty means all"`
+	Lockfile *lockIn  `json:"lockfile,omitempty" jsonschema:"the lockfile as one object, as check_projects fixes give it; instead of the lockfile_* fields"`
+}
+
+type lockIn struct {
+	Type string `json:"type"`
+	Path string `json:"path"`
+	Env  string `json:"env,omitempty"`
 }
 
 type projectIn struct {
@@ -174,6 +201,9 @@ func (in projectIn) change(save bool) ops.ProjectChange {
 	for _, o := range in.Changes {
 		op := projectfile.Op{Kind: o.Kind, Tech: o.Tech, Version: o.Version, Env: model.Env(o.Env), Image: o.Image,
 			Lockfile: model.Lockfile{Type: o.LockType, Path: o.LockPath, Env: model.Env(o.LockEnv)}}
+		if l := o.Lockfile; l != nil {
+			op.Lockfile = model.Lockfile{Type: l.Type, Path: l.Path, Env: model.Env(l.Env)}
+		}
 		for _, e := range o.Envs {
 			op.Envs = append(op.Envs, model.Env(e))
 		}

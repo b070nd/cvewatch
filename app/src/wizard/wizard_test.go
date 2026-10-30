@@ -104,6 +104,34 @@ func TestCreateFromFolder(t *testing.T) {
 	}
 }
 
+func TestCreateFromFolderUnderLoadedConfigRoot(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	cfg, err := config.Load(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := ops.OpenWith(cfg, store.NewMemory(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "repos", "shop")
+	write(t, filepath.Join(dir, "composer.lock"), `{"packages":[]}`)
+	// name, techs (none), add techs (none), lockfiles (keep), envs (keep), confirm.
+	out, err := run(t, "shop\n\n\n\n\nyes\n", func(io IO) error { return Setup(io, s, dir, "") })
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	b, err := os.ReadFile(projectFile(s, "shop"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	real, _ := filepath.EvalSymlinks(root)
+	if !strings.Contains(string(b), "{type: composer, path: repos/shop/composer.lock}") || strings.Contains(string(b), real) {
+		t.Fatalf("file:\n%s", b)
+	}
+}
+
 const blog = "# my blog\nname: blog\ntechs:\n  - {name: php, version: \"8.1\"}\n  - {name: nginx, version: \"1.24\"}\n"
 
 func TestEditExistingMakesMinimalDiff(t *testing.T) {

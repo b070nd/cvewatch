@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Folder box in the TUI for new projects: Tab completes, Shift+Tab goes up one folder, Up and Down pick a folder. Rows show the lockfiles and manifests in each folder and a `project` tag.
+- TUI Projects screen shows a problems column and the problems of the selected project. `f` previews and applies a fix, `o` opens the file in `$EDITOR`. A project file that cannot be read is shown as broken instead of stopping the TUI.
+- `check_projects` MCP tool: read-only report of problems in project files, with the fixes it knows.
+- Validation warns when a lockfile's `env` is not in the project's `envs`, since such a lockfile is never read.
+
+### Fixed
+- `edit_project` and `preview_project_change` accept a `lockfile` object, so fixes from `check_projects` can be passed on as they are.
+- `cvewatch init` saved lockfile paths as absolute paths with the default `-root .`; they stay relative to the root now.
+- `cvewatch init -force` now edits an existing project file in place: its comments stay, and the old file is backed up.
+
 ## [1.2.0] - 2026-10-29
 
 ### Added

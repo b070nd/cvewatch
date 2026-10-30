@@ -68,7 +68,11 @@ func (f *form) enter(m *app) tea.Cmd {
 	}
 	f.seq++
 	f.prev, f.prevErr = nil, ""
-	return previewCmd(m.b, f, f.seq, f.flow.Draft().Project.Name, f.flow.Ops())
+	return previewCmd(m.b, f, f.seq, f.flow.Draft().Project.Name, f.flow)
+}
+
+func (f *form) waiting() bool {
+	return f.step.ID == "review" && f.prev == nil && f.prevErr == ""
 }
 
 // answer is the value for the current step in the flow's own format.
@@ -109,7 +113,7 @@ func (f *form) hint() string {
 
 func (m *app) formKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	f := m.frm
-	if f.saving {
+	if f.saving || f.waiting() { // the preview reads the flow in the background
 		return m, nil
 	}
 	s := k.String()
@@ -204,7 +208,7 @@ func (m *app) formAnswer(v string) (tea.Model, tea.Cmd) {
 	if f.flow.Done() {
 		f.saving = true
 		m.busy = "saving..."
-		return m, saveCmd(m.b, f, f.flow.Draft().Project.Name, f.flow.Ops())
+		return m, saveCmd(m.b, f, f.flow.Draft().Project.Name, f.flow)
 	}
 	f.load()
 	return m, f.enter(m)
@@ -322,32 +326,8 @@ func (f *form) reviewRows(w, room int) []string {
 	if f.prevErr != "" {
 		body = append(body, stErr.Render("error: ")+trunc(oneLine(f.prevErr), w-7))
 	}
-	if p := f.prev; p != nil {
-		if strings.TrimSpace(p.Diff) == "" {
-			body = append(body, stMuted.Render("(no changes to the file)"))
-		}
-		for _, l := range strings.Split(p.Diff, "\n") {
-			l = trunc(clean(l), w)
-			switch {
-			case strings.HasPrefix(l, "+"):
-				l = stAdd.Render(l)
-			case strings.HasPrefix(l, "-"):
-				l = stDel.Render(l)
-			case strings.HasPrefix(l, "@@"):
-				l = stMuted.Render(l)
-			}
-			body = append(body, l)
-		}
-		for _, is := range p.Issues {
-			lvl := stMuted.Render(oneLine(is.Level))
-			if is.Level == "error" {
-				lvl = stErr.Render("error")
-			}
-			body = append(body, lvl+": "+trunc(oneLine(is.Field)+": "+oneLine(is.Message), w-8))
-		}
-		if p.Blocked() {
-			body = append(body, stErr.Render("this cannot be saved until the errors are fixed"))
-		}
+	if f.prev != nil {
+		body = append(body, previewRows(f.prev, w)...)
 	}
 	ask := stBold.Render("Save this project?") + "  y = save, n = do not save, esc = back"
 	avail := max(room-2, 1)
@@ -355,4 +335,34 @@ func (f *form) reviewRows(w, room int) []string {
 	end := min(f.scroll+avail, len(body))
 	out := append([]string{}, body[f.scroll:end]...)
 	return append(out, "", ask)
+}
+
+func previewRows(p *ops.ProjectPreview, w int) []string {
+	var body []string
+	if strings.TrimSpace(p.Diff) == "" {
+		body = append(body, stMuted.Render("(no changes to the file)"))
+	}
+	for _, l := range strings.Split(p.Diff, "\n") {
+		l = trunc(clean(l), w)
+		switch {
+		case strings.HasPrefix(l, "+"):
+			l = stAdd.Render(l)
+		case strings.HasPrefix(l, "-"):
+			l = stDel.Render(l)
+		case strings.HasPrefix(l, "@@"):
+			l = stMuted.Render(l)
+		}
+		body = append(body, l)
+	}
+	for _, is := range p.Issues {
+		lvl := stMuted.Render(oneLine(is.Level))
+		if is.Level == "error" {
+			lvl = stErr.Render("error")
+		}
+		body = append(body, lvl+": "+trunc(oneLine(is.Field)+": "+oneLine(is.Message), w-8))
+	}
+	if p.Blocked() {
+		body = append(body, stErr.Render("this cannot be saved until the errors are fixed"))
+	}
+	return body
 }

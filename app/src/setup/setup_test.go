@@ -385,11 +385,11 @@ func TestFolderName(t *testing.T) {
 		"": "project", "/": "project", "/repo/My App_v2": "my-app-v2", "/x/--Foo--": "foo",
 		"/x/日本語": "project", "/x/" + strings.Repeat("a", 80): strings.Repeat("a", 63),
 	} {
-		if got := folderName(in); got != want {
-			t.Errorf("folderName(%q) = %q, want %q", in, got, want)
+		if got := FolderName(in); got != want {
+			t.Errorf("FolderName(%q) = %q, want %q", in, got, want)
 		}
-		if _, err := projectfile.New(folderName(in)); err != nil {
-			t.Errorf("folderName(%q) is not a valid name: %v", in, err)
+		if _, err := projectfile.New(FolderName(in)); err != nil {
+			t.Errorf("FolderName(%q) is not a valid name: %v", in, err)
 		}
 	}
 }

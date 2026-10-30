@@ -143,10 +143,17 @@ type Bundle struct {
 	Sources  []model.Source
 	Projects []model.Project
 	Warnings []string // non-fatal problems worth logging
+	Broken   []BrokenProject
 
 	Catalog        *catalog.Catalog // shipped technologies layered with config/techs.yaml
 	DefaultTechs   bool             // no config/techs.yaml: only the shipped catalog
 	DefaultSources bool             // no sources/*.yaml: only the shipped feeds
+}
+
+type BrokenProject struct {
+	Name string
+	File string
+	Err  string
 }
 
 func defaults() Settings {
@@ -174,6 +181,14 @@ func defaults() Settings {
 // Load reads root/config/{config,techs}.yaml, root/config/projects/*.yaml and
 // root/sources/*.yaml. Unknown keys are errors, so typos never pass silently.
 func Load(root string) (*Bundle, error) {
+	return load(root, false)
+}
+
+func LoadLenient(root string) (*Bundle, error) {
+	return load(root, true)
+}
+
+func load(root string, lenient bool) (*Bundle, error) {
 	b := &Bundle{Root: root, Settings: defaults()}
 
 	if err := decode(filepath.Join(root, "config", "config.yaml"), &b.Settings, true); err != nil {
@@ -201,19 +216,34 @@ func Load(root string) (*Bundle, error) {
 	b.Techs = catalog.Merge(shippedTechs.Techs, userTechs.Techs)
 	b.Catalog = catalog.New(b.Techs)
 
+	decoded := map[string]bool{}
 	err := each(filepath.Join(root, "config", "projects"), func(path string) error {
 		var p model.Project
 		if err := decode(path, &p, false); err != nil {
-			return err
+			if !lenient {
+				return err
+			}
+			b.Broken = append(b.Broken, brokenProject(path, err))
+			return nil
 		}
 		for i, lf := range p.Lockfiles {
 			p.Lockfiles[i].Path = resolve(root, lf.Path) // relative paths follow the app root, not the working directory
 		}
+		if lenient {
+			if errs := projectErrors(p, decoded); len(errs) > 0 {
+				b.Broken = append(b.Broken, brokenProject(path, errors.Join(errs...)))
+				return nil
+			}
+		}
+		decoded[p.Name] = true
 		b.Projects = append(b.Projects, p)
 		return nil
 	})
 	if err != nil {
 		return nil, err
+	}
+	for _, br := range b.Broken {
+		decoded[br.Name] = true
 	}
 
 	var shippedSrc, userSrc struct {
@@ -239,10 +269,10 @@ func Load(root string) (*Bundle, error) {
 	b.Sources = mergeSources(shippedSrc.Sources, userSrc.Sources)
 	b.Sources = b.withTechFeeds(b.Sources)
 
-	return b, b.validate()
+	return b, b.validate(decoded)
 }
 
-func (b *Bundle) validate() error {
+func (b *Bundle) validate(decoded map[string]bool) error {
 	var errs []error
 	fail := func(f string, a ...any) { errs = append(errs, fmt.Errorf(f, a...)) }
 
@@ -261,49 +291,15 @@ func (b *Bundle) validate() error {
 		known[key] = true
 	}
 
-	names := map[string]bool{}
+	seen := map[string]bool{}
 	for _, p := range b.Projects {
-		if p.Name == "" || names[p.Name] {
-			fail("project name %q is empty or duplicated", p.Name)
-		}
-		names[p.Name] = true
-		if !p.Since.IsZero() && p.Since.After(time.Now()) {
-			b.Warnings = append(b.Warnings, fmt.Sprintf("project %s: since %s is in the future, so every dated vulnerability is skipped for now", p.Name, p.Since.Format("2006-01-02")))
-		}
-		for _, e := range p.Envs {
-			if !e.Valid() {
-				fail("project %s: unknown env %q (use dev, int, staging, prod)", p.Name, e)
-			}
-		}
-		for _, lf := range p.Lockfiles {
-			if !slices.Contains(matrix.Types(), lf.Type) {
-				fail("project %s: lockfile type %q is unknown (use %s)", p.Name, lf.Type, strings.Join(matrix.Types(), ", "))
-			}
-			if lf.Env != "" && !lf.Env.Valid() {
-				fail("project %s: lockfile env %q is unknown", p.Name, lf.Env)
-			}
-		}
-		for env, ec := range p.Environments {
-			if !env.Valid() {
-				fail("project %s: environments: unknown env %q", p.Name, env)
-			}
-			for tn := range ec.Techs {
-				if !known[strings.ToLower(tn)] {
-					b.Warnings = append(b.Warnings, fmt.Sprintf("project %s: environments.%s: tech %q is not in techs.yaml", p.Name, env, tn))
-				}
-			}
-		}
-		for _, t := range p.Techs {
-			if !known[strings.ToLower(t.Name)] {
-				b.Warnings = append(b.Warnings,
-					fmt.Sprintf("project %s: tech %q is not in techs.yaml and will never match", p.Name, t.Name))
-			}
-		}
+		errs = append(errs, projectErrors(p, seen)...)
+		b.Warnings = append(b.Warnings, projectWarnings(p, known)...)
 	}
 
 	for actor, g := range b.Access {
 		for _, name := range g.Projects {
-			if name != "*" && !names[name] {
+			if name != "*" && !decoded[name] {
 				fail("access for %q names unknown project %q", actor, name)
 			}
 		}
@@ -369,6 +365,69 @@ func (b *Bundle) checkURL(raw string) error {
 		return errors.New("url must use https (set http.allow_private for internal feeds)")
 	}
 	return nil
+}
+
+func projectErrors(p model.Project, seen map[string]bool) []error {
+	var errs []error
+	fail := func(f string, a ...any) { errs = append(errs, fmt.Errorf(f, a...)) }
+
+	if p.Name == "" || seen[p.Name] {
+		fail("project name %q is empty or duplicated", p.Name)
+	}
+	seen[p.Name] = true
+	for _, e := range p.Envs {
+		if !e.Valid() {
+			fail("project %s: unknown env %q (use dev, int, staging, prod)", p.Name, e)
+		}
+	}
+	for _, lf := range p.Lockfiles {
+		if !slices.Contains(matrix.Types(), lf.Type) {
+			fail("project %s: lockfile type %q is unknown (use %s)", p.Name, lf.Type, strings.Join(matrix.Types(), ", "))
+		}
+		if lf.Env != "" && !lf.Env.Valid() {
+			fail("project %s: lockfile env %q is unknown", p.Name, lf.Env)
+		}
+	}
+	for env := range p.Environments {
+		if !env.Valid() {
+			fail("project %s: environments: unknown env %q", p.Name, env)
+		}
+	}
+	return errs
+}
+
+func projectWarnings(p model.Project, known map[string]bool) []string {
+	var warns []string
+	if !p.Since.IsZero() && p.Since.After(time.Now()) {
+		warns = append(warns, fmt.Sprintf("project %s: since %s is in the future, so every dated vulnerability is skipped for now", p.Name, p.Since.Format("2006-01-02")))
+	}
+	for env, ec := range p.Environments {
+		for tn := range ec.Techs {
+			if !known[strings.ToLower(tn)] {
+				warns = append(warns, fmt.Sprintf("project %s: environments.%s: tech %q is not in techs.yaml", p.Name, env, tn))
+			}
+		}
+	}
+	for _, t := range p.Techs {
+		if !known[strings.ToLower(t.Name)] {
+			warns = append(warns, fmt.Sprintf("project %s: tech %q is not in techs.yaml and will never match", p.Name, t.Name))
+		}
+	}
+	return warns
+}
+
+func brokenProject(path string, err error) BrokenProject {
+	file := path
+	if abs, aerr := filepath.Abs(path); aerr == nil {
+		file = abs
+	}
+	var lines []string
+	for _, l := range strings.Split(err.Error(), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			lines = append(lines, l)
+		}
+	}
+	return BrokenProject{Name: strings.TrimSuffix(filepath.Base(path), ".yaml"), File: file, Err: strings.Join(lines, "; ")}
 }
 
 // TechNames lists configured tech names, sorted, for display.

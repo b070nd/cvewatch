@@ -323,11 +323,11 @@ func (f *Flow) defaultName() string {
 	if f.draft.Name != "" {
 		return f.draft.Name
 	}
-	return folderName(f.dir)
+	return FolderName(f.dir)
 }
 
-// folderName turns a folder into a valid project name.
-func folderName(dir string) string {
+// FolderName turns a folder into a valid project name.
+func FolderName(dir string) string {
 	if dir == "" {
 		return "project"
 	}

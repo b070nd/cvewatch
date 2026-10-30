@@ -140,6 +140,9 @@ func (m *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loadErr, m.data = nil, msg.snap
 		m.fnd.refit(m.data.Issues)
 		m.prj.cursor = clamp(m.prj.cursor, 0, len(m.data.Projects)-1)
+		if p, ok := m.selectedProject(); ok {
+			m.prj.issue = clamp(m.prj.issue, 0, len(p.Problems)-1)
+		}
 		return m, nil
 	case detailMsg:
 		m.detailLoaded(msg)
@@ -164,6 +167,16 @@ func (m *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case savedMsg:
 		return m.saved(msg)
+	case fixPreviewMsg:
+		m.fixPreviewed(msg)
+		return m, nil
+	case fixSavedMsg:
+		return m.fixSaved(msg)
+	case editedMsg:
+		if msg.err != nil {
+			m.fail("editor: " + msg.err.Error())
+		}
+		return m, m.reload()
 	}
 	return m, nil
 }
@@ -205,8 +218,8 @@ func (m *app) scanned(msg scanMsg) (tea.Model, tea.Cmd) {
 		m.fail(msg.err.Error())
 		return m, nil
 	}
-	if m.frm == nil {
-		return m, nil
+	if m.frm == nil || m.frm.waiting() || m.frm.saving {
+		return m, nil // a preview or save is reading the flow right now
 	}
 	m.frm.flow.UseDiscovery(msg.res.Root, msg.res)
 	m.frm.load()
@@ -251,6 +264,8 @@ func (m *app) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.promptKey(k)
 	case m.frm != nil:
 		return m.formKey(k)
+	case m.prj.fix != nil:
+		return m.fixKey(k)
 	case m.scr == scrFindings && m.fnd.filtering:
 		return m.filterKey(k)
 	}
@@ -316,7 +331,7 @@ func (m *app) View() string {
 	bodyH := h - 4
 	var prompt []string
 	if m.prm != nil {
-		prompt = m.prm.view(w)
+		prompt = m.prm.view(w, h)
 		bodyH = max(bodyH-len(prompt), 1)
 	}
 	var body []string
@@ -347,7 +362,7 @@ func (m *app) View() string {
 func (m *app) screenBody(w, h int) []string {
 	if m.data == nil {
 		if m.loadErr != nil {
-			return []string{stErr.Render("error: ") + oneLine(m.loadErr.Error())}
+			return []string{stErr.Render("error: ") + oneLine(m.loadErr.Error()), "", "Press r to try again, or q to quit."}
 		}
 		return []string{stMuted.Render("Loading...")}
 	}
@@ -355,7 +370,10 @@ func (m *app) screenBody(w, h int) []string {
 	case scrFindings:
 		return m.findingsBody(w, h)
 	case scrProjects:
-		return renderProjects(m.data.Projects, m.prj.cursor, w, h)
+		if m.prj.fix != nil {
+			return m.prj.fix.view(w, h)
+		}
+		return renderProjects(m.data.Projects, m.prj.cursor, m.prj.issue, w, h)
 	case scrStatus:
 		return m.scrolled(renderStatus(m.data.Status, m.data.At, w), h)
 	}
@@ -413,12 +431,18 @@ func (m *app) flashLine(w int) string {
 func (m *app) footer(w int) string {
 	var hint string
 	switch {
+	case m.prm != nil && m.prm.box != nil:
+		hint = "tab complete or open  shift+tab up  up/down pick  enter use  esc cancel"
 	case m.prm != nil:
 		hint = "enter confirm  tab next field  esc cancel"
 	case m.frm != nil:
 		hint = m.frm.hint()
 	case m.help:
 		hint = "? or esc close help  q quit"
+	case m.data == nil && m.loadErr != nil:
+		hint = "r try again  q quit"
+	case m.prj.fix != nil:
+		hint = "y apply the fix  up/down scroll  n or esc cancel"
 	case m.scr == scrFindings && m.fnd.filtering:
 		hint = "type to filter  enter keep  esc clear"
 	case m.scr == scrFindings && m.fnd.det != nil:
@@ -426,7 +450,7 @@ func (m *app) footer(w int) string {
 	case m.scr == scrFindings:
 		hint = "up/down move  enter open  s min severity  / filter  r refresh  ? help  q quit"
 	case m.scr == scrProjects:
-		hint = "up/down move  e edit  n new  d new from folder  r refresh  ? help  q quit"
+		hint = "up/down move  e edit  n new  d folder  p problem  f fix  o editor  ? help  q quit"
 	default:
 		hint = "1-4 screens  up/down scroll  r refresh  ? help  q quit"
 	}

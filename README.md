@@ -304,7 +304,7 @@ Read-only by default. The agent can call:
 | `policy_violations` | which deadlines are broken right now |
 | `get_calendar` | what was published this month |
 | `get_status` | whether the monitor itself is healthy: daemon, feeds, channels |
-| `search_catalog`, `discover_stack`, `list_projects`, `preview_project_change` | set a project up: find technologies, read a repository, preview the change |
+| `search_catalog`, `discover_stack`, `list_projects`, `check_projects`, `preview_project_change` | set a project up: find technologies, read a repository, find problems in project files, preview the change |
 
 Opt in to writing with `mcp -allow-write`, and the agent can also `set_status`, `assign`, `attach_evidence`, `refresh` and `edit_project`. The skills in [`skills/`](skills) walk an agent through setup (`cvewatch-setup`) and triage (`cvewatch-triage`), asking the human at every step that matters.
 

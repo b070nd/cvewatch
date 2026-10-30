@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	"github.com/b070nd/cvewatch/app/src/ops"
 	"github.com/b070nd/cvewatch/app/src/priority"
 	"github.com/b070nd/cvewatch/app/src/projectfile"
+	"github.com/b070nd/cvewatch/app/src/projectflow"
 	"github.com/b070nd/cvewatch/app/src/query"
 	"github.com/b070nd/cvewatch/app/src/setup"
 	"github.com/b070nd/cvewatch/app/src/status"
@@ -36,7 +36,21 @@ type snapshot struct {
 
 type projectRow struct {
 	ops.ProjectView
-	HasFile bool // has its own file under config/projects, so it can be edited here
+	HasFile  bool                // has its own file under config/projects, so it can be edited here
+	File     string              // that file
+	Broken   string              // why the file does not load; the row then shows only its name
+	Problems []projectfile.Issue // what is wrong with the file, errors first
+}
+
+func (p projectRow) counts() (errs, warns int) {
+	for _, i := range p.Problems {
+		if i.Level == "error" {
+			errs++
+		} else {
+			warns++
+		}
+	}
+	return errs, warns
 }
 
 // loadSnapshot reads the issue list (fatal when it fails: access denied, no
@@ -58,6 +72,19 @@ func loadSnapshot(s *ops.Session) (*snapshot, error) {
 	if err != nil {
 		warn("project files", err)
 	}
+	problems, err := s.ProjectProblems("")
+	if err != nil {
+		warn("project problems", err)
+	}
+	byProject := map[string][]projectfile.Issue{}
+	for _, i := range problems {
+		byProject[i.Project] = append(byProject[i.Project], i)
+	}
+	dir := filepath.Join(s.Cfg.Root, "config", "projects")
+	fileOf := func(name string) string {
+		path, _ := projectfile.Path(dir, name)
+		return path
+	}
 	allowed, _, open := s.Cfg.Allowed(audit.Actor())
 	for _, p := range s.Cfg.Projects {
 		if !open && !slices.Contains(allowed, p.Name) {
@@ -68,7 +95,15 @@ func loadSnapshot(s *ops.Session) (*snapshot, error) {
 		for _, e := range p.EffectiveEnvs() {
 			v.Envs = append(v.Envs, string(e))
 		}
-		sn.Projects = append(sn.Projects, projectRow{ProjectView: v, HasFile: slices.Contains(files, p.Name)})
+		sn.Projects = append(sn.Projects, projectRow{ProjectView: v, HasFile: slices.Contains(files, p.Name), File: fileOf(p.Name), Problems: byProject[p.Name]})
+	}
+	for _, br := range s.Cfg.Broken {
+		if !open && !slices.Contains(allowed, br.Name) {
+			continue
+		}
+		// the parse error is already in Err; the file-level issue would say it twice
+		rest := slices.DeleteFunc(slices.Clone(byProject[br.Name]), func(i projectfile.Issue) bool { return i.Field == "file" })
+		sn.Projects = append(sn.Projects, projectRow{ProjectView: ops.ProjectView{Name: br.Name}, HasFile: true, File: br.File, Broken: strings.TrimPrefix(br.Err, br.File+": "), Problems: rest})
 	}
 	return sn, nil
 }
@@ -246,17 +281,6 @@ func catalogOf(s *ops.Session) *catalog.Catalog {
 	return catalog.New(s.Cfg.Techs)
 }
 
-// expand resolves a typed path: ~ is the home folder.
-func expand(p string) string {
-	p = strings.TrimSpace(p)
-	if p == "~" || strings.HasPrefix(p, "~/") || strings.HasPrefix(p, "~"+string(filepath.Separator)) {
-		if home, err := os.UserHomeDir(); err == nil {
-			return filepath.Join(home, p[1:])
-		}
-	}
-	return p
-}
-
 // startFlowCmd builds a setup flow: for a new project when name is empty,
 // otherwise for editing the named one. A folder is scanned first and merged
 // in. The flow is handed to Update only once it is complete, so no goroutine
@@ -265,52 +289,11 @@ func startFlowCmd(b Backend, name, dir string) tea.Cmd {
 	return func() tea.Msg {
 		var out flowMsg
 		out.err = b.Read(func(s *ops.Session) error {
-			cat := catalogOf(s)
-			files, err := s.ProjectNames()
+			o, err := projectflow.Open(s, projectflow.Request{Project: name, Folder: dir})
 			if err != nil {
 				return err
 			}
-			if name == "" {
-				taken := map[string]bool{}
-				for _, n := range files {
-					taken[n] = true
-				}
-				for _, p := range s.Cfg.Projects {
-					taken[p.Name] = true
-				}
-				out.flow = setup.NewFlow(cat, nil)
-				out.flow.NameTaken = func(n string) bool { return taken[n] }
-				out.creating = true
-			} else {
-				i := slices.IndexFunc(s.Cfg.Projects, func(p model.Project) bool { return p.Name == name })
-				if i < 0 || !slices.Contains(files, name) {
-					return fmt.Errorf("project %q has no file under config/projects, so it cannot be edited here", name)
-				}
-				if _, err := s.EditProject(ops.ProjectChange{Project: name}); err != nil { // access check, nothing changes
-					return err
-				}
-				// config/projects is where ops keeps project files.
-				path, err := projectfile.Path(filepath.Join(s.Cfg.Root, "config", "projects"), name)
-				if err != nil {
-					return err
-				}
-				data, err := os.ReadFile(path)
-				if err != nil {
-					return err
-				}
-				existing := s.Cfg.Projects[i]
-				out.flow = setup.NewFlow(cat, &existing)
-				out.flow.SetExistingBytes(data)
-				out.name = name
-			}
-			if dir != "" {
-				res, err := discovery.Scan(expand(dir), cat, discovery.Options{})
-				if err != nil {
-					return err
-				}
-				out.flow.UseDiscovery(res.Root, res)
-				out.note = scanNote(res)
-			}
+			out.flow, out.creating, out.name, out.note = o.Flow, o.Creating, o.Name, o.Note
 			return nil
 		})
 		return out
@@ -330,34 +313,25 @@ func scanNote(res discovery.Result) string {
 func scanCmd(b Backend, dir string) tea.Cmd {
 	return func() tea.Msg {
 		var m scanMsg
+		root, err := projectflow.ResolveFolder(dir)
+		if err != nil {
+			m.err = err
+			return m
+		}
 		m.err = b.Read(func(s *ops.Session) (e error) {
-			m.res, e = discovery.Scan(expand(dir), catalogOf(s), discovery.Options{})
+			m.res, e = discovery.Scan(root, catalogOf(s), discovery.Options{})
 			return e
 		})
 		return m
 	}
 }
 
-// relativize makes lockfile paths relative to the app root before they are
-// saved, as the wizard does: discovery yields absolute paths.
-func relativize(root string, edits []projectfile.Op) []projectfile.Op {
-	out := slices.Clone(edits)
-	for i, o := range out {
-		if o.Kind == "add_lockfile" && root != "" && filepath.IsAbs(o.Lockfile.Path) {
-			if rel, err := filepath.Rel(root, o.Lockfile.Path); err == nil {
-				out[i].Lockfile.Path = filepath.ToSlash(rel)
-			}
-		}
-	}
-	return out
-}
-
 // previewCmd asks ops what the edits would do, without saving.
-func previewCmd(b Backend, f *form, seq int, name string, edits []projectfile.Op) tea.Cmd {
+func previewCmd(b Backend, f *form, seq int, name string, flow *setup.Flow) tea.Cmd {
 	return func() tea.Msg {
 		var p ops.ProjectPreview
 		err := b.Read(func(s *ops.Session) (e error) {
-			p, e = s.EditProject(ops.ProjectChange{Project: name, Ops: relativize(s.Cfg.Root, edits)})
+			p, e = s.EditProject(ops.ProjectChange{Project: name, Ops: projectflow.Edits(s, flow)})
 			return e
 		})
 		return previewMsg{f: f, seq: seq, prev: p, err: err}
@@ -365,11 +339,11 @@ func previewCmd(b Backend, f *form, seq int, name string, edits []projectfile.Op
 }
 
 // saveCmd writes the project file in one short write session.
-func saveCmd(b Backend, f *form, name string, edits []projectfile.Op) tea.Cmd {
+func saveCmd(b Backend, f *form, name string, flow *setup.Flow) tea.Cmd {
 	return func() tea.Msg {
 		var p ops.ProjectPreview
 		err := b.Write(func(s *ops.Session) (e error) {
-			p, e = s.EditProject(ops.ProjectChange{Project: name, Ops: relativize(s.Cfg.Root, edits), Save: true})
+			p, e = s.EditProject(ops.ProjectChange{Project: name, Ops: projectflow.Edits(s, flow), Save: true})
 			return e
 		})
 		return savedMsg{f: f, prev: p, err: err}

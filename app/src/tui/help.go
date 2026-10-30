@@ -30,6 +30,11 @@ func helpView(scr screen, inForm bool) []string {
 		add("e, enter", "edit the selected project (technologies, versions, lockfiles, environments)")
 		add("n", "new project")
 		add("d", "new project from a folder: it is scanned and proposals are offered")
+		add("p, P", "select the next or previous problem of the project (the badge counts them)")
+		add("f", "fix the selected problem: shows the change to the file, y applies it")
+		add("o", "open the project's file in $EDITOR (also when it is broken), then reload")
+		add("in the folder box", "tab completes or opens the highlighted folder, shift+tab goes up one,")
+		add("", "up/down pick a folder, enter uses it (or the typed text if none is picked)")
 	}
 	out = append(out, "", section("Everywhere"))
 	add("1 2 3 4", "Overview, Findings, Projects, Status (tab and shift+tab cycle)")

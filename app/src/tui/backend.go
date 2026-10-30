@@ -22,6 +22,7 @@ type backend struct {
 }
 
 // NewBackend returns a Backend over the configuration and state under root.
+// A project file that does not load is only listed in Cfg.Broken.
 // Every session acts as "tui:<user>", so the audit log shows who changed what
 // and access rules still name people. The logger must not write to the
 // terminal the TUI draws on; nil discards.
@@ -35,7 +36,7 @@ func NewBackend(root string, log *slog.Logger) Backend {
 func actor() string { return "tui:" + audit.Actor() }
 
 func (b *backend) Read(fn func(*ops.Session) error) error {
-	s, err := ops.OpenReadOnly(b.root, b.log)
+	s, err := ops.OpenReadOnlyRepair(b.root, b.log)
 	if err != nil {
 		return err
 	}
@@ -45,7 +46,7 @@ func (b *backend) Read(fn func(*ops.Session) error) error {
 }
 
 func (b *backend) Write(fn func(*ops.Session) error) error {
-	s, err := ops.Open(b.root, b.log)
+	s, err := ops.OpenRepair(b.root, b.log)
 	if err != nil {
 		return err
 	}
