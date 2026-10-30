@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -40,6 +42,11 @@ type projectRow struct {
 	File     string              // that file
 	Broken   string              // why the file does not load; the row then shows only its name
 	Problems []projectfile.Issue // what is wrong with the file, errors first
+
+	Written []ops.LockEntry // the lockfiles as the file spells them (the loaded ones have resolved paths), for the editor
+
+	Disabled     bool                          // the file is switched off (<name>.yaml.disabled): listed, not loaded
+	Environments map[model.Env]model.EnvConfig // deployed versions and image per environment
 }
 
 func (p projectRow) counts() (errs, warns int) {
@@ -95,7 +102,11 @@ func loadSnapshot(s *ops.Session) (*snapshot, error) {
 		for _, e := range p.EffectiveEnvs() {
 			v.Envs = append(v.Envs, string(e))
 		}
-		sn.Projects = append(sn.Projects, projectRow{ProjectView: v, HasFile: slices.Contains(files, p.Name), File: fileOf(p.Name), Problems: byProject[p.Name]})
+		row := projectRow{ProjectView: v, HasFile: slices.Contains(files, p.Name), File: fileOf(p.Name), Problems: byProject[p.Name], Environments: p.Environments}
+		if row.HasFile {
+			row.Written = writtenLockfiles(row.File)
+		}
+		sn.Projects = append(sn.Projects, row)
 	}
 	for _, br := range s.Cfg.Broken {
 		if !open && !slices.Contains(allowed, br.Name) {
@@ -105,7 +116,31 @@ func loadSnapshot(s *ops.Session) (*snapshot, error) {
 		rest := slices.DeleteFunc(slices.Clone(byProject[br.Name]), func(i projectfile.Issue) bool { return i.Field == "file" })
 		sn.Projects = append(sn.Projects, projectRow{ProjectView: ops.ProjectView{Name: br.Name}, HasFile: true, File: br.File, Broken: strings.TrimPrefix(br.Err, br.File+": "), Problems: rest})
 	}
+	off, err := s.DisabledProjects()
+	if err != nil {
+		warn("disabled projects", err)
+	}
+	for _, name := range off {
+		if slices.ContainsFunc(sn.Projects, func(p projectRow) bool { return p.Name == name }) {
+			continue // a live file of the same name wins; the disabled one is a leftover
+		}
+		sn.Projects = append(sn.Projects, projectRow{ProjectView: ops.ProjectView{Name: name}, HasFile: true, File: fileOf(name) + ".disabled", Disabled: true})
+	}
 	return sn, nil
+}
+
+// writtenLockfiles reads the lockfiles of a project file as they are written
+// there, which is what an edit has to name; nil when the file does not parse.
+func writtenLockfiles(path string) []ops.LockEntry {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	f, err := projectfile.Parse(data)
+	if err != nil {
+		return nil
+	}
+	return ops.ViewOf(f.Project()).Lockfiles
 }
 
 // counts is the overview's arithmetic, kept apart so it can be tested.
@@ -150,10 +185,13 @@ type (
 	dataMsg struct {
 		snap *snapshot
 		err  error
+		land *landing // where the Projects screen settles once this snapshot is in
 	}
 	detailMsg struct {
 		id    string
 		is    query.Issue
+		det   *query.Detail // the same issue with its links, installed versions, evidence and history; nil when not read
+		md    string        // its report
 		ex    *ops.Explanation
 		exErr error
 		err   error
@@ -199,21 +237,29 @@ func tickCmd(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(time.Time) tea.Msg { return tickMsg{} })
 }
 
-func loadCmd(b Backend) tea.Cmd {
+func loadCmd(b Backend) tea.Cmd { return loadLandCmd(b, nil) }
+
+// loadLandCmd reads the snapshot and, once it is in, puts the Projects screen
+// on a project (see landing).
+func loadLandCmd(b Backend, land *landing) tea.Cmd {
 	return func() tea.Msg {
 		var sn *snapshot
 		err := b.Read(func(s *ops.Session) (e error) { sn, e = loadSnapshot(s); return e })
-		return dataMsg{snap: sn, err: err}
+		return dataMsg{snap: sn, err: err, land: land}
 	}
 }
 
+// detailCmd reads the page of an issue. Reading the audit trail for its
+// history makes this the dearest read, so it runs once per open and refresh.
 func detailCmd(b Backend, id string) tea.Cmd {
 	return func() tea.Msg {
 		m := detailMsg{id: id}
 		m.err = b.Read(func(s *ops.Session) (e error) {
-			if m.is, _, e = s.Show(id); e != nil {
+			full, e := s.IssueDetail(id)
+			if e != nil {
 				return e
 			}
+			m.is, m.det, m.md = full.Issue, &full.Detail, full.Markdown
 			ex, xe := s.Explain(id)
 			if xe != nil {
 				m.exErr = xe
@@ -223,6 +269,56 @@ func detailCmd(b Backend, id string) tea.Cmd {
 			return nil
 		})
 		return m
+	}
+}
+
+// attachCmd adds a note and link as evidence in one short write session.
+func attachCmd(b Backend, a ops.Attachment) tea.Cmd {
+	return func() tea.Msg {
+		var n int
+		var late error
+		err := b.Write(func(s *ops.Session) error {
+			var e error
+			if n, e = s.Attach(a); n > 0 {
+				late = e
+				return nil
+			}
+			return e
+		})
+		if err != nil {
+			return actionMsg{err: err}
+		}
+		return actionMsg{info: fmt.Sprintf("evidence added to %s in %s (%s)", a.ID, where(a.Project, a.Env), plural(n, "finding", "findings")), warn: late}
+	}
+}
+
+// desktopMsg is the end of opening or copying a link.
+type desktopMsg struct {
+	note string
+	err  error
+}
+
+func openLinkCmd(sys desktop, url string) tea.Cmd {
+	return func() tea.Msg {
+		if err := sys.Open(url); err != nil {
+			return desktopMsg{err: err}
+		}
+		return desktopMsg{note: "opened " + url + " in the browser"}
+	}
+}
+
+// copyLinkCmd puts the link on the clipboard. Without a tool for it the link
+// is shown in the note, so it can still be read off the screen.
+func copyLinkCmd(sys desktop, url string) tea.Cmd {
+	return func() tea.Msg {
+		tool, err := sys.Copy(url)
+		switch {
+		case errors.Is(err, errNoClipboard):
+			return desktopMsg{note: "no clipboard tool here; the link is " + url}
+		case err != nil:
+			return desktopMsg{err: fmt.Errorf("could not copy the link (%w); it is %s", err, url)}
+		}
+		return desktopMsg{note: "copied " + url + " to the clipboard (" + tool + ")"}
 	}
 }
 

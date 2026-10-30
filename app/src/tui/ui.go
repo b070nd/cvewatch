@@ -41,7 +41,7 @@ func Run(ctx context.Context, b Backend, o Options) error {
 
 // New returns the program's model; it is exported so tests can drive it.
 func New(b Backend, o Options) tea.Model {
-	m := &app{b: b, o: o, loading: true, helpVP: scrolling(), after: afterCmd}
+	m := &app{b: b, o: o, loading: true, helpVP: scrolling(), after: afterCmd, sys: newSysDesktop()}
 	for i := range m.txt {
 		m.txt[i] = scrolling()
 	}
@@ -50,18 +50,6 @@ func New(b Backend, o Options) tea.Model {
 	}
 	return m
 }
-
-type screen int
-
-const (
-	scrOverview screen = iota
-	scrFindings
-	scrProjects
-	scrStatus
-	numScreens
-)
-
-var screenNames = [numScreens]string{"Overview", "Findings", "Projects", "Status"}
 
 type app struct {
 	b Backend
@@ -79,6 +67,7 @@ type app struct {
 	loadErr error
 	loading bool
 	pend    pending // the writes and scans in flight
+	sys     desktop // the browser and the clipboard
 
 	flash    string
 	flashErr bool
@@ -88,6 +77,7 @@ type app struct {
 
 	fnd findingsState
 	prj projectsState
+	set settingsState
 	frm *form
 	prm *prompt
 	cfm *confirm
@@ -147,7 +137,13 @@ func (m *app) fail(s string) {
 }
 
 func (m *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	before := m.scr
 	model, cmd := m.update(msg)
+	// the settings are read when the screen is opened, and once in the
+	// background so that its tab can tell about problems
+	if (m.scr == scrSettings && before != scrSettings) || (!m.set.started && !m.loading) {
+		cmd = tea.Batch(cmd, m.loadSettings())
+	}
 	if m.ret != nil && m.ret.dest != m.scr {
 		m.ret = nil
 	}
@@ -189,9 +185,15 @@ func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loadErr, m.data = nil, msg.snap
 		m.fnd.refit(m.data.Issues)
 		m.refitProjects(before)
+		if msg.land != nil {
+			m.landOn(*msg.land)
+		}
 		return m, nil
 	case detailMsg:
 		m.detailLoaded(msg)
+		return m, nil
+	case setLoadedMsg:
+		m.setLoaded(msg)
 		return m, nil
 	case opMsg:
 		return m, m.opDone(msg)
@@ -310,29 +312,9 @@ func (m *app) layout() {
 		m.helpVP.fit(h)
 	case m.frm != nil:
 		m.frm.layout(w, h)
-	case m.data == nil:
-	case m.scr == scrFindings && m.fnd.det != nil:
-		d := m.fnd.det
-		d.lay = d.layout(w)
-		d.body.refit(len(d.lay.lines), nil)
-		d.body.fit(h)
-	case m.scr == scrFindings:
-		m.fnd.vp.fit(findingsRoom(h))
-	case m.scr == scrProjects && m.prj.fix != nil:
-		m.prj.fix.layout(w, h)
-	case m.scr == scrProjects && m.prj.deep:
-		m.prj.prob.fit(deepRoom(h))
-	case m.scr == scrProjects:
-		_, room := projectsPanel(m.data.Projects, &m.prj, w, h)
-		m.prj.proj.fit(room)
-		m.prj.prob.fit(problemRoom)
+	case m.data == nil && !screens[m.scr].standalone:
 	default:
-		pg := m.page(m.scr, w)
-		m.cache[m.scr] = textCache{w: w, snap: m.data, page: pg}
-		m.txt[m.scr].refit(len(pg.lines), nil)
-		m.txt[m.scr].fit(h)
-		m.pageSel[m.scr].refit(len(pg.rows), func(i int) string { return pg.rows[i].key })
-		m.pageSel[m.scr].fit(h)
+		screens[m.scr].layout(m, w, h)
 	}
 	if m.jmp != nil {
 		_, th := m.size()
@@ -377,35 +359,22 @@ func (m *app) View() string {
 }
 
 func (m *app) screenBody(w, h int) []string {
-	if m.data == nil {
+	if m.data == nil && !screens[m.scr].standalone {
 		if m.loadErr != nil {
 			return []string{stErr.Render("error: ") + oneLine(m.loadErr.Error()), "", "Press r to try again, or q to quit."}
 		}
 		return []string{stMuted.Render("Loading...")}
 	}
-	switch m.scr {
-	case scrFindings:
-		return m.findingsBody(w, h)
-	case scrProjects:
-		if m.prj.fix != nil {
-			return m.prj.fix.view(w, h)
-		}
-		if p, ok := m.selectedProject(); ok && m.prj.deep {
-			return projectDetail(p, &m.prj, w, deepRoom(h), true)
-		}
-		return renderProjects(m.data.Projects, &m.prj, w, h)
-	}
-	start, end := m.txt[m.scr].window(h)
-	return m.page(m.scr, w).view(start, end, m.pageSel[m.scr].at())
+	return screens[m.scr].body(m, w, h)
 }
 
 // tabs are the screen tabs as drawn, and the cells each one covers.
 func (m *app) tabs() (tabs []string, spans [numScreens][2]int) {
 	x := width("cvewatch") + 2
 	for i := screen(0); i < numScreens; i++ {
-		label := fmt.Sprintf("%d %s", i+1, screenNames[i])
-		if i == scrFindings && m.data != nil {
-			label += fmt.Sprintf(" (%d)", len(m.data.Issues))
+		label := screens[i].key + " " + screens[i].name
+		if screens[i].badge != nil {
+			label += screens[i].badge(m)
 		}
 		if i == m.scr {
 			tabs = append(tabs, stTabOn.Render("["+label+"]"))

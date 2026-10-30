@@ -217,6 +217,9 @@ func (m *app) filterType(k tea.KeyMsg) bool {
 
 func (m *app) findingsBody(w, h int) []string {
 	if d := m.fnd.det; d != nil {
+		if d.doc != nil {
+			return d.doc.view(w, h)
+		}
 		return d.view(w, h)
 	}
 	return renderFindings(len(m.data.Issues), &m.fnd, w, h)
@@ -349,6 +352,10 @@ type detail struct {
 	loading bool
 	err     error
 	is      query.Issue
+	det     *query.Detail // the fuller view of the same issue; nil until read
+	md      string        // its report
+	link    int           // the link selected in References, counted from 1; 0 for none
+	doc     *docView      // the report or the evidence pack, shown over the page
 	ex      *ops.Explanation
 	exErr   string
 	sel     viewport // the environment rows, followed by project and env
@@ -371,7 +378,12 @@ func (m *app) detailLoaded(msg detailMsg) {
 	if msg.err != nil {
 		return
 	}
-	d.is, d.ex, d.exErr = msg.is, msg.ex, ""
+	prev, _ := d.selectedLink()
+	d.is, d.det, d.md, d.ex, d.exErr = msg.is, msg.det, msg.md, msg.ex, ""
+	d.keepLink(prev)
+	if d.doc != nil && d.doc.kind == docReport {
+		d.doc.set(d.md)
+	}
 	if msg.exErr != nil {
 		d.exErr = msg.exErr.Error()
 	}
@@ -382,6 +394,99 @@ func (m *app) detailLoaded(msg detailMsg) {
 		return slices.Index(model.AllEnvs, a.Env) - slices.Index(model.AllEnvs, b.Env)
 	})
 	d.sel.refit(len(d.is.Targets), func(i int) string { return targetID(d.is.Targets[i]) })
+}
+
+// links are the links of the References section.
+func (d *detail) links() []query.Link {
+	if d.det == nil {
+		return nil
+	}
+	return d.det.Links
+}
+
+// selectedLink is the link picked in References.
+func (d *detail) selectedLink() (query.Link, bool) {
+	if ls := d.links(); d.link >= 1 && d.link <= len(ls) {
+		return ls[d.link-1], true
+	}
+	return query.Link{}, false
+}
+
+// keepLink puts the selection back on the link it was on after the page was
+// read again, or drops it when the link is gone.
+func (d *detail) keepLink(prev query.Link) {
+	d.link = 0
+	if prev.URL == "" {
+		return
+	}
+	for i, l := range d.links() {
+		if l.URL == prev.URL {
+			d.link = i + 1
+		}
+	}
+}
+
+// stepLink selects the next or previous link; the first press picks the first
+// (or the last, going back). It wraps around.
+func (m *app) stepLink(dir int) tea.Cmd {
+	d := m.fnd.det
+	n := len(d.links())
+	if n == 0 {
+		m.say("this issue has no links")
+		return nil
+	}
+	switch {
+	case d.link == 0 && dir > 0:
+		d.link = 1
+	case d.link == 0:
+		d.link = n
+	default:
+		d.link = (d.link-1+dir+n)%n + 1
+	}
+	d.revealLink()
+	return nil
+}
+
+func (m *app) clearLink() tea.Cmd {
+	m.fnd.det.link = 0
+	return nil
+}
+
+func hasLink(m *app) bool {
+	d := m.fnd.det
+	if d == nil {
+		return false
+	}
+	_, ok := d.selectedLink()
+	return ok
+}
+
+// openLink shows the selected link in the browser.
+func (m *app) openLink() tea.Cmd {
+	l, ok := m.fnd.det.selectedLink()
+	if !ok {
+		return nil
+	}
+	return m.start("opening the link...", "open "+l.URL, 0, nil, openLinkCmd(m.sys, l.URL))
+}
+
+// copyLink puts the selected link on the clipboard.
+func (m *app) copyLink() tea.Cmd {
+	l, ok := m.fnd.det.selectedLink()
+	if !ok {
+		return nil
+	}
+	return m.start("copying the link...", "copy "+l.URL, 0, nil, copyLinkCmd(m.sys, l.URL))
+}
+
+// revealLink scrolls the page so that the whole selected link is visible.
+func (d *detail) revealLink() {
+	if d.lay == nil || d.link < 1 || d.link > len(d.lay.links) {
+		return
+	}
+	r := d.lay.links[d.link-1]
+	d.body.show(r.at + len(r.plain) - 1)
+	d.body.show(r.at)
 }
 
 // reveal scrolls the page so that the selected environment row is visible.
@@ -408,32 +513,51 @@ func (m *app) detailMove(key string) bool {
 	return d.body.handle(key)
 }
 
-// clickEnv selects the environment row drawn on the given body line.
-func (m *app) clickEnv(line int) {
+// clickEnv selects the environment row or the link drawn on the given body
+// line; a second click on the selected link opens it.
+func (m *app) clickEnv(line int) tea.Cmd {
 	d := m.fnd.det
 	if d.lay == nil {
-		return
+		return nil
 	}
 	start, _ := d.body.window(d.body.room)
+	at := start + line
 	for i, r := range d.lay.rows {
-		if r.at == start+line {
+		if r.at == at {
 			d.sel.to(i)
-			return
+			return nil
 		}
 	}
+	for i, r := range d.lay.links {
+		if at >= r.at && at < r.at+len(r.plain) {
+			if d.link == i+1 {
+				return m.openLink()
+			}
+			d.link = i + 1
+		}
+	}
+	return nil
 }
 
 // view is the visible part of the page. The page itself is laid out once per
-// load and width; the selected row is only swapped in here.
+// load and width; the selected row and link are only swapped in here.
 func (d *detail) view(w, h int) []string {
 	lay := d.layout(w)
 	start, end := d.body.window(h)
 	start, end = min(start, len(lay.lines)), min(end, len(lay.lines))
 	out := slices.Clone(lay.lines[start:end])
-	if i := d.sel.at(); i >= 0 && i < len(lay.rows) {
-		if at := lay.rows[i].at; at >= start && at < end {
-			out[at-start] = lay.rows[i].hl
+	swap := func(r detailRow) {
+		for j, l := range r.hl {
+			if at := r.at + j; at >= start && at < end {
+				out[at-start] = l
+			}
 		}
+	}
+	if i := d.sel.at(); i >= 0 && i < len(lay.rows) {
+		swap(lay.rows[i])
+	}
+	if i := d.link - 1; i >= 0 && i < len(lay.links) {
+		swap(lay.links[i])
 	}
 	return out
 }

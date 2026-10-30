@@ -1,0 +1,170 @@
+{
+  "Issue": {
+    "id": "CVE-2026-0100",
+    "aliases": [
+      "GHSA-AAAA-BBBB-CCCC"
+    ],
+    "severity": "critical",
+    "cvss": 9.8,
+    "published": "2026-10-01T12:00:00Z",
+    "age": "2d 0h",
+    "age_hours": 48,
+    "first_seen": "2026-10-01T12:00:00Z",
+    "techs": [
+      "php"
+    ],
+    "applies": "affected",
+    "article_count": 1,
+    "fix": {
+      "available": true,
+      "official": true
+    },
+    "kev": {
+      "date_added": "2026-10-02T12:00:00Z",
+      "due_date": "2026-10-05T12:00:00Z",
+      "ransomware": true
+    },
+    "epss": {
+      "score": 0.5,
+      "percentile": 0.97,
+      "date": "0001-01-01T00:00:00Z"
+    },
+    "prod_open": true,
+    "report": "2026/2026-10-01-php-cve-2026-0100.md",
+    "targets": [
+      {
+        "project": "mw",
+        "env": "prod",
+        "status": "open",
+        "applies": "unknown",
+        "matched": null,
+        "due": "0001-01-01T00:00:00Z",
+        "updated": "0001-01-01T00:00:00Z"
+      },
+      {
+        "project": "shop",
+        "env": "prod",
+        "status": "open",
+        "applies": "affected",
+        "matched": [
+          "php@8.2.10"
+        ],
+        "due": "0001-01-01T00:00:00Z",
+        "updated": "2026-10-03T12:00:00Z",
+        "evidence": 1
+      }
+    ],
+    "untrusted": {
+      "title": "Remote code execution in Example",
+      "description": "An attacker can run code.",
+      "articles": [
+        {
+          "title": "Remote code execution in Example",
+          "url": "https://news.test/1",
+          "source": "hn",
+          "published": "2026-10-01T12:00:00Z"
+        }
+      ],
+      "fixes": [
+        {
+          "kind": "version",
+          "detail": "8.2.30",
+          "url": "https://fix.test/8.2.30",
+          "source": "ghsa",
+          "official": true
+        }
+      ],
+      "kev_action": "Apply updates."
+    }
+  },
+  "Why": [
+    "known exploited (CISA KEV), CISA remediation due 2026-10-05",
+    "critical severity",
+    "open in prod",
+    "EPSS 50% chance of exploitation in 30 days"
+  ],
+  "Targets": [
+    {
+      "project": "mw",
+      "env": "prod"
+    },
+    {
+      "project": "shop",
+      "env": "prod",
+      "installed": [
+        {
+          "name": "php",
+          "version": "8.2.10",
+          "via": "tech"
+        }
+      ],
+      "evidence": [
+        {
+          "time": "2026-10-03T12:00:00Z",
+          "actor": "alice",
+          "note": "deployed",
+          "url": "https://ci.test/run/42"
+        }
+      ]
+    }
+  ],
+  "Links": [
+    {
+      "kind": "advisory",
+      "source": "nvd",
+      "url": "https://nvd.test/CVE-2026-0100"
+    },
+    {
+      "kind": "fix",
+      "source": "ghsa",
+      "title": "version 8.2.30",
+      "url": "https://fix.test/8.2.30"
+    },
+    {
+      "kind": "article",
+      "source": "hn",
+      "title": "Remote code execution in Example",
+      "url": "https://news.test/1",
+      "time": "2026-10-01T12:00:00Z"
+    },
+    {
+      "kind": "evidence",
+      "source": "shop/prod",
+      "title": "deployed",
+      "url": "https://ci.test/run/42",
+      "time": "2026-10-03T12:00:00Z"
+    }
+  ],
+  "Affected": [
+    {
+      "ecosystem": "composer",
+      "name": "example/framework",
+      "ranges": [
+        {
+          "min": "8.0",
+          "max": "8.2.30",
+          "max_excl": true
+        }
+      ],
+      "fixed": "8.2.30"
+    }
+  ],
+  "History": [
+    {
+      "time": "2026-10-01T12:00:00Z",
+      "kind": "first-seen",
+      "detail": "first seen by cvewatch",
+      "source": "ledger"
+    },
+    {
+      "time": "2026-10-03T12:00:00Z",
+      "kind": "evidence",
+      "actor": "alice",
+      "project": "shop",
+      "env": "prod",
+      "detail": "shop/prod evidence: deployed",
+      "url": "https://ci.test/run/42",
+      "source": "audit"
+    }
+  ]
+}

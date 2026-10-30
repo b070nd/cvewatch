@@ -4,6 +4,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/b070nd/cvewatch/app/src/model"
+	"github.com/b070nd/cvewatch/app/src/ops"
 	"github.com/b070nd/cvewatch/app/src/setup"
 )
 
@@ -12,8 +13,10 @@ import (
 var mo struct {
 	noData, overview, status, findings, detail, filter, projects, project, fix *mode
 	formText, formChoice, formMulti, formConfirm, formReview, formBusy         *mode
-	prompt, promptBusy, folder, confirm, help                                  *mode
+	prompt, promptBusy, folder, confirm, help, doc                             *mode
 	jump, notice, formPick                                                     *mode
+	fields, fieldSub, picker, life                                             *mode
+	settings, setFields, setFilter, setReview                                  *mode
 }
 
 var statusKeys = map[string]model.Status{
@@ -49,19 +52,30 @@ func bindBack(what string, f func(m *app) tea.Cmd) binding {
 
 // bindTabs switches the screen from a level inside one.
 func bindTabs() binding {
-	return binding{keys: ks("tab", "shift+tab", "1", "2", "3", "4"), disp: "tab, 1-4",
-		help: "switch screen: tab and shift+tab cycle, 1-4 jump", prio: 4, nav: true, do: func(m *app, k tea.KeyMsg) tea.Cmd {
+	keys := ks("tab", "shift+tab")
+	for _, sc := range screens {
+		keys = append(keys, sc.key)
+	}
+	return binding{keys: keys, disp: "tab, " + screenKeys(),
+		help: "switch screen: tab and shift+tab cycle, " + screenKeys() + " jump", prio: 4, nav: true, do: func(m *app, k tea.KeyMsg) tea.Cmd {
 			switch s := k.String(); s {
 			case "tab":
 				m.stepScreen(1)
 			case "shift+tab":
 				m.stepScreen(-1)
 			default:
-				m.scr = screen(s[0] - '1')
+				for i, sc := range screens {
+					if sc.key == s {
+						m.scr = screen(i)
+					}
+				}
 			}
 			return nil
 		}}
 }
+
+// screenKeys is the range of keys that jump to a screen, such as 1-5.
+func screenKeys() string { return screens[0].key + "-" + screens[numScreens-1].key }
 
 // bindScreens is left and right on the first level of a screen.
 func bindScreens() binding {
@@ -158,7 +172,7 @@ func init() {
 	mo.detail = &mode{name: "detail", title: "Keys in an issue", level: true,
 		move: (*app).detailMove, moveShort: "env", moveHelp: "up/down select an environment; pgup/pgdn, home/end (or space) scroll the page",
 		wheel: func(m *app, up bool) { m.fnd.det.body.move(wheelStep(up)) },
-		click: func(m *app, x, y int) tea.Cmd { m.clickEnv(y); return nil },
+		click: func(m *app, x, y int) tea.Cmd { return m.clickEnv(y) },
 		binds: []binding{
 			{keys: ks("f", "i", "n", "o"), disp: "f/i/n/o", help: "mark the selected environment fixed, ignored, not affected or reopened; not-affected needs a reason",
 				short: "status", prio: 1, do: m2(func(m *app, s string) { m.startStatus(statusKeys[s], false) })},
@@ -169,6 +183,19 @@ func init() {
 			{keys: ks("]", "J"), disp: "]", help: "open the next issue of the list (J does the same)", short: "next", prio: 1, do: func(m *app, k tea.KeyMsg) tea.Cmd { return m.stepIssue(1) }},
 			{keys: ks("[", "K"), disp: "[", help: "open the previous issue of the list (K does the same)", short: "prev", prio: 1, do: func(m *app, k tea.KeyMsg) tea.Cmd { return m.stepIssue(-1) }},
 			{keys: ks("p"), help: "go to the project of the selected environment", short: "to project", prio: 2, do: plain((*app).goProject)},
+			{keys: ks("l", "L"), disp: "l/L", help: "select the next or previous link of References (the page scrolls to it)", short: "links", prio: 2,
+				do: func(m *app, k tea.KeyMsg) tea.Cmd {
+					if k.String() == "L" {
+						return m.stepLink(-1)
+					}
+					return m.stepLink(1)
+				}},
+			{keys: ks("enter"), help: "open the selected link in the browser", short: "open link", prio: 1, when: hasLink, do: plain((*app).openLink)},
+			{keys: ks("c"), help: "copy the selected link to the clipboard; without a clipboard tool the link is shown", short: "copy link", prio: 1, when: hasLink, do: plain((*app).copyLink)},
+			{keys: ks("v"), help: "show the evidence pack of the issue: facts, per-environment truth and the audit trail", short: "evidence pack", prio: 3, do: plain((*app).openEvidence)},
+			{keys: ks("R"), help: "show the full report of the issue, as cvewatch show prints it", short: "report", prio: 3, do: plain((*app).openReport)},
+			{keys: ks("+"), help: "add evidence (a note, a link or both) to the selected environment", short: "add evidence", prio: 2, do: plain(func(m *app) tea.Cmd { m.startEvidence(); return nil })},
+			{keys: ks("esc"), help: "unselect the link", short: "unselect", prio: 4, when: hasLink, do: plain((*app).clearLink)},
 			bindBack("back to the list of issues", func(m *app) tea.Cmd {
 				if m.retAt(lvDetail) {
 					return m.goBack()
@@ -180,6 +207,18 @@ func init() {
 		}}
 
 	// ---- projects ----
+	mo.doc = &mode{name: "doc", title: "Keys in the report and the evidence pack", level: true,
+		move: func(m *app, key string) bool {
+			if key == " " {
+				key = "pgdown"
+			}
+			return m.fnd.det.doc.vp.handle(key)
+		},
+		moveShort: "scroll", moveHelp: "scroll; pgup/pgdn page (or space), home/end first and last (k j g G work too)",
+		binds: []binding{
+			bindBack("back to the issue", (*app).closeDoc),
+			bindJump(), bindTabs(), bindHelp(),
+		}}
 	mo.projects = &mode{name: "projects", title: "Keys on the projects screen", level: true,
 		move: func(m *app, key string) bool {
 			before := m.prj.proj.id()
@@ -192,13 +231,19 @@ func init() {
 		click: func(m *app, x, y int) tea.Cmd { return m.clickProject(y - 1) },
 		binds: rootBinds(
 			binding{keys: ks("enter"), help: "open the project: its problems, each with its fix", short: "open", prio: 1, do: plain((*app).enterProject)},
-			binding{keys: ks("e"), help: "edit the project (technologies, versions, lockfiles, environments)", short: "edit", prio: 1, do: plain((*app).editProject)},
-			binding{keys: ks("a", "n"), disp: "a", help: "add a project", short: "add", prio: 2, do: plain((*app).addProject)},
+			binding{keys: ks("c"), help: "open the project's fields: environments, technologies, lockfiles, versions, images, since", short: "fields", prio: 1, do: plain((*app).openFields)},
+			binding{keys: ks("e"), help: "edit the project step by step in a guided form (to change one field directly, press c)", short: "guided edit", prio: 3, do: plain((*app).editProject)},
+			binding{keys: ks("a", "n"), disp: "a", help: "add a project with the guided form", short: "add", prio: 2, do: plain((*app).addProject)},
+			binding{keys: ks("N"), help: "new empty project: a name and its environments, no folder needed", short: "new", prio: 3, do: plain((*app).newProject)},
 			binding{keys: ks("d"), help: "add a project from a folder: it is scanned and proposals are offered", short: "scan folder", prio: 2, do: plain((*app).scanFolder)},
 			binding{keys: ks("x", "f"), disp: "x", help: "fix the selected problem: shows the change to the file, enter or y applies it", short: "fix", prio: 2, do: plain((*app).startFix)},
 			binding{keys: ks("E", "o"), disp: "E", help: "open the project's file in $EDITOR (also when it is broken), then reload", short: "editor", prio: 3, do: plain((*app).openEditor)},
 			binding{keys: ks("p", "P"), alias: true, help: "next or previous problem of the project", do: (*app).stepProblem},
 			binding{keys: ks("i", "F"), disp: "i", help: "the issues of this project: the findings screen filtered by it", short: "issues", prio: 2, do: plain((*app).goFindings)},
+			binding{keys: ks("R"), help: "rename the project: its findings and access rules follow the new name", short: "rename", prio: 4, do: lifeKey(ops.VerbRename)},
+			binding{keys: ks("D"), help: "duplicate the project under another name", short: "duplicate", prio: 5, do: lifeKey(ops.VerbDuplicate)},
+			binding{keys: ks("X"), help: "delete the project: its file moves to the project backups", short: "delete", prio: 5, do: lifeKey(ops.VerbDelete)},
+			binding{keys: ks("Z"), help: "disable the project (its file is switched off), or enable a disabled one", short: "disable/enable", prio: 4, do: lifeKey(ops.VerbDisable)},
 			bindReturn(lvList),
 		),
 	}
@@ -207,9 +252,15 @@ func init() {
 		moveShort: "problem",
 		binds: []binding{
 			{keys: ks("enter", "right", "l", "x", "f"), disp: "enter", help: "preview the fix of the selected problem; enter or y applies it", short: "fix", prio: 1, do: plain((*app).startFix)},
-			{keys: ks("e"), help: "edit the project (technologies, versions, lockfiles, environments)", short: "edit", prio: 2, do: plain((*app).editProject)},
-			{keys: ks("E", "o"), disp: "E", help: "open the project's file in $EDITOR (also when it is broken), then reload", short: "editor", prio: 2, do: plain((*app).openEditor)},
-			{keys: ks("a", "n"), disp: "a", help: "add a project", prio: 4, do: plain((*app).addProject)},
+			{keys: ks("c"), help: "edit the project's fields directly: environments, technologies, lockfiles, versions, images, since", short: "fields", prio: 1, do: plain((*app).openFields)},
+			{keys: ks("e"), help: "edit the project step by step in a guided form (to change one field directly, press c)", short: "guided edit", prio: 4, do: plain((*app).editProject)},
+			{keys: ks("E", "o"), disp: "E", help: "open the project's file in $EDITOR (also when it is broken), then reload", short: "editor", prio: 3, do: plain((*app).openEditor)},
+			{keys: ks("R"), help: "rename the project: its findings and access rules follow the new name", short: "rename", prio: 4, do: lifeKey(ops.VerbRename)},
+			{keys: ks("D"), help: "duplicate the project under another name", short: "duplicate", prio: 5, do: lifeKey(ops.VerbDuplicate)},
+			{keys: ks("X"), help: "delete the project: its file moves to the project backups", short: "delete", prio: 5, do: lifeKey(ops.VerbDelete)},
+			{keys: ks("Z"), help: "disable the project (its file is switched off)", short: "disable", prio: 4, do: lifeKey(ops.VerbDisable)},
+			{keys: ks("N"), help: "new empty project: a name and its environments, no folder needed", prio: 4, do: plain((*app).newProject)},
+			{keys: ks("a", "n"), disp: "a", help: "add a project with the guided form", prio: 4, do: plain((*app).addProject)},
 			{keys: ks("d"), help: "add a project from a folder", prio: 4, do: plain((*app).scanFolder)},
 			{keys: ks("i", "F"), disp: "i", help: "the issues of this project: the findings screen filtered by it", short: "issues", prio: 3, do: plain((*app).goFindings)},
 			{keys: ks("[", "]"), disp: "[/]", help: "choose another fix of the problem when it has several", short: "fix", prio: 2,
@@ -225,7 +276,7 @@ func init() {
 		}}
 	mo.fix = &mode{name: "fix", title: "Keys in the fix preview", move: viewportOf(func(m *app) *viewport { return &m.prj.fix.vp }), moveShort: "scroll",
 		binds: []binding{
-			{keys: ks("enter", "y", "Y"), disp: "enter/y", help: "apply the fix to the project file", short: "apply",
+			{keys: ks("enter", "y", "Y"), disp: "enter/y", help: "apply the fix or the change to the project file", short: "apply",
 				when: notSaving, do: plain((*app).applyFix)},
 			{keys: ks("[", "]", "left", "right", "h", "l"), disp: "[/]", help: "choose another fix of the problem: left and right work too", short: "fix", prio: 1,
 				when: fixChoice, do: func(m *app, k tea.KeyMsg) tea.Cmd {
@@ -395,7 +446,8 @@ func formMode(f *form) *mode {
 func allModes() []*mode {
 	return []*mode{mo.noData, mo.overview, mo.status, mo.findings, mo.filter, mo.detail, mo.projects, mo.project, mo.fix,
 		mo.formBusy, mo.formText, mo.formChoice, mo.formMulti, mo.formConfirm, mo.formReview, mo.formPick, mo.prompt, mo.promptBusy, mo.folder, mo.confirm,
-		mo.jump, mo.notice, mo.help}
+		mo.jump, mo.notice, mo.help, mo.doc, mo.fields, mo.fieldSub, mo.picker, mo.life,
+		mo.settings, mo.setFields, mo.setFilter, mo.setReview}
 }
 
 func wheelStep(up bool) int {

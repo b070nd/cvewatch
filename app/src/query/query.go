@@ -180,9 +180,7 @@ func One(l *ledger.Ledger, id string, f Filter, now time.Time) (Issue, error) {
 	is := issue(v, now)
 	for _, fd := range l.FindingsOf(v.ID) {
 		if f.allows(fd.Project) {
-			is.Targets = append(is.Targets, target(fd, now))
-			is.Applies = worst(is.Applies, fd.Applies, len(is.Targets) == 1)
-			is.ProdOpen = is.ProdOpen || (fd.Env == model.EnvProd && fd.Status == model.StatusOpen)
+			is.addTarget(fd, now)
 		}
 	}
 	if len(f.Projects) > 0 && len(is.Targets) == 0 {
@@ -214,6 +212,13 @@ func Entries(l *ledger.Ledger, f Filter, now time.Time) []calendar.Entry {
 		})
 	}
 	return out
+}
+
+// addTarget lists a finding on the issue and folds it into the issue's verdicts.
+func (is *Issue) addTarget(fd model.Finding, now time.Time) {
+	is.Targets = append(is.Targets, target(fd, now))
+	is.Applies = worst(is.Applies, fd.Applies, len(is.Targets) == 1)
+	is.ProdOpen = is.ProdOpen || (fd.Env == model.EnvProd && fd.Status == model.StatusOpen)
 }
 
 func worst(cur, next model.Applicability, first bool) model.Applicability {

@@ -4,7 +4,7 @@ One package per concern under `app/src`. The arrows show who depends on whom; th
 
 | Module | Owns | Seam |
 |---|---|---|
-| `ops` | every operation (list, show, search, why, rescan, calendar, status, assign, evidence, export, policy, digest, inventory, project edits, project problems, refresh), validation, access rules, audit order | CLI, TUI and MCP are its adapters; read-only sessions read a lock-free snapshot |
+| `ops` | every operation (list, show, search, why, rescan, calendar, status, assign, evidence, export, policy, digest, inventory, refresh), the issue page (`IssueDetail`), project edits and problems, project lifecycle (`lifecycle.go`: rename, duplicate, delete, disable and enable; previewed, then applied with undo), settings (`settings.go`: previewed, then saved), validation, access rules, audit order | CLI, TUI and MCP are its adapters; read-only sessions read a lock-free snapshot |
 | `pipeline` | one refresh cycle: fetch, judge, record, reconcile, enrich, report, alert, digest | `feeds.Getter`, `notify.Channel` |
 | `inventory` | what runs in each project environment | `matrix` adapters |
 | `matrix` | reading lockfiles and SBOMs | one adapter per type (ten today) |
@@ -17,7 +17,7 @@ One package per concern under `app/src`. The arrows show who depends on whom; th
 | `feeds` | each source type into items with ranges, fixes and KEV data | `parsers` map: one adapter per type |
 | `epss` | exploit probability lookup | `Getter` |
 | `httpx` | polite, guarded HTTP GET | `feeds.Getter` |
-| `query` | read model: issues, age, chronological articles, fix info, targets; the search syntax and its matching (`search.go`) | |
+| `query` | read model: issues, age, chronological articles, fix info, targets; `Detail` (the issue page: targets with installed versions and evidence, links, affected ranges, why it ranks, history); the search syntax and its matching (`search.go`) | |
 | `export` | the versioned data contract and its writers | JSON, CSV, Markdown adapters; MCP |
 | `evidence` | evidence pack and timeline for one issue | |
 | `report`, `calendar`, `notify` | markdown, calendar page, channel messages | `notify.Channel`: Slack, webhook, email |
@@ -25,10 +25,12 @@ One package per concern under `app/src`. The arrows show who depends on whom; th
 | `doctor` | configuration and environment checks, `init` (saves through `projectflow` and `ops`) | |
 | `catalog` | the technology catalog (open and closed source): lookup by name, image, package, file or word; validation | shipped entries layered with the user's `techs.yaml` |
 | `discovery` | what a repository uses, with evidence and confidence (lockfiles, version files, Dockerfiles, compose, Kubernetes, Terraform, `.tool-versions`); `Suggest` and `Complete` for the TUI folder box: child folders with project marks, and tab completion | one detector per source; reads files only |
-| `projectfile` | comment-preserving edits of a project file: validate, diff, backup, atomic write; `CheckFiles` finds lockfiles that are missing or of the wrong type, with fixes (`Issue`, `Fix`) | none: pure plus one file write |
+| `projectfile` | comment-preserving edits of a project file: validate, diff, backup, atomic write; `OpTable` (`opspec.go`) is the one list of edit kinds, with their inputs, CLI flags and an example each; `CheckFiles` finds lockfiles that are missing or of the wrong type, with fixes (`Issue`, `Fix`) | none: pure plus one file write |
+| `confdoc` | the configuration documents: `config.yaml`, `techs.yaml` and `sources/*.yaml`. `doc.go` reads them and keeps their YAML trees; `schema.go` describes every setting (path, type, section, allowed values, default, secret); `edit.go` applies set, unset, append and replace by path; `check.go` validates the result the way `config.Load` does; `write.go` saves atomically with a backup; `view.go` shows values, with secrets as `(set)` | none: pure, plus one file write |
+| `mcpserver`, `cmd/cvewatch` | the MCP server and the CLI: parse input, call `ops`, print or return the result. The setup tools are in `setup.go`, the settings and whole-project tools in `manage.go`; the project input schema is built from `OpTable` (`schema.go`) | `ops` |
 | `setup` | the setup flow: steps as data, defaults, validation, answers turned into project-file edits | `wizard`, `tui` and MCP are its adapters |
 | `projectflow` | the one place that turns a typed folder (`ResolveFolder`) or an existing project into a setup flow (`Open`), and the flow into project-file edits (`Edits`); lockfile paths made relative to the root | `ops.Session`; used by `tui`, `wizard` and `doctor` (`init`). Imports `ops`, `setup`, `discovery`, `projectfile`, `model` |
-| `wizard`, `tui` | plain prompt and full-screen front ends of the setup flow. The TUI has the Overview, Findings, Projects and Status screens, the project forms, prompts and folder box; see [The TUI](#the-tui). `tui` is its own program (`cvewatch-tui`) because Bubble Tea queries the terminal at start-up | `ops.Session`, through the `Backend` seam (`Read` and `Write`) |
+| `wizard`, `tui` | plain prompt and full-screen front ends of the setup flow. The TUI has five screens (Overview, Findings, Projects, Status and Settings), the project forms, the field editor, the lifecycle prompts, prompts and the folder box; see [The TUI](#the-tui). `tui` is its own program (`cvewatch-tui`) because Bubble Tea queries the terminal at start-up | `ops.Session` and `ops.SettingsSession`, through the `Backend` seam (`Read`, `Write` and `Settings`) |
 | `status` | health of the tool: daemon, feeds, channels, cycles | none: pure |
 | `dashboard` | static HTML status and findings page, no scripts | none: pure |
 | `daemon` | the refresh loop: heartbeat, dashboard, short sessions | |
@@ -44,7 +46,13 @@ The TUI is a Bubble Tea program in `app/src/tui`. Its state is the `app` model i
 | File | Owns |
 |---|---|
 | `modes.go` | a **mode** is one layer on screen: a screen, a level inside it, a form, or a popup. Each mode has its bindings, its moving keys and its help title. `stack` derives the open layers from the state, so they cannot drift. `dispatch` runs a key on the top mode. The footer (`footerLine`) and the help (`helpLines`) are written from the same table |
-| `keymap.go` | the binding table of every mode, built in `init`. A binding has its keys, a label for the help, a short label for the footer, an optional alias, a priority that decides what the footer drops first, and an optional `when` condition |
+| `keymap.go` | the binding table of every mode, built in `init`. A binding has its keys, a label for the help, a short label for the footer, an optional alias, a priority that decides what the footer drops first, and an optional `when` condition. The keys of the field editor and the lifecycle prompts are in `editkeys.go`, and those of the Settings screen in `settings.go`; they are built the same way |
+| `screens.go` | the screens, one row each: name, number key, whether it works without the snapshot, and the modes, body, layout, breadcrumb and tab badge. The tabs, Left and Right, the number keys and the help all read this table |
+| `fields.go` | the project field editor (`c`): the fields of a project file (environments, technologies, lockfiles, versions per environment, images, since), their rows, and the edits they build (`OpKinds`) |
+| `lifecycle.go` | a whole-project change on its way: the consequences from `ops.ProjectLifecycle`, the typed name for a delete, the apply and the message when it fails |
+| `settings.go`, `setmodel.go`, `setedit.go` | the Settings screen. `settings.go` holds the screen and its levels; `setmodel.go` arranges the documents from `ops` into sections, records and fields, with no drawing; `setedit.go` holds the editors, and each one ends in a list of `confdoc` edits that `ops` previews |
+| `detail.go`, `docview.go` | the issue page: its layout (environments, references, evidence, history) and the report and evidence-pack views |
+| `desktop.go` | what the machine does for the TUI: show a link (`open`, `xdg-open` or `rundll32`) and copy text (`pbcopy`, `clip`, `wl-copy`, `xclip`, `xsel` or `clip.exe`). Commands run without a shell; tests replace the whole thing with a fake |
 | `viewport.go` | the cursor and visible window of every list and scrolling text. The shared movement keys (up, down, paging, home, end) are handled here once, not in the tables |
 | `crumbs.go` | the breadcrumb: the levels the user is in, each with the action that goes back to it |
 | `mouse.go` | the pointer: the wheel, a click on a row, the screen tabs and the breadcrumb |
@@ -53,11 +61,26 @@ The TUI is a Bubble Tea program in `app/src/tui`. Its state is the `app` model i
 | `jump.go` | the jump box: matching issues and projects as the user types |
 | `fix.go`, `form.go`, `prompt.go`, `folder.go` | the flows that use the modes: fix previews, the project form, the prompts and the folder box |
 
-Rule for keys: a key is one binding in `keymap.go`. The footer and the help pick it up by themselves. Do not add a key in a second place.
+Rule for keys: a key is one binding in its mode's table (`keymap.go`, `editkeys.go` or `settings.go`). The footer and the help pick it up by themselves. Do not add a key in a second place.
+
+### Screens
+
+| Key | Screen | Shows |
+|---|---|---|
+| 1 | Overview | the health line and the policy violations, each opening its issue |
+| 2 | Findings | the issue list, the issue page, triage and the filter |
+| 3 | Projects | the project list, each project's problems and fixes, the field editor, the folder box and the lifecycle keys |
+| 4 | Status | the daemon, the feeds, the channels and the last cycles |
+| 5 | Settings | the configuration files as sections and fields. It is the only screen that works without the snapshot of the others, so it opens when a file is broken |
+
+Settings reads the documents through `ops.OpenSettings`, which loads nothing. Nothing is written before the yes on a preview: every editor builds a list of `confdoc.Edit` values, and `ops` checks and previews them. A list of edits is one change; it saves all of them or none.
 
 Rules of thumb kept by the structure:
 
 - A rule lives in one place. Relevance and versions in `relevance` and `version`, identity and merging in `ledger`, validation and access in `ops`.
+- A new setting is one row in `confdoc/schema.go`. `TestSchemaCoversEveryKey` fails when a key of `config.Settings`, `model.Tech` or `model.Source` has no row.
+- A new project edit kind is one row in `projectfile.OpTable` and its case in `apply`. The parity tests then check its CLI flag (`TestEveryOpKindHasACLIFlag`) and the MCP schema (`TestProjectSchemaCoversTheOpTable`). `setup/opkinds.go` must also list the kind in `OpKinds` or `NotYet`, which a test enforces. The TUI editor's own `OpKinds` list in `fields.go` is kept by hand.
+- A new screen is one row in the screens table (`screens.go`).
 - Front ends hold no behaviour. `cmd/cvewatch`, `mcpserver`, `wizard` and `tui` parse input and draw output; setup rules live in `setup`, operations in `ops`, and the folder-to-flow and flow-to-edits steps in `projectflow`.
 - Viewers never block the daemon: reads use a snapshot without the lock, and every write is one short session that retries once if another process saved first.
 - Only technologies a project declares are judged, so a large catalog costs nothing in noise.

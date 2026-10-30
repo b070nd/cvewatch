@@ -10,8 +10,9 @@ import (
 type reloadSet uint8
 
 const (
-	reList   reloadSet = 1 << iota // the snapshot: issues, status, project rows and their problems
-	reDetail                       // the open issue
+	reList     reloadSet = 1 << iota // the snapshot: issues, status, project rows and their problems
+	reDetail                         // the open issue
+	reSettings                       // the configuration documents
 )
 
 type pendingOp struct {
@@ -140,6 +141,10 @@ func (m *app) result(msg tea.Msg) outcome {
 			delete(m.fnd.sel, id)
 		}
 		return outcome{note: msg.info, warn: msg.warn, err: msg.err}
+	case desktopMsg:
+		return outcome{note: msg.note, err: msg.err}
+	case evidenceMsg:
+		return m.evidenceLoaded(msg)
 	case detailMsg:
 		m.detailLoaded(msg)
 	case flowMsg:
@@ -150,6 +155,16 @@ func (m *app) result(msg tea.Msg) outcome {
 		return m.saved(msg)
 	case fixSavedMsg:
 		return m.fixSaved(msg)
+	case editCheckedMsg:
+		return m.editChecked(msg)
+	case setCheckedMsg:
+		return m.setChecked(msg)
+	case setSavedMsg:
+		return m.setSaved(msg)
+	case lifePreviewMsg:
+		return m.lifePreviewed(msg)
+	case lifeAppliedMsg:
+		return m.lifeApplied(msg)
 	case editedMsg:
 		if msg.err != nil {
 			return outcome{err: fmt.Errorf("editor: %w", msg.err)}
@@ -161,6 +176,12 @@ func (m *app) result(msg tea.Msg) outcome {
 // refresh reads again what set names.
 func (m *app) refresh(set reloadSet) tea.Cmd {
 	var cmds []tea.Cmd
+	if set&reList != 0 && m.scr == scrSettings {
+		set |= reSettings
+	}
+	if set&reSettings != 0 {
+		cmds = append(cmds, m.loadSettings())
+	}
 	if set&reList != 0 {
 		m.loading = true
 		cmds = append(cmds, loadCmd(m.b))

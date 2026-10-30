@@ -35,12 +35,14 @@ var (
 // fake is a Backend over an in-memory store, so tests need no files for the
 // state. Like the real one it opens a fresh session per call.
 type fake struct {
-	mu     sync.Mutex
-	cfg    *config.Bundle
-	st     store.Storage
-	reads  int
-	writes int
-	active atomic.Int32 // backend calls started and not yet finished
+	mu       sync.Mutex
+	cfg      *config.Bundle
+	st       store.Storage
+	reads    int
+	writes   int
+	settings int          // settings sessions opened
+	active   atomic.Int32 // backend calls started and not yet finished
+	disk     string       // when set, every session loads the configuration from this folder, like the real backend
 }
 
 func (f *fake) busy() bool { return f.active.Load() > 0 }
@@ -49,10 +51,16 @@ func (f *fake) session(write bool) (*ops.Session, error) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	var s *ops.Session
 	var err error
+	cfg := f.cfg
+	if f.disk != "" {
+		if cfg, err = config.LoadLenient(f.disk); err != nil {
+			return nil, err
+		}
+	}
 	if write {
-		s, err = ops.OpenWith(f.cfg, f.st, log)
+		s, err = ops.OpenWith(cfg, f.st, log)
 	} else {
-		s, err = ops.OpenReadOnlyWith(f.cfg, f.st, log)
+		s, err = ops.OpenReadOnlyWith(cfg, f.st, log)
 	}
 	if err != nil {
 		return nil, err
@@ -73,6 +81,26 @@ func (f *fake) Read(fn func(*ops.Session) error) error {
 	}
 	defer s.Close()
 	return fn(s)
+}
+
+// Settings opens the documents of the configuration folder, as the real
+// backend does: without loading the configuration, so a broken one opens too.
+func (f *fake) Settings(fn func(*ops.SettingsSession) error) error {
+	f.active.Add(1)
+	defer f.active.Add(-1)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.settings++
+	root := f.disk
+	if root == "" {
+		root = f.cfg.Root
+	}
+	ss, err := ops.OpenSettings(root)
+	if err != nil {
+		return err
+	}
+	ss.Actor, ss.Now = actor(), func() time.Time { return tNow }
+	return fn(ss)
 }
 
 func (f *fake) Write(fn func(*ops.Session) error) error {
@@ -156,6 +184,7 @@ func start(t *testing.T, b Backend, o Options) *driver {
 		o.Refresh = time.Hour
 	}
 	d := &driver{t: t, m: New(b, o), b: b}
+	d.m.(*app).sys = &fakeDesktop{}
 	d.m.(*app).after = func(_ time.Duration, msg tea.Msg) tea.Cmd { d.timers = append(d.timers, msg); return nil }
 	d.send(tea.WindowSizeMsg{Width: 120, Height: 40})
 	d.run(loadCmd(b)) // what Init does, minus the timer that would only wait
@@ -299,3 +328,28 @@ func (d *driver) wheel(up bool, x, y int) {
 }
 
 func tea_window(w, h int) tea.WindowSizeMsg { return tea.WindowSizeMsg{Width: w, Height: h} }
+
+// fakeDesktop records what the TUI asked of the machine instead of doing it.
+type fakeDesktop struct {
+	opened   []string
+	copied   []string
+	openErr  error
+	copyErr  error // errNoClipboard for a machine without a tool
+	copyTool string
+}
+
+func (f *fakeDesktop) Open(url string) error {
+	f.opened = append(f.opened, url)
+	return f.openErr
+}
+
+func (f *fakeDesktop) Copy(text string) (string, error) {
+	if f.copyErr != nil {
+		return "", f.copyErr
+	}
+	f.copied = append(f.copied, text)
+	if f.copyTool == "" {
+		return "faketool", nil
+	}
+	return f.copyTool, nil
+}

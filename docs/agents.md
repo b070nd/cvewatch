@@ -29,16 +29,41 @@ Setup tools (read-only unless noted) let an agent configure the monitor with the
 | `list_projects` | the monitored projects with environments, technologies and lockfiles |
 | `check_projects` | problems in project files: technologies not in the catalog, lockfiles missing, unreadable or of the wrong type, lockfiles whose environment is not in `envs`, entries skipped while reading a lockfile. Optional `project`; each problem may come with fixes. A project file that cannot be read is reported as an error on field `file`, not as a failure of the tool. Writes nothing |
 | `preview_project_change` | the diff and problems a change to a project file would produce; writes nothing |
-| `edit_project` | only with `-allow-write`: apply the change (comments kept, old file backed up, audited as `project`) |
+| `edit_project` | only with `-allow-write`: apply the change (comments kept, old file backed up, audited as `project`). Takes the same inputs as `preview_project_change` |
 | `get_status` | health of the monitor: daemon, feeds, channels, recent cycles |
+| `get_settings` | the configuration files (`config.yaml`, `techs.yaml`, `sources/*.yaml`) with the values that are set. Secret values read `(set)`. `include_schema` adds every setting with its path, type, allowed values, default and help. Works when a file is broken: that file reports its error |
+| `preview_settings_change` | the diff and problems that edits would produce; writes nothing |
+| `edit_settings` | only with `-allow-write`: save the same edits. Refused when they add an error. Comments are kept, the old files are backed up, and the change is audited by path, never by value. The daemon uses it from its next cycle |
+| `manage_project` | only with `-allow-write`: rename, duplicate, delete, disable or enable a whole project. Without `confirm` it returns the consequences and changes nothing; with `confirm: true` it carries the change out |
 
-`check_projects` returns `{"issues": [...]}`. Each issue has `Level` (`error` or `warning`), `Field` (for example `lockfiles[0].env`), `Message` and `Project`. When a fix is known, the issue also has `fixes`, a list of `label` and `ops`. The `ops` use the same names as `edit_project` (`kind`, `tech`, `version`, `env`, `envs`, `image`, and `lockfile` as an object with `type`, `path` and `env`), so pass them on as they are. Show the user the label, run `preview_project_change` with the fix, and only then `edit_project`.
+The settings tools need an actor that may see every project, because the settings name all of them. A restricted actor gets an access refusal.
+
+Each change is two steps. Preview first, show the user the diff or the consequences, and save only after a clear yes. `preview_project_change` and `preview_settings_change` write nothing. `manage_project` is one tool: call it without `confirm` to get the consequences, and again with `confirm: true` once the user agreed. Without `-allow-write` the write tools are not listed at all, so a read-only client cannot preview `manage_project` either.
+
+Inputs of `edit_settings` and `preview_settings_change`: `edits`, a list applied in order, all or none. Each edit has:
+
+- `op`: `set` (give a path a value, or add a map entry), `unset` (remove a value, a map entry or a list item) or `append` (add an item to a list). `replace` is not available here.
+- `path`: a path from `get_settings` with `include_schema`, such as `http.timeout` or `policy.rules`. A dotted name goes in brackets (`http.host_rates[services.nvd.nist.gov]`). A list item is picked with `[name=php]`, or by its position.
+- `value`: text such as `45s` or `true`, converted to the setting's type; a number, a list, or an object for a record. Not used by `unset`.
+- `doc`: optional. `config`, `techs` or `sources/NAME`. Empty lets the path decide.
+
+Outputs of the settings tools: `saved`, `changed` (the IDs of the documents that differ), `diff`, `diffs`, `issues` (each with `level`, `doc`, `field`, `line`, `message` and `existing`) and `note`. An error that is not `existing` blocks the save.
+
+Inputs of `manage_project`: `verb` (`rename`, `duplicate`, `delete`, `disable` or `enable`), `project`, `new_name` (rename and duplicate), `close_findings` (delete only: mark its open findings ignored) and `confirm`. The output has `findings` (`total` and `by_status`), `access` (each rule with `actor`, `action`, which is `rename` or `remove`, and `left`), `files` (`action`, `from`, `to`), `warnings`, `destructive`, `requires_confirm`, `applied` and `backup`. Delete moves the file to the backups; it does not erase it.
+
+`check_projects` returns `{"issues": [...]}`. Each issue has `Level` (`error` or `warning`), `Field` (for example `lockfiles[0].env`), `Message` and `Project`. When a fix is known, the issue also has `fixes`, a list of `label` and `ops`. The `ops` use the same names as `edit_project` (`kind`, `tech`, `version`, `env`, `envs`, `image`, `since`, and `lockfile` as an object with `type`, `path`, `env` and `dev`), so pass them on as they are. Show the user the label, run `preview_project_change` with the fix, and only then `edit_project`.
+
+The project edit inputs, for `preview_project_change` and `edit_project`:
+
+- `since`: the first day advisories count from, `YYYY-MM-DD`. An empty value clears it.
+- `lockfile`: one object with `type`, `path`, `env` (optional) and `dev` (optional, a boolean). `dev: true` counts the lockfile's development-only packages in every environment. The flat fields `lockfile_type`, `lockfile_path`, `lockfile_env` and `lockfile_dev` do the same.
+- `kind`: one of the op kinds in `projectfile.OpTable`, each described in the schema with the inputs it takes. The kinds are `set_envs`, `set_tech`, `remove_tech`, `set_env_tech`, `remove_env_tech`, `set_image`, `add_lockfile`, `remove_lockfile`, `set_lockfile_dev` and `set_since`.
 
 `discover_stack` reads files in the folder it is given and nothing else: it never executes anything, never follows symbolic links, skips dependency folders and caps depth, file count and file size. Its output is evidence for a human to confirm, not a decision.
 
 Skill files for Claude Code live in `skills/`: `cvewatch-setup` walks through the tools above with the user, and `cvewatch-triage` reads and records findings. Copy them to `~/.claude/skills/` or a project's `.claude/skills/`.
 
-The server inherits the permissions of the local user that starts it and speaks only over stdio; there is no network listener. Add `-allow-write` to the command to also expose `set_status` (fixed, ignored, not_affected with a reason, open), `assign` (owner, due date, ticket), `attach_evidence` and `refresh` (fetch all sources, alert channels). Leave it off for shared setups; marking an issue fixed changes what the team believes is patched. Changes made through MCP are recorded in the audit log with the actor `mcp:<user>`.
+The server inherits the permissions of the local user that starts it and speaks only over stdio; there is no network listener. Add `-allow-write` to the command to also expose `set_status` (fixed, ignored, not_affected with a reason, open), `assign` (owner, due date, ticket), `attach_evidence`, `refresh` (fetch all sources, alert channels), `edit_project`, `edit_settings` and `manage_project`. Leave it off for shared setups; marking an issue fixed changes what the team believes is patched, and a settings or project change changes what the monitor watches. Changes made through MCP are recorded in the audit log with the actor `mcp:<user>`.
 
 Read tools use a snapshot and never wait for a running `daemon`. A tool that changes something opens the data directory briefly. If it hits the daemon mid-cycle it fails with "another cvewatch process is using the data directory"; retry.
 

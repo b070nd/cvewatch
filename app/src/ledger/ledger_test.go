@@ -142,3 +142,36 @@ func TestSimilar(t *testing.T) {
 		}
 	}
 }
+
+func TestRenameProjectMovesFindingsAndRefusesCollisions(t *testing.T) {
+	l := New(State{})
+	v := l.Create(item("PHP bug", "https://a.test/1", "s", "CVE-2026-1"), day, []string{"php"})
+	for _, p := range []string{"shop", "other"} {
+		for _, e := range []model.Env{model.EnvDev, model.EnvProd} {
+			l.AddFinding(model.Finding{VulnID: v.ID, Project: p, Env: e, Status: model.StatusOpen})
+		}
+	}
+	if _, err := l.RenameProject("shop", "other"); err == nil {
+		t.Fatal("a rename onto findings with the same keys must fail")
+	}
+	if n := len(l.Findings()); n != 4 || l.Findings()[3].Project != "shop" {
+		t.Fatalf("a failed rename changed something: %+v", l.Findings())
+	}
+	if _, err := l.SetStatus(v.ID, "shop", model.EnvProd, model.StatusFixed, "done", day); err != nil {
+		t.Fatal(err)
+	}
+	n, err := l.RenameProject("shop", "webshop")
+	if err != nil || n != 2 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	var got []string
+	for _, f := range l.Findings() {
+		got = append(got, f.Project+"/"+string(f.Env)+"/"+string(f.Status))
+	}
+	if len(got) != 4 || got[2] != "webshop/dev/open" || got[3] != "webshop/prod/fixed" {
+		t.Fatalf("got %v", got)
+	}
+	if n, err := New(l.State()).RenameProject("shop", "x"); err != nil || n != 0 {
+		t.Fatalf("nothing left under the old name: %d %v", n, err)
+	}
+}

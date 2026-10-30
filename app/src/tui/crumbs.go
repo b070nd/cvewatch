@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -22,46 +23,48 @@ func popTo(f func(m *app)) func(m *app) tea.Cmd {
 
 // crumbs is the path of levels the user is in, from the screen down.
 func (m *app) crumbs() []crumb {
-	cs := []crumb{{label: screenNames[m.scr]}}
-	switch m.scr {
-	case scrFindings:
-		d := m.fnd.det
-		if d == nil {
-			break
+	cs := []crumb{{label: screens[m.scr].name}}
+	if f := screens[m.scr].crumbs; f != nil {
+		cs = f(m, cs)
+	}
+	return cs
+}
+
+func findingsCrumbs(m *app, cs []crumb) []crumb {
+	d := m.fnd.det
+	if d == nil {
+		return cs
+	}
+	cs[0].back = popTo(func(m *app) { m.fnd.det = nil })
+	cs = append(cs, crumb{label: oneLine(d.id)})
+	if !d.loading && d.err == nil && d.sel.at() >= 0 && d.sel.at() < len(d.is.Targets) {
+		t := d.is.Targets[d.sel.at()]
+		cs = append(cs, crumb{label: oneLine(t.Project) + ":" + oneLine(string(t.Env))})
+	}
+	switch {
+	case d.doc != nil:
+		closeDoc := popTo(func(m *app) { m.fnd.det.doc = nil })
+		for i := 1; i < len(cs); i++ {
+			cs[i].back = closeDoc
 		}
-		cs[0].back = popTo(func(m *app) { m.fnd.det = nil })
-		cs = append(cs, crumb{label: oneLine(d.id)})
-		if !d.loading && d.err == nil && d.sel.at() >= 0 && d.sel.at() < len(d.is.Targets) {
-			t := d.is.Targets[d.sel.at()]
-			cs = append(cs, crumb{label: oneLine(t.Project) + ":" + oneLine(string(t.Env))})
+		cs = append(cs, crumb{label: d.doc.kind})
+	case d.link > 0 && d.link <= len(d.links()):
+		cs = append(cs, crumb{label: fmt.Sprintf("References %d/%d", d.link, len(d.links()))})
+	}
+	return cs
+}
+
+func projectsCrumbs(m *app, cs []crumb) []crumb {
+	switch {
+	case m.frm != nil:
+		cs[0].back = (*app).leaveForm
+		name := "add project"
+		if !m.frm.creating {
+			name = "edit " + oneLine(m.frm.existing)
 		}
-	case scrProjects:
-		switch {
-		case m.frm != nil:
-			cs[0].back = (*app).leaveForm
-			name := "add project"
-			if !m.frm.creating {
-				name = "edit " + oneLine(m.frm.existing)
-			}
-			cs = append(cs, crumb{label: name}, crumb{label: oneLine(m.frm.step.Title)})
-		case m.prj.deep || m.prj.fix != nil:
-			p, ok := m.selectedProject()
-			if !ok {
-				break
-			}
-			cs[0].back = popTo(func(m *app) { m.prj.deep, m.prj.fix = false, nil })
-			cs = append(cs, crumb{label: oneLine(p.Name)})
-			if len(p.Problems) > 0 && m.prj.prob.at() < len(p.Problems) {
-				cs = append(cs, crumb{label: "problem: " + oneLine(p.Problems[m.prj.prob.at()].Message)})
-			}
-			if m.prj.fix != nil {
-				cs[1].back = popTo(func(m *app) { m.prj.deep, m.prj.fix = true, nil })
-				if len(cs) > 2 {
-					cs[2].back = popTo(func(m *app) { m.prj.fix = nil })
-				}
-				cs = append(cs, crumb{label: "fix"})
-			}
-		}
+		cs = append(cs, crumb{label: name}, crumb{label: oneLine(m.frm.step.Title)})
+	case m.prj.deep || m.prj.fix != nil || m.prj.life != nil || m.prj.ed != nil:
+		cs = m.projectCrumbs(cs)
 	}
 	return cs
 }
@@ -140,4 +143,60 @@ func (m *app) crumbLine(w int) (string, []crumbSpan) {
 		out.WriteString(stMuted.Render(" " + strings.Repeat("─", w-x-1)))
 	}
 	return out.String(), spans
+}
+
+// projectCrumbs is the path inside a project: the project, then the field
+// editor and what is open in it, or the problem and its fix, or the change to
+// the whole project that waits for its confirmation. Each crumb goes back to
+// its own level, closing what is open above it.
+func (m *app) projectCrumbs(cs []crumb) []crumb {
+	p, ok := m.selectedProject()
+	if !ok {
+		return cs
+	}
+	cs[0].back = popTo(func(m *app) { m.prj.deep, m.prj.fix, m.prj.life, m.prj.ed = false, nil, nil, nil })
+	level := func(label string, to func(m *app)) {
+		cs = append(cs, crumb{label: label, back: popTo(func(m *app) { m.prj.fix, m.prj.life = nil, nil; to(m) })})
+	}
+	level(oneLine(p.Name), func(m *app) { m.prj.deep, m.prj.ed = true, nil })
+	fx := m.prj.fix
+	switch ed := m.prj.ed; {
+	case ed != nil:
+		if ed.open == "" {
+			level("Fields", func(m *app) {
+				if m.prj.ed != nil {
+					m.prj.ed.pick = nil
+				}
+			})
+		} else {
+			level(fieldLabels[ed.open], func(m *app) {
+				if m.prj.ed != nil {
+					m.prj.ed.open, m.prj.ed.pick = "", nil
+				}
+			})
+			if row, ok := ed.row(p); ok && ed.pick == nil {
+				level(oneLine(row.name), func(m *app) {
+					if m.prj.ed != nil {
+						m.prj.ed.pick = nil
+					}
+				})
+			}
+		}
+		if ed.pick != nil {
+			level(ed.pick.crumb, func(*app) {})
+		}
+	case m.prj.life != nil:
+	case fx != nil && fx.edit:
+	case len(p.Problems) > 0 && m.prj.prob.at() < len(p.Problems):
+		level("problem: "+oneLine(p.Problems[m.prj.prob.at()].Message), func(m *app) { m.prj.deep = true })
+	}
+	switch {
+	case fx != nil && fx.edit:
+		level("review", func(*app) {})
+	case fx != nil:
+		level("fix", func(*app) {})
+	case m.prj.life != nil:
+		level(strings.ToLower(verbWords[m.prj.life.req.Verb]), func(*app) {})
+	}
+	return cs
 }

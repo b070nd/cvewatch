@@ -276,3 +276,15 @@ func envRank(e model.Env) int {
 // clean removes control characters, flattens whitespace and clips. It is
 // query.Clip, which also drops invisible format characters.
 func clean(s string, max int) string { return query.Clip(s, max) }
+
+// History is what happened to the findings, oldest first: the timeline
+// without the feeds' own events, which the issue page shows elsewhere.
+func (p Pack) History() []query.HistoryEntry {
+	var out []query.HistoryEntry
+	for _, e := range p.Timeline {
+		if e.Source != SourceFeed {
+			out = append(out, query.HistoryEntry{Time: e.Time, Kind: e.Kind, Actor: e.Actor, Project: e.Project, Env: e.Env, Detail: e.Detail, URL: e.URL, Source: e.Source})
+		}
+	}
+	return out
+}

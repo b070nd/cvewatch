@@ -181,41 +181,53 @@ func (c *Catalog) ForTerm(term string) (model.Tech, bool) {
 
 var cpeRe = regexp.MustCompile(`^[a-z0-9._+~\-]+:[a-z0-9._+~\-]+$`)
 
+// Problem is one mistake in a technology entry. Field names the yaml key
+// inside the entry (empty when the whole entry is meant), so editors can point
+// at it.
+type Problem struct {
+	Tech, Field string
+	msg         string
+}
+
+func (p *Problem) Error() string { return p.msg }
+
 // Validate checks the catalog for mistakes that would silently hide or
-// mis-assign advisories. It never touches the network.
+// mis-assign advisories. It never touches the network. Every error is a *Problem.
 func (c *Catalog) Validate() []error {
 	var errs []error
-	fail := func(f string, a ...any) { errs = append(errs, fmt.Errorf(f, a...)) }
+	fail := func(tech, field, f string, a ...any) {
+		errs = append(errs, &Problem{Tech: tech, Field: field, msg: fmt.Sprintf(f, a...)})
+	}
 	seen := map[string]bool{}
 	for _, t := range c.techs {
 		key := strings.ToLower(t.Name)
 		switch {
 		case t.Name == "":
-			fail("a technology has no name")
+			fail("", "", "a technology has no name")
 			continue
 		case seen[key]:
-			fail("duplicate technology %q", t.Name)
+			fail(t.Name, "name", "duplicate technology %q", t.Name)
 		}
 		seen[key] = true
 		if t.Category != "" && !slices.Contains(Categories, t.Category) {
-			fail("%s: unknown category %q", t.Name, t.Category)
+			fail(t.Name, "category", "%s: unknown category %q", t.Name, t.Category)
 		}
 		if t.Source != "" && !slices.Contains(Sources, t.Source) {
-			fail("%s: source must be open, closed or mixed, not %q", t.Name, t.Source)
+			fail(t.Name, "source", "%s: source must be open, closed or mixed, not %q", t.Name, t.Source)
 		}
 		if !slices.Contains([]string{"", "pypi", "maven", "go"}, t.Scheme) {
-			fail("%s: unknown version scheme %q", t.Name, t.Scheme)
+			fail(t.Name, "scheme", "%s: unknown version scheme %q", t.Name, t.Scheme)
 		}
 		for _, cpe := range t.CPE {
 			if !cpeRe.MatchString(cpe) {
-				fail("%s: CPE %q must look like vendor:product in lowercase", t.Name, cpe)
+				fail(t.Name, "cpe", "%s: CPE %q must look like vendor:product in lowercase", t.Name, cpe)
 			}
 		}
 		for _, v := range t.Detect.Versions {
 			if re, err := regexp.Compile(v.Pattern); err != nil {
-				fail("%s: version pattern %q: %v", t.Name, v.Pattern, err)
+				fail(t.Name, "detect.versions", "%s: version pattern %q: %v", t.Name, v.Pattern, err)
 			} else if re.NumSubexp() != 1 {
-				fail("%s: version pattern %q needs exactly one capture group", t.Name, v.Pattern)
+				fail(t.Name, "detect.versions", "%s: version pattern %q needs exactly one capture group", t.Name, v.Pattern)
 			}
 		}
 	}

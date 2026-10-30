@@ -285,3 +285,21 @@ func TestEmptyFindings(t *testing.T) {
 		}
 	}
 }
+
+func TestHistoryIsTheTimelineWithoutTheFeedsEvents(t *testing.T) {
+	events := []audit.Event{{Time: at(7), Actor: "ann", Action: "status", Vuln: "CVE-2026-0001", Project: "shop", Env: "prod", Status: "fixed", Note: "MR 12", URL: "https://git.example/mr/12"}}
+	h := Build(vuln(), nil, events, nil, at(9)).History()
+	var kinds []string
+	for _, e := range h {
+		kinds = append(kinds, e.Kind+"/"+e.Source)
+	}
+	if !slices.Equal(kinds, []string{"first-seen/ledger", "status/audit"}) {
+		t.Fatalf("history: %v", kinds)
+	}
+	if last := h[len(h)-1]; last.Actor != "ann" || last.URL != "https://git.example/mr/12" || !strings.Contains(last.Detail, "MR 12") {
+		t.Fatalf("history entry: %+v", last)
+	}
+	if len(Build(&model.Vulnerability{ID: "X"}, nil, nil, nil, at(9)).History()) != 0 {
+		t.Fatal("nothing happened, so there is no history")
+	}
+}

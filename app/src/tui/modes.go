@@ -101,32 +101,13 @@ func (m *app) dispatch(k tea.KeyMsg) (cmd tea.Cmd, moved bool) {
 // that above a level of a screen, that above the screen.
 func (m *app) stack() []*mode {
 	var s []*mode
-	switch {
-	case m.data == nil && m.frm == nil:
+	if m.data == nil && m.frm == nil && !screens[m.scr].standalone {
 		s = append(s, mo.noData)
-	case m.scr == scrOverview:
-		s = append(s, mo.overview)
-	case m.scr == scrStatus:
-		s = append(s, mo.status)
-	case m.scr == scrFindings:
-		s = append(s, mo.findings)
-		switch {
-		case m.fnd.det != nil:
-			s = append(s, mo.detail)
-		case m.fnd.filtering:
-			s = append(s, mo.filter)
-		}
-	default:
-		s = append(s, mo.projects)
-		if m.prj.deep {
-			s = append(s, mo.project)
-		}
+	} else {
+		s = append(s, screens[m.scr].modes(m)...)
 	}
-	switch {
-	case m.frm != nil:
+	if m.frm != nil {
 		s = append(s, formMode(m.frm))
-	case m.scr == scrProjects && m.prj.fix != nil:
-		s = append(s, mo.fix)
 	}
 	switch {
 	case m.prm != nil && m.prm.submitting:
@@ -210,7 +191,7 @@ var everywhere = [][2]string{
 	{"esc", "close a popup or clear the filter, else back one level"},
 	{"q", "quit on the first level of a screen; inside a level or a popup it works like esc"},
 	{"ctrl+c", "quit at once, from anywhere"},
-	{"tab, shift+tab, 1-4", "switch screen: Overview, Findings, Projects, Status"},
+	{"tab, shift+tab, " + screenKeys(), "switch screen: " + screenList()},
 	{"mouse", "wheel scrolls, a click selects (a second click opens), breadcrumb and tabs are clickable"},
 }
 

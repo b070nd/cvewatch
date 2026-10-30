@@ -18,11 +18,12 @@ import (
 
 // addSetupTools registers the tools an agent needs to set the monitor up:
 // find technologies, look at a repository, see health, and change project
-// files. Only edit_project writes, so only it needs allow-write.
+// files and settings. Only edit_project, edit_settings and manage_project
+// write, so only they need allow-write.
 func addSetupTools(srv *mcp.Server, s *server, allowWrite bool) {
 	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
 	mcp.AddTool(srv, &mcp.Tool{Name: "search_catalog", Annotations: ro,
-		Description: "Search the technology catalog (open and closed source: runtimes, frameworks, databases, servers, platforms and so on) by name, vendor or keyword, optionally within one category. Use the returned name in a project's techs."}, s.searchCatalog)
+		Description: "Search the technology catalog (open and closed source: runtimes, frameworks, databases, servers, platforms and so on) by name, vendor or alias, optionally within one category. Use the returned name in a project's techs."}, s.searchCatalog)
 	mcp.AddTool(srv, &mcp.Tool{Name: "discover_stack", Annotations: ro,
 		Description: "Look at a repository folder on this machine and propose the technologies, versions and lockfiles it uses, each with evidence and a confidence. Reads files only; nothing is executed or changed. Treat low-confidence proposals as questions for the user."}, s.discover)
 	mcp.AddTool(srv, &mcp.Tool{Name: "get_status", Annotations: ro,
@@ -31,18 +32,27 @@ func addSetupTools(srv *mcp.Server, s *server, allowWrite bool) {
 		Description: "List the monitored projects with their environments, declared technologies and lockfiles."}, s.projects)
 	mcp.AddTool(srv, &mcp.Tool{Name: "check_projects", Annotations: ro,
 		Description: "Find problems in project files: unknown or misspelled technologies, lockfiles that are missing, unreadable or of the wrong type, environments that are not monitored. Each problem names its project and field and may list fixes, each a label and the changes to pass to preview_project_change and edit_project. Without a project, every project you may see is checked."}, s.checkProjects)
-	mcp.AddTool(srv, &mcp.Tool{Name: "preview_project_change", Annotations: ro,
-		Description: "Show what a change to a project file would do (diff and problems) without writing anything. A project that does not exist yet is created by its first change."}, s.previewProject)
+	mcp.AddTool(srv, &mcp.Tool{Name: "preview_project_change", Annotations: ro, InputSchema: projectInSchema(),
+		Description: "Show what a change to a project file would do (diff and problems) without writing anything. A project that does not exist yet is created by its first change. The kinds of change:\n" + projectfile.KindHelp()}, s.previewProject)
+	mcp.AddTool(srv, &mcp.Tool{Name: "get_settings", Annotations: ro,
+		Description: "Read the configuration the user edits: config.yaml (interval, http, notify, policy rules, access), techs.yaml and the sources/*.yaml feeds, as the values that are set (defaults are not listed). Secret values read (set). Works when a file is broken: that file reports its error. With include_schema, also every setting with its path, type, allowed values and help, which is what edit paths are built from."}, s.getSettings)
+	mcp.AddTool(srv, &mcp.Tool{Name: "preview_settings_change", Annotations: ro,
+		Description: "Show what changes to the settings would do (diff and problems) without writing anything. Each edit is set, unset or append on a path from the schema, for example set http.timeout 45s, unset http.retries or append policy.rules {name, ...}. All edits apply or none do."}, s.previewSettings)
 	if allowWrite {
 		no := false
-		mcp.AddTool(srv, &mcp.Tool{Name: "edit_project",
+		mcp.AddTool(srv, &mcp.Tool{Name: "edit_project", InputSchema: projectInSchema(),
 			Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no},
-			Description: "Apply changes to a project file (created if new): technologies, versions, environments, lockfiles. Comments in the file are kept, the old file is backed up and the change is audited. Run preview_project_change first and show the user the diff. Only declare what the user confirmed."}, s.editProject)
+			Description: "Apply changes to a project file (created if new): technologies, versions, environments, lockfiles, the since date. Comments in the file are kept, the old file is backed up and the change is audited. Run preview_project_change first and show the user the diff. Only declare what the user confirmed. The kinds of change:\n" + projectfile.KindHelp()}, s.editProject)
+		mcp.AddTool(srv, &mcp.Tool{Name: "edit_settings",
+			Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no},
+			Description: "Apply changes to the settings (config.yaml, techs.yaml, sources/*.yaml). Comments are kept, the old file is backed up, the change is audited, and a change that would not validate is refused. Run preview_settings_change first and show the user the diff. The daemon uses the new settings from its next cycle."}, s.editSettings)
+		mcp.AddTool(srv, &mcp.Tool{Name: "manage_project",
+			Description: "Rename, duplicate, delete, disable or enable a whole project. Without confirm it only returns the consequences: findings affected, access rules rewritten, files moved. Show them to the user and call again with confirm true only after they agreed. Rename moves the findings to the new name, delete moves the file to the backups (close_findings also marks its open findings ignored), disable renames the file to .disabled and enable reverses that."}, s.manageProject)
 	}
 }
 
 type searchIn struct {
-	Query    string `json:"query,omitempty" jsonschema:"words to look for in names, vendors and keywords; empty lists the category"`
+	Query    string `json:"query,omitempty" jsonschema:"words to look for in names, vendors and aliases; empty lists the category"`
 	Category string `json:"category,omitempty" jsonschema:"only this category, for example database, runtime, framework, web-server, cms"`
 	Limit    int    `json:"limit,omitempty" jsonschema:"at most this many results (default 20, maximum 100)"`
 }
@@ -172,37 +182,42 @@ func contains(list []string, s string) bool {
 	return false
 }
 
+// opIn is one change. Its json names are the fields of projectfile.Op, with the
+// lockfile also accepted flattened; projectInSchema describes it from projectfile.OpTable.
 type opIn struct {
-	Kind     string   `json:"kind" jsonschema:"set_tech, remove_tech, set_envs, set_env_tech, remove_env_tech, set_image, add_lockfile or remove_lockfile"`
-	Tech     string   `json:"tech,omitempty" jsonschema:"catalog name, for the *_tech kinds"`
-	Version  string   `json:"version,omitempty" jsonschema:"version or series such as 8.2; for set_tech empty means unknown"`
-	Env      string   `json:"env,omitempty" jsonschema:"dev, int, staging or prod, for set_env_tech, remove_env_tech and set_image"`
-	Envs     []string `json:"envs,omitempty" jsonschema:"for set_envs; empty means all four"`
-	Image    string   `json:"image,omitempty" jsonschema:"image tag or digest, for set_image; empty clears"`
-	LockType string   `json:"lockfile_type,omitempty" jsonschema:"composer, npm, go, pip and so on, for the lockfile kinds"`
-	LockPath string   `json:"lockfile_path,omitempty" jsonschema:"path of the lockfile on the monitor's machine"`
-	LockEnv  string   `json:"lockfile_env,omitempty" jsonschema:"only this environment; empty means all"`
-	Lockfile *lockIn  `json:"lockfile,omitempty" jsonschema:"the lockfile as one object, as check_projects fixes give it; instead of the lockfile_* fields"`
+	Kind     string   `json:"kind"`
+	Tech     string   `json:"tech,omitempty"`
+	Version  string   `json:"version,omitempty"`
+	Env      string   `json:"env,omitempty"`
+	Envs     []string `json:"envs,omitempty"`
+	Image    string   `json:"image,omitempty"`
+	Since    string   `json:"since,omitempty"`
+	LockType string   `json:"lockfile_type,omitempty"`
+	LockPath string   `json:"lockfile_path,omitempty"`
+	LockEnv  string   `json:"lockfile_env,omitempty"`
+	LockDev  bool     `json:"lockfile_dev,omitempty"`
+	Lockfile *lockIn  `json:"lockfile,omitempty"`
 }
 
 type lockIn struct {
 	Type string `json:"type"`
 	Path string `json:"path"`
 	Env  string `json:"env,omitempty"`
+	Dev  bool   `json:"dev,omitempty"`
 }
 
 type projectIn struct {
-	Project string `json:"project" jsonschema:"project name; letters, digits, dash and underscore"`
-	Changes []opIn `json:"changes" jsonschema:"the edits, applied in order; none are applied if one fails"`
+	Project string `json:"project"`
+	Changes []opIn `json:"changes"`
 }
 
 func (in projectIn) change(save bool) ops.ProjectChange {
 	c := ops.ProjectChange{Project: in.Project, Save: save}
 	for _, o := range in.Changes {
-		op := projectfile.Op{Kind: o.Kind, Tech: o.Tech, Version: o.Version, Env: model.Env(o.Env), Image: o.Image,
-			Lockfile: model.Lockfile{Type: o.LockType, Path: o.LockPath, Env: model.Env(o.LockEnv)}}
+		op := projectfile.Op{Kind: o.Kind, Tech: o.Tech, Version: o.Version, Env: model.Env(o.Env), Image: o.Image, Since: o.Since,
+			Lockfile: model.Lockfile{Type: o.LockType, Path: o.LockPath, Env: model.Env(o.LockEnv), Dev: o.LockDev}}
 		if l := o.Lockfile; l != nil {
-			op.Lockfile = model.Lockfile{Type: l.Type, Path: l.Path, Env: model.Env(l.Env)}
+			op.Lockfile = model.Lockfile{Type: l.Type, Path: l.Path, Env: model.Env(l.Env), Dev: l.Dev}
 		}
 		for _, e := range o.Envs {
 			op.Envs = append(op.Envs, model.Env(e))

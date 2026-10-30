@@ -6,22 +6,33 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/b070nd/cvewatch/app/src/confdoc"
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/ops"
+	"github.com/b070nd/cvewatch/app/src/projectfile"
 )
 
 type promptKind int
 
 const (
-	pkStatus promptKind = iota // a note for a status change
-	pkAssign                   // owner, due date, ticket
-	pkPath                     // a folder to scan
-	pkBulk                     // a note for a status change of the selected issues
+	pkStatus    promptKind = iota // a note for a status change
+	pkAssign                      // owner, due date, ticket
+	pkPath                        // a folder to scan
+	pkBulk                        // a note for a status change of the selected issues
+	pkEvidence                    // a note and a link attached to an environment
+	pkEdit                        // the value of one field of a project file
+	pkNew                         // a project made from a name, without scanning a folder
+	pkRename                      // the new name of a project
+	pkDuplicate                   // the name of the copy of a project
+	pkDelete                      // the name of the project to delete, typed to confirm
+	pkSetting                     // the value of a setting, or what a new item of a list needs
 )
 
 type field struct {
-	label string
-	in    input
+	label  string
+	in     input
+	secret bool   // what is typed is hidden
+	hint   string // what this field wants, shown instead of the prompt's hint while it has the focus
 }
 
 // prompt is a small inline form shown at the bottom of the screen: one or a
@@ -42,6 +53,14 @@ type prompt struct {
 	change ops.Change     // pkStatus
 	assign ops.Assignment // pkAssign
 	bulk   model.Status   // pkBulk
+	attach ops.Attachment // pkEvidence
+
+	project string                                                                // pkEdit, pkRename, pkDuplicate, pkDelete: the project
+	known   []projectfile.Issue                                                   // pkEdit: the problems the file had before
+	build   func(vals []string) (label string, edits []projectfile.Op, err error) // pkEdit
+
+	crumb  string                                                              // pkSetting: the setting, for the breadcrumb
+	sbuild func(vals []string) (label string, edits []confdoc.Edit, err error) // pkSetting
 }
 
 func (p *prompt) view(w, h int) []string {
@@ -57,17 +76,40 @@ func (p *prompt) view(w, h int) []string {
 	for _, f := range p.fields {
 		lw = max(lw, width(f.label))
 	}
+	var rows []string
 	for i, f := range p.fields {
 		mark := "  "
 		if i == p.idx {
 			mark = "> "
 		}
-		lines = append(lines, mark+pad(f.label, lw)+": "+p.fields[i].in.view(w-lw-6, i == p.idx))
+		show := p.fields[i].in.view
+		if f.secret {
+			show = p.fields[i].in.viewHidden
+		}
+		rows = append(rows, mark+pad(f.label, lw)+": "+show(w-lw-6, i == p.idx))
 	}
-	if p.hint != "" {
-		lines = append(lines, stMuted.Render(trunc("  "+p.hint, w)))
+	hint := p.hint
+	if h := p.fields[p.idx].hint; h != "" {
+		hint = h
 	}
-	return append(lines, p.status(w)...)
+	var tail []string
+	if hint != "" {
+		tail = append(tail, stMuted.Render(trunc("  "+hint, w)))
+	}
+	tail = append(tail, p.status(w)...)
+	// a short terminal shows the fields around the focused one, and the last of
+	// the lines under them: the problem when there is one
+	if room := max(h-5, 2) - 1; len(rows)+len(tail) > room {
+		if room-len(tail) < 1 {
+			tail = tail[max(len(tail)-1, 0):]
+		}
+		n := max(room-len(tail), 1)
+		start := min(max(p.idx-n/2, 0), max(len(rows)-n, 0))
+		rows = rows[start:min(start+n, len(rows))]
+	}
+	lines = append(lines, rows...)
+	lines = append(lines, tail...)
+	return lines
 }
 
 // status is the line about the last submit: still running, or refused.
@@ -147,6 +189,21 @@ func (m *app) startBulk(st model.Status) {
 	m.prm = &prompt{kind: pkBulk, bulk: st, title: title, fields: []field{{label: label}}, hint: noteHint(st)}
 }
 
+// startEvidence asks for a note and a link to attach to the selected
+// environment. ops decides whether they are acceptable.
+func (m *app) startEvidence() {
+	d := m.fnd.det
+	if d == nil || d.loading || d.err != nil || len(d.is.Targets) == 0 {
+		m.fail("nothing selected: open an issue with an environment first")
+		return
+	}
+	t := d.is.Targets[d.sel.at()]
+	a := ops.Attachment{ID: d.is.ID, Project: t.Project, Env: t.Env}
+	m.prm = &prompt{kind: pkEvidence, attach: a, title: oneLine("Add evidence to " + a.ID + " in " + where(a.Project, a.Env)),
+		hint:   "a note, a link or both; the link must be a plain http(s) address",
+		fields: []field{{label: "Note"}, {label: "Link"}}}
+}
+
 func (m *app) startAssign(whole bool) {
 	d := m.fnd.det
 	if d == nil || d.loading || d.err != nil || len(d.is.Targets) == 0 {
@@ -206,10 +263,54 @@ func (m *app) promptSubmit() tea.Cmd {
 			return nil
 		}
 		return m.start("saving...", "bulk", reList|reDetail, p, bulkCmd(m.b, cs))
+	case pkEvidence:
+		a := p.attach
+		a.Note, a.URL = val(0), val(1)
+		return m.start("saving...", "evidence "+a.ID+" "+where(a.Project, a.Env), reDetail, p, attachCmd(m.b, a))
 	case pkAssign:
 		a := p.assign
 		a.Owner, a.Due, a.Ticket = val(0), val(1), val(2)
 		return m.start("saving...", "assign "+a.ID+" "+where(a.Project, a.Env), reList|reDetail, p, assignCmd(m.b, a))
+	case pkEdit:
+		vals := make([]string, len(p.fields))
+		for i := range vals {
+			vals[i] = val(i)
+		}
+		label, edits, err := p.build(vals)
+		if err != nil {
+			p.problem = err.Error()
+			return nil
+		}
+		return m.previewEdit(p.project, p.known, label, edits, "", p)
+	case pkSetting:
+		vals := make([]string, len(p.fields))
+		for i := range vals {
+			vals[i] = val(i)
+		}
+		label, edits, err := p.sbuild(vals)
+		if err != nil {
+			p.problem = err.Error()
+			return nil
+		}
+		return m.previewSettings(label, p.crumb, edits, p)
+	case pkNew:
+		return m.submitNew(p, val(0), val(1))
+	case pkRename, pkDuplicate:
+		verb := ops.VerbRename
+		if p.kind == pkDuplicate {
+			verb = ops.VerbDuplicate
+		}
+		if val(0) == "" {
+			p.problem = "give the new name"
+			return nil
+		}
+		return m.previewLife(ops.LifecycleRequest{Verb: verb, Project: p.project, NewName: val(0)}, p)
+	case pkDelete:
+		if val(0) != p.project || m.prj.life == nil {
+			p.problem = "type the name of the project exactly, " + p.project + ", to delete it"
+			return nil
+		}
+		return m.applyLife(p)
 	}
 	path := p.box.chosen()
 	if path == "" {

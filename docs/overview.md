@@ -35,7 +35,7 @@ The built-in catalog lists open and closed source technologies: runtimes, framew
 
 ## Terminal UI
 
-`cvewatch tui` opens the full-screen interface. It has four screens, shown as tabs under the title: **1 Overview**, **2 Findings**, **3 Projects** and **4 Status**. Findings shows the number of open issues.
+`cvewatch tui` opens the full-screen interface. It has five screens, shown as tabs under the title: **1 Overview**, **2 Findings**, **3 Projects**, **4 Status** and **5 Settings**. Findings shows the number of open issues, and Settings shows `(!)` when a settings file has an error.
 
 The header also shows what is going on. `refreshing...` means the data is being read. While a change is written, the header shows what runs, such as `saving...`, with `+1` when more run. Otherwise it shows the health and the time of the last read. The data reloads by itself every 30 seconds. Press `r` to reload now.
 
@@ -43,7 +43,7 @@ The header also shows what is going on. `refreshing...` means the data is being 
 
 - **Levels.** Each screen has a root. Enter opens a level inside it: an issue, a project, a fix preview or a form. The breadcrumb line under the tabs shows the path, such as `Findings › CVE-2026-1234 › shop:prod`.
 - **Back.** Left, Esc or Backspace go back one level. `q` does the same inside a level or a popup.
-- **Screens.** On a root, Left and Right switch to the previous or next screen. Screens wrap around. Tab and Shift+Tab cycle through them, and 1 to 4 go to one. Tab and 1 to 4 also work inside an issue or a project.
+- **Screens.** On a root, Left and Right switch to the previous or next screen. Screens wrap around. Tab and Shift+Tab cycle through them, and 1 to 5 go to one. Tab and 1 to 5 also work inside an issue or a project.
 - **Quit.** `q` quits only from a root. Ctrl+C quits from anywhere.
 - **Help.** `?` shows the keys for where you are, and the rules that apply everywhere. In a text box `?` is a letter, so use F1 there.
 - **Jump box.** `:` or Ctrl+G opens it from any screen or level, except forms, the fix preview and text boxes. Type part of an issue id (such as `CVE-2026-1234`) or a project name. Matches appear as you type, and names that start with your text come first. Up and Down pick a match, Tab fills in the text with it, and Enter goes there. If nothing matches but the text looks like an issue id, Enter tries it as one. That also finds an issue that is already closed. Esc cancels.
@@ -73,7 +73,7 @@ The mouse is optional. Every action works from the keys.
 
 The footer at the bottom shows the keys for where you are. Keys in brackets also work, but the footer and the help leave them out.
 
-Everywhere except in forms, the fix preview and text boxes: `:` jump, `r` reload, `?` help, Tab and 1 to 4 switch screens.
+Everywhere except in forms, the fix preview and text boxes: `:` jump, `r` reload, `?` help, Tab and 1 to 5 switch screens.
 
 **Overview and Status**
 
@@ -107,7 +107,13 @@ Everywhere except in forms, the fix preview and text boxes: `:` jump, `r` reload
 | `a`, `A` | owner, due date and ticket of the selected environment, or of the whole project with `A` |
 | `]`, `[` | open the next or previous issue of the list (`J`, `K` too) |
 | `p` | go to the project of the selected environment |
-| Left, Esc, Backspace, `q` | back to the list, or to where a jump came from |
+| `l`, `L` | select the next or previous link under References (the page scrolls to it) |
+| Enter | open the selected link in the browser |
+| `c` | copy the selected link to the clipboard |
+| `v` | show the evidence pack: facts, per-environment status and the audit trail |
+| `R` | show the full report, as `cvewatch show` prints it |
+| `+` | add evidence (a note, a link, or both) to the selected environment |
+| Left, Esc, Backspace, `q` | back to the list, or to where a jump came from. With a link selected, Esc unselects the link first |
 
 **Projects** (the list)
 
@@ -115,13 +121,16 @@ Everywhere except in forms, the fix preview and text boxes: `:` jump, `r` reload
 |---|---|
 | Up, Down | select a project |
 | Enter | open the project: its problems, each with its fix |
-| `e` | edit the project in the guided form: technologies, versions, lockfiles, environments |
+| `c` | open the project's fields: environments, technologies, lockfiles, versions, images, since (see [Editing a project](#editing-a-project)) |
+| `e` | edit the project step by step in the guided form |
 | `a` | add a project in the guided form (`n` too) |
+| `N` | new empty project: a name and its environments, no folder needed |
 | `d` | add a project from a folder (see the folder box below) |
 | `x` | preview the fix of the selected problem (`f` too) |
 | `E` | open the project file in `$EDITOR`, then reload (`o` too) |
 | `p`, `P` | next or previous problem of the selected project |
 | `i` | show this project's issues on Findings (`F` too) |
+| `R`, `D`, `X`, `Z` | rename, duplicate, delete, or disable a project (enable it when it is disabled). See [Creating, renaming, copying, disabling and deleting projects](#creating-renaming-copying-disabling-and-deleting-projects) |
 | Esc, Backspace | back to where a jump came from |
 
 **A project** (Enter on Projects)
@@ -131,10 +140,29 @@ Everywhere except in forms, the fix preview and text boxes: `:` jump, `r` reload
 | Up, Down | select a problem. Its fix shows under it |
 | Enter, Right, `x` | preview the fix of the selected problem |
 | `[`, `]` | choose another fix, when the problem has several |
-| `e` | edit the project in the guided form |
+| `c` | open the project's fields and change them directly |
+| `e` | edit the project step by step in the guided form |
 | `E` | open the file in `$EDITOR` at the problem's line (see below) |
-| `a`, `d`, `i` | add a project, add from a folder, show this project's issues |
+| `a`, `d`, `i`, `N` | add a project, add from a folder, show this project's issues, new empty project |
+| `R`, `D`, `X`, `Z` | rename, duplicate, delete, or disable (enable when disabled) the project |
 | Left, Esc, Backspace, `q` | back to the list of projects, or to where a jump came from |
+
+**Settings** (screen 5)
+
+The section list shows how many values each section of `config.yaml`, `techs.yaml` and `sources/*.yaml` sets, and the problems of the files with their line numbers. Enter opens a section, then a field. Changes are previewed as a change to the file and saved on a yes; comments in the files are kept. The daemon picks them up from its next cycle. It works even when a settings file is broken, and the other screens then show the load error as usual.
+
+| Key | What it does |
+|---|---|
+| Up, Down, PgUp, PgDn, Home, End | move in the list; the mouse wheel and a click work too, a second click opens |
+| Enter, Right | open a section, a list or an item; change a value (a number, text, a duration, a name of an environment variable; a choice opens a list) |
+| Space | turn an on/off setting over |
+| `a`, `x` | add an item to a list or map (a feed, a technology, a policy rule, an access rule), or remove the selected one |
+| `u` | restore the default: the value is removed from the file |
+| `/` | find a setting by label, path or value. On the section list it searches every section |
+| `E` | open the file in `$EDITOR` at the line of the selected problem, then read it again |
+| Left, Esc, Backspace, `q` | back one level |
+
+In the preview, Enter or `y` saves and Esc cancels. Secrets (feed URLs and headers) are never shown: a field says `(set)` or `(not set)`, the prompt does not show or prefill the current value, and the preview says `(set, changed)`. Only an actor that may see all projects can open the screen, and only one with write access can change it; the access rules cannot be changed so that the actor loses write access.
 
 **Fix preview**
 
@@ -190,6 +218,51 @@ Inside a project with a problem selected, the editor opens at the problem's line
 
 Any other editor opens the file at the top. `$EDITOR` may hold options, such as `code --wait`. If it is not set, the TUI says so and shows the file path.
 
+### Issue details
+
+Enter on an issue in Findings opens its page. The page has these parts, in this order:
+
+- **Header:** severity, the CVSS base score, KEV, EPSS, age and "open in prod".
+- **Description and priority:** the feed's text, and why the issue ranks where it does.
+- **Environments:** one row per environment of the project, with its status, whether it applies, owner, due date, ticket and notes. Once the page is loaded, the installed versions found in an environment are shown under its row.
+- **Fix evidence:** the fixes the feeds name (official ones are marked), the KEV action, and the reports. Five reports are listed, then the number of the rest.
+- **Affected versions:** each affected range per ecosystem and package, with the first fixed version.
+- **Why it matched:** the reasons per project and environment, and whether the issue is relevant under today's configuration.
+- **References:** the links, numbered. Each link is listed once: advisories, fixes, articles, evidence and tickets. The report file name is shown after them.
+- **Evidence:** the notes and links attached to each environment.
+- **History:** what happened to the findings, oldest first, with the time in UTC and who did it. It comes from the audit log when the log's chain verifies, else from the ledger. The feeds' own events are not repeated here.
+
+Keys on the page:
+
+- `l` and `L` select the next or previous link. The page scrolls to it. Enter opens the selected link in the browser: `open` on macOS, `xdg-open` on Linux, `rundll32` on Windows.
+- `c` copies the selected link with the first clipboard tool found: `pbcopy`, `clip`, `wl-copy`, `xclip`, `xsel` or `clip.exe`. Without one, the link is shown in the message.
+- `v` shows the evidence pack and `R` shows the report. Esc goes back to the issue.
+- `+` adds evidence to the selected environment: a note, a link, or both. A link must be a plain http or https address.
+- `]` and `[` move to the next or previous issue of the list.
+
+Only plain http and https addresses are listed as links. Long link titles are cut at 200 characters. The model keeps the CVSS base score, not the CVSS vector, so the page shows the score only.
+
+### Settings
+
+The Settings screen (5) edits the configuration files: `config.yaml`, `techs.yaml` and the feeds in `sources/*.yaml`. The first level lists the sections: Core, HTTP, Notify, Policy, Sources, Tech catalog and Access. Each section shows how many values it sets, and the problems of the files with their file and line. Enter opens a section. Inside it, Enter opens a field or a list. Enter on a problem goes to the setting it names.
+
+The field types are:
+
+- **Number or duration:** a number, or a duration such as `30s`, `5m` or `2h`. The limits of the setting are checked.
+- **On or off:** Space or Enter turns it over.
+- **Choice:** the allowed values, with the current one marked.
+- **Environment variable name:** the name of the variable, never its value. The daemon reads the value from its environment.
+- **List or map:** `a` adds an item, Enter changes it, `x` removes it.
+- **Records:** a feed, a policy rule, a technology or an access rule. Each is a list of its own. `a` asks for the fields it needs first; the rest are set row by row afterwards.
+
+Every change is shown as a diff of the file. Enter or `y` saves it. Esc cancels, and nothing is written. A change that would add an error is refused, and the prompt keeps what you typed and shows the reason. Comments and layout in the files are kept. Each file is copied to `config-backups/` before it is written. The audit log records the paths that changed, never the values.
+
+- **Secrets:** feed URLs and headers are never shown. A field says `(set)` or `(not set)`, the prompt does not show or prefill the current value, and the preview says `(set, changed)`.
+- **Restore the default:** `u` removes the value from the file, so the default applies.
+- **Broken files:** a file that is not valid YAML does not stop the screen. It shows its error, its values are not listed, and it can only be repaired in an editor. `E` opens the file at the line of the problem, then reads it again. The other screens show their load error as usual.
+- **When it applies:** the daemon uses the new settings from its next cycle.
+- **Who may edit:** the settings name every project and every actor. An actor that an access rule limits to some projects is refused the screen, with "Settings are not available to you". An actor with read access only sees the screen with a `read-only` note in its header and cannot save. A change to the access rules is refused when it would leave the person making it without write access to every project, so nobody can lock themselves out.
+
 ## Setting up and changing projects
 
 Three front ends share one setup flow, so the questions and checks are the same:
@@ -228,6 +301,98 @@ The Projects screen has a PROBLEMS column: `-` for none, or counts such as `2 er
 - `E` opens the project file in `$EDITOR` at the problem's line, then reloads. See [Editing the project file](#editing-the-project-file).
 
 Problems are worked out when the screen loads or refreshes (`r`), not on every key. If loading fails, the screen offers `r` to try again and `q` to quit.
+
+### Editing a project
+
+On the Projects screen, `c` opens the fields of the selected project. Inside a project, `c` does the same. The fields are:
+
+| Field | What it holds | Keys |
+|---|---|---|
+| Environments | the environments the project runs in | Enter opens a list to tick |
+| Technologies | each technology and its version | Enter changes the version; `a` adds a technology from the catalog; `x` removes it |
+| Lockfiles | the type, path, environment and dev flag of each lockfile | Enter or `d` toggles dev; `a` picks a type, then asks for the path, the environment (empty means every environment) and dev (yes or no); `x` removes it |
+| Versions per environment | the version deployed in an environment, where it differs from the declared one | Enter sets it, and an empty value removes it; `x` removes it |
+| Image per environment | an image tag or digest, recorded only | Enter sets it, and an empty value clears it; `x` clears it |
+| Since | the first day advisories count from | Enter opens a date prompt (`YYYY-MM-DD`); an empty value clears it |
+
+A lockfile with dev set to yes counts its development-only packages in every environment. By default they count in dev and int only.
+
+Every change is shown as a diff of the file, under the title "Edit project". Enter or `y` saves it. Esc cancels, and nothing is saved. A change that adds an error is refused, and the prompt keeps what you typed with the reason. An unknown technology only warns. Comments in the file are kept. The old file is copied to `data/project-backups/` before it is replaced, and the save goes to the audit log as `project`.
+
+A disabled project, or one whose file does not load, cannot be edited in these fields. Press `E` to open its file instead.
+
+### Creating, renaming, copying, disabling and deleting projects
+
+These keys act on a whole project. Each one shows its consequences first, and nothing changes until you confirm.
+
+- **New (`N`):** a name, then the environments, separated by commas. An empty answer means all four. No folder is needed. Creating a project needs write access to every project.
+- **Rename (`R`):** a new name. The findings move to the new name, the access rules that name the project follow it, and the reports of its issues are rewritten. The old name stays in the audit log and in past evidence. The new name must be free, and the ledger must not already hold a finding under that name for the same issue and environment.
+- **Duplicate (`D`):** a name, which starts as the name plus `-copy`. The copy has the same technologies and lockfiles, so it finds the same issues. It is in no access rule.
+- **Delete (`X`):** the project's file moves to `data/project-backups/`. Nothing else is erased, but the access rules that name the project drop it. The findings stay in the ledger unchanged. They are no longer checked again, but open ones still show in lists and digests. You type the project's name to confirm. On the consequences, `c` also marks the project's open findings ignored, with the note "project deleted".
+- **Disable (`Z`):** the file is renamed to `<name>.yaml.disabled`. A disabled project matches no new issues, and its findings are not checked again. The access rules that name it are removed, and enable does not restore them. A disabled project stays in the list, marked `disabled`, and `cvewatch project list` marks it too.
+- **Enable (`Z` on a disabled project):** the file is renamed back. It must pass validation first. Its findings are checked again.
+
+The consequences screen lists the findings by status, the access rules that change (with any actor left with no project), the files that move or change, and any warnings. Rename, delete and disable (when access rules change) are marked as destructive. Enter or `y` goes on, and Esc cancels. Delete also asks for the typed name first. Rename needs write access to both the old and the new name. Rename, delete and disable also need write access to every project when they rewrite the access rules.
+
+Each step that succeeded is undone, newest first, when a later step fails. The message says whether everything was put back. The failure is written to the audit log as `project-failed`, and the error stays on the screen until you leave it. Nothing changes before the audit record is written.
+
+## Command line: projects and settings
+
+Every project edit is a flag list. Without `-save` the command only shows the diff. Several flags can be given together. They apply grouped by flag, in this order: technologies, lockfiles, environments, lockfile dev flags, since, deployed versions, then images. If one fails, nothing is written.
+
+```bash
+cvewatch project list                                   # the monitored projects; disabled ones are marked
+cvewatch project shop -set php=8.3 -lock composer:shop/composer.lock:prod:dev   # diff only
+cvewatch project shop -set php=8.3 -save                # write it; a backup goes to data/project-backups/
+```
+
+| Flag | What it does |
+|---|---|
+| `-set TECH[=VERSION]` | declare a technology, or change its version; an empty version means unknown |
+| `-remove TECH` | stop declaring a technology |
+| `-envs E,E` or `-envs all` | the environments the project runs in |
+| `-env-set ENV:TECH=VERSION` | the version deployed in one environment, such as `prod:php=8.3` |
+| `-env-unset ENV:TECH` | drop the version deployed in one environment |
+| `-image ENV=TAG` | the image of one environment; `ENV=` clears it |
+| `-lock TYPE:PATH[:ENV][:dev]` | add a lockfile. `ENV` limits it to one environment; `dev` counts its development-only packages in every environment |
+| `-unlock TYPE:PATH[:ENV]` | remove a lockfile entry |
+| `-lock-dev TYPE:PATH[:ENV]` | change an existing entry to count its development-only packages in every environment |
+| `-lock-nodev TYPE:PATH[:ENV]` | change an existing entry to stop counting them outside dev and int |
+| `-since DATE` | advisories count from this day (`YYYY-MM-DD`); `-since ""` clears it |
+| `-save` | write the change |
+
+Only a trailing `dev` or environment name is read as one, so a path with colons, such as `C:\repo\composer.lock`, stays whole. `-lock-dev` and `-lock-nodev` change entries that exist; they do not add one.
+
+Lifecycle changes show their consequences and do nothing until `-yes` is added:
+
+```bash
+cvewatch project rename shop shop-web          # -yes applies it
+cvewatch project duplicate shop shop-copy
+cvewatch project disable shop
+cvewatch project enable shop
+cvewatch project delete shop -close-findings   # -close-findings marks its open findings ignored, note "project deleted"
+```
+
+Add `-json` to print the preview as JSON. Project edits use `-save`; lifecycle changes use `-yes`.
+
+The settings commands work on the configuration files without loading them, so they also work when `config.yaml` is broken. Changes apply from the next daemon cycle.
+
+```bash
+cvewatch settings list [-json] [SECTION]        # values set in config.yaml, techs.yaml and sources/*.yaml, by section
+cvewatch settings get [-json] PATH              # one value, or the default when it is not set
+cvewatch settings set PATH VALUE [-yes]         # change a value
+cvewatch settings unset PATH [-yes]             # remove a value, so the default applies
+cvewatch settings add PATH VALUE [-yes]         # append to a list, such as policy.rules
+cvewatch settings diff set|unset|add PATH [VALUE]   # show what an edit would change
+cvewatch settings schema [-json] [SECTION]      # every setting: path, type, allowed values, default and help
+```
+
+- Without `-yes` the command only shows the diff. `-yes` writes the change and keeps the comments in the file.
+- A value that starts with `{` or `[` is read as JSON, for lists and records.
+- `-doc ID` picks the file (`config`, `techs` or `sources/NAME`) when the path does not say which one.
+- A dotted name in a path goes in brackets, such as `http.host_rates[services.nvd.nist.gov]`. A list item is picked with `[name=php]` or by position.
+- Secret values show as `(set)`.
+- A section name is case-insensitive. Quote a name with a space, such as `"Tech catalog"`.
 
 ## Start date per project
 

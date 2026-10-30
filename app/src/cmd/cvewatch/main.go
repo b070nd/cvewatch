@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/notify"
 	"github.com/b070nd/cvewatch/app/src/ops"
+	"github.com/b070nd/cvewatch/app/src/projectfile"
 	"github.com/b070nd/cvewatch/app/src/query"
 	"github.com/b070nd/cvewatch/app/src/report"
 )
@@ -33,7 +35,9 @@ import (
 // version is set at build time: -ldflags "-X main.version=v1.2.3".
 var version = "dev"
 
-const usage = `usage: cvewatch [-root DIR] [-v] <command>
+var usage = strings.Replace(usageText, "{{project-flags}}", strings.TrimRight(projectfile.FlagHelp("      "), "\n"), 1)
+
+const usageText = `usage: cvewatch [-root DIR] [-v] <command>
 
 Getting started
   init [-repo PATH] [-project NAME] [-force]   write a starter configuration; -repo detects lockfiles and techs
@@ -54,8 +58,12 @@ Projects and technologies
   discover DIR [-json]                         what a repository uses, with evidence; changes nothing
   tui [-dir REPO]                              full-screen findings, projects, setup and status (starts cvewatch-tui)
   setup [DIR] [-project NAME]                  guided setup or edit of a project, with the evidence for every guess
-  project [list]                               the monitored projects
-  project NAME [-set T=V] [-remove T] [-lock TYPE:PATH] [-unlock TYPE:PATH] [-envs E,E] [-save]   edit a project file (diff only without -save)
+  project [list]                               the monitored projects (disabled ones are marked)
+  project NAME FLAGS [-save]                   edit a project file (diff only without -save); FLAGS, any number:
+{{project-flags}}
+  project rename|duplicate NAME NEW [-yes]     show the consequences; -yes does it
+  project delete|disable|enable NAME [-yes] [-close-findings]   same; delete moves the file to the backups, -close-findings ignores its open findings
+  settings list|get|set|unset|add|diff|schema  view and change config.yaml, techs.yaml and sources (settings without arguments explains; -yes writes)
 
 Tracking
   fix    ID -project P [-env E] [-note N]      mark a fix as applied
@@ -167,7 +175,16 @@ func dispatch(ctx context.Context, root string, log *slog.Logger, args []string)
 		return tuiCmd(ctx, root, rest)
 	case "setup":
 		return with(func(s *ops.Session) error { return setupCmd(s, rest) })
+	case "settings":
+		return settingsCmd(root, rest)
 	case "project":
+		if verb, ok := lifecycleVerb(rest); ok {
+			lifecycle := func(s *ops.Session) error { return lifecycleCmd(s, verb, rest[1:]) }
+			if slices.Contains(rest, "-yes") || slices.Contains(rest, "--yes") {
+				return with(lifecycle)
+			}
+			return read(lifecycle) // a preview changes nothing
+		}
 		if len(rest) == 0 || rest[0] == "list" {
 			return read(func(s *ops.Session) error { return projectCmd(s, rest) })
 		}
@@ -182,7 +199,7 @@ func dispatch(ctx context.Context, root string, log *slog.Logger, args []string)
 		return read(func(s *ops.Session) error { return inventoryCmd(s, rest) })
 	case "mcp":
 		fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
-		write := fs.Bool("allow-write", false, "also expose set_status and refresh")
+		write := fs.Bool("allow-write", false, "also expose the tools that change things: set_status, refresh, edit_project, edit_settings, manage_project")
 		if err := fs.Parse(rest); err != nil {
 			return err
 		}

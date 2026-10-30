@@ -103,6 +103,9 @@ var (
 // untouched line matches its original.
 func layoutKey(l string) string {
 	l = strings.TrimRight(l, " ")
+	if t := strings.TrimLeft(l, " "); strings.HasPrefix(t, "#") {
+		return t // the encoder moves a comment line that continues a trailing comment to column 0
+	}
 	if loc := commentGap.FindStringSubmatchIndex(l); loc != nil {
 		l = l[:loc[3]] + " #" + l[loc[1]:]
 	}

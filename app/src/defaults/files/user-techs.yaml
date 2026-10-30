@@ -6,8 +6,8 @@
 # techs:
 #   - name: acme-gateway
 #     title: ACME Gateway
-#     category: gateway
-#     keywords: [acme gateway]
+#     category: proxy
+#     aliases: [acme gateway]
 #     cpe: ["acme:gateway"]
 #   - name: wordpress
 #     disabled: true

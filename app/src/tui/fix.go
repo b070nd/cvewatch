@@ -26,6 +26,9 @@ type fixState struct {
 	err     string
 	saving  bool
 	vp      viewport // scrolls the preview
+
+	edit bool   // a change the user made in the field editor, not the fix of a problem
+	land string // the project the list settles on once the change is saved (a new project)
 }
 
 func (f *fixState) waiting() bool { return f.prev == nil && f.err == "" }
@@ -186,6 +189,8 @@ func (m *app) fixSaved(msg fixSavedMsg) outcome {
 	switch {
 	case msg.err != nil:
 		return outcome{err: msg.err}
+	case msg.prev.Saved && msg.fx.edit:
+		return outcome{note: "saved " + msg.fx.project + ": " + msg.fx.fix.Label, then: msg.fx.settle(m)}
 	case msg.prev.Saved:
 		return outcome{note: "fixed " + msg.fx.project + ": " + msg.fx.fix.Label}
 	}
@@ -194,6 +199,14 @@ func (m *app) fixSaved(msg fixSavedMsg) outcome {
 
 // frame is the lines above the preview and the room left for it.
 func (fx *fixState) frame(w, h int) (head []string, room int) {
+	if fx.edit {
+		title := "Edit project: "
+		if fx.land != "" {
+			title = "New project: "
+		}
+		head = []string{stBold.Render(trunc(title+oneLine(fx.project), w)), section(trunc(oneLine(fx.fix.Label), w)), ""}
+		return head, max(h-len(head)-2, 1)
+	}
 	label := oneLine(fx.fix.Label)
 	if n := len(fx.issue.Fixes); n > 1 {
 		label = fmt.Sprintf("fix %d of %d: %s", fx.ci+1, n, label)
@@ -235,6 +248,9 @@ func (fx *fixState) view(w, h int) []string {
 	start, end := fx.vp.window(room)
 	start, end = min(start, len(body)), min(end, len(body))
 	out = append(out, body[start:end]...)
+	if fx.edit {
+		return append(out, "", stBold.Render("Save this change?")+"  y or enter = save, esc = cancel")
+	}
 	return append(out, "", stBold.Render("Apply this fix?")+"  y or enter = apply, esc = cancel")
 }
 
@@ -278,16 +294,22 @@ func (m *app) openEditor() tea.Cmd {
 		m.fail("project " + p.Name + " has no file under config/projects")
 		return nil
 	}
+	return m.launchEditor(p.File, m.editorLine(p), "editing "+oneLine(p.Name)+"...", reList|reDetail)
+}
+
+// launchEditor runs $EDITOR on file, at line where the editor takes one; the
+// TUI reads again what after names when it returns.
+func (m *app) launchEditor(file string, line int, label string, after reloadSet) tea.Cmd {
 	editor := os.Getenv("EDITOR")
 	if len(strings.Fields(editor)) == 0 {
-		m.fail("$EDITOR is not set; the file is " + p.File)
+		m.fail("$EDITOR is not set; the file is " + file)
 		return nil
 	}
-	id, ok := m.begin("editing "+oneLine(p.Name)+"...", "editor", reList|reDetail, nil)
+	id, ok := m.begin(label, "editor", after, nil)
 	if !ok {
 		return nil
 	}
-	argv := editorArgv(editor, p.File, m.editorLine(p))
+	argv := editorArgv(editor, file, line)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	return tea.ExecProcess(cmd, func(err error) tea.Msg { return opMsg{id: id, msg: editedMsg{err: err}} })
 }

@@ -166,6 +166,29 @@ func (l *Ledger) FindingsOf(vulnID string) []model.Finding {
 	return slices.DeleteFunc(l.Findings(), func(f model.Finding) bool { return f.VulnID != vulnID })
 }
 
+// RenameProject moves every finding of a project to a new name, re-keying them.
+// It changes nothing and fails if a finding of the new name already has the
+// same key. It returns how many findings moved.
+func (l *Ledger) RenameProject(from, to string) (int, error) {
+	var moving []*model.Finding
+	for _, f := range l.d.Findings {
+		if f.Project == from {
+			moving = append(moving, f)
+		}
+	}
+	for _, f := range moving {
+		if _, taken := l.d.Findings[f.VulnID+"|"+to+"|"+string(f.Env)]; taken {
+			return 0, fmt.Errorf("project %q already has a finding for %s in %s", to, f.VulnID, f.Env)
+		}
+	}
+	for _, f := range moving {
+		delete(l.d.Findings, f.Key())
+		f.Project = to
+		l.d.Findings[f.Key()] = f
+	}
+	return len(moving), nil
+}
+
 // Mutate lets fn adjust one finding in place; it reports whether the finding exists.
 func (l *Ledger) Mutate(key string, fn func(*model.Finding)) bool {
 	f := l.d.Findings[key]
