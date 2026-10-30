@@ -17,9 +17,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - TUI mouse support: wheel, click to select, clickable tabs and breadcrumb.
 - TUI `E` opens the project file at the problem's line in vim, nano, emacs, VS Code, Sublime Text and more.
 - TUI fix preview lists every fix of a problem; `[` and `]` choose one.
+- TUI project field editor: `c` on Projects (or inside a project) opens the project's fields for direct editing: environments, technologies, lockfiles with env and dev, versions per environment, images and since. Each change is previewed as a diff before it is saved.
+- Project lifecycle in the TUI (`N` new, `R` rename, `D` duplicate, `X` delete, `Z` disable or enable), in the CLI (`cvewatch project rename|duplicate|delete|disable|enable`, which shows the consequences until `-yes`) and in MCP (`manage_project`, which shows them until `confirm`). Delete moves the project file to the backups, asks for the typed name in the TUI, and can mark its open findings ignored with `-close-findings`.
+- Settings screen in the TUI (screen 5) and `cvewatch settings list|get|set|unset|add|diff|schema`: every setting of `config.yaml`, `techs.yaml` and `sources/*.yaml`, with its type and help. Changes are previewed before they are saved, comments are kept, and secrets are never shown.
+- Configuration documents module (`confdoc`): edits by field path, validated the way the loader validates them, saved atomically with a backup.
+- One issue page for the TUI, `cvewatch show` and the reports, with References, Evidence, History, installed versions and affected ranges. TUI keys: `l` and `L` select a link, Enter opens it, `c` copies it, `v` shows the evidence pack, `R` shows the report and `+` adds evidence.
+- Project `since` and lockfile dev flag in edits: `-since`, `-lock TYPE:PATH[:ENV][:dev]`, `-unlock`, `-lock-dev`, `-lock-nodev`, `-image`, `-env-set` and `-env-unset` on the CLI; the `since` input and a `lockfile` object (`type`, `path`, `env`, `dev`) in MCP.
+- MCP tools `get_settings` and `preview_settings_change` (read-only), and `edit_settings` and `manage_project` (with `-allow-write`).
+- Project edit operations are defined once, in `projectfile.OpTable`. The CLI flags, the MCP schema and the parity tests are built from that table.
 - TUI project form: `e` on the review changes one step and returns to the review.
 
 ### Changed
+- TUI has five screens, Overview, Findings, Projects, Status and Settings, on keys 1 to 5.
+- `cvewatch show` and report files now include Installed, Affected and History sections.
+- Advisory links are listed only when they are plain http or https addresses, and long link titles are cut at 200 characters.
+- On Windows, links open with `rundll32`, not through `cmd`, so `&` and `^` in an address are not read as shell syntax.
 - TUI: Enter on a project opens it, with its problems and fixes. `e` edits the project.
 - TUI: `a` adds a project (`n` still works). `x` previews a fix (`f` still works). `E` opens the editor (`o` still works on Projects).
 - TUI: Esc cancels a fix preview. `n` no longer cancels it.
@@ -33,6 +45,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - TUI Projects cursor stays on its project when the list changes.
 - TUI open issue reloads after a status, assign, bulk or editor change.
 - TUI refuses a second submit of a change that is still being saved, so it is not written twice.
+- The `user-techs.yaml` example said `keywords`; the field is `aliases`.
 
 ## [1.2.0] - 2026-10-29
 

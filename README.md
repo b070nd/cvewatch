@@ -304,9 +304,9 @@ Read-only by default. The agent can call:
 | `policy_violations` | which deadlines are broken right now |
 | `get_calendar` | what was published this month |
 | `get_status` | whether the monitor itself is healthy: daemon, feeds, channels |
-| `search_catalog`, `discover_stack`, `list_projects`, `check_projects`, `preview_project_change` | set a project up: find technologies, read a repository, find problems in project files, preview the change |
+| `search_catalog`, `discover_stack`, `list_projects`, `check_projects`, `preview_project_change`, `get_settings`, `preview_settings_change` | set a project and the settings up: find technologies, read a repository, find problems in project files, preview a change to a project or to the settings |
 
-Opt in to writing with `mcp -allow-write`, and the agent can also `set_status`, `assign`, `attach_evidence`, `refresh` and `edit_project`. The skills in [`skills/`](skills) walk an agent through setup (`cvewatch-setup`) and triage (`cvewatch-triage`), asking the human at every step that matters.
+Opt in to writing with `mcp -allow-write`, and the agent can also `set_status`, `assign`, `attach_evidence`, `refresh`, `edit_project`, `edit_settings` and `manage_project`. The skills in [`skills/`](skills) walk an agent through setup (`cvewatch-setup`) and triage (`cvewatch-triage`), asking the human at every step that matters.
 
 **Example: a dependency upgrade.** A developer asks the agent to bump the packages of `shop`. Instead of guessing, the agent calls `list_findings(project="shop", env="prod", min_severity="high")`, sees that `symfony/http-kernel 6.4.1` is `affected` with an official fix in 6.4.2, upgrades exactly that, opens the merge request, and calls `attach_evidence(note="MR !412 upgrades http-kernel to 6.4.2", url=...)`. The **status stays `open`**. After the deploy a human runs `cvewatch fix ... -env prod`, because "fixed" is a statement about production, not about a branch.
 

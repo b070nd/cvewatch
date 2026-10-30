@@ -489,7 +489,13 @@ func (pl *lifecyclePlan) mayApply(s *Session) error {
 		if err := s.mayWrite(pl.name); err != nil {
 			return err
 		}
-		return s.mayWrite(pl.newName)
+		if err := s.mayWrite(pl.newName); err != nil {
+			return err
+		}
+		if pl.cand != nil { // renaming rewrites access rules, which only an unrestricted writer may change
+			return s.Settings().mayWrite()
+		}
+		return nil
 	case VerbDuplicate, VerbEnable:
 		return s.mayWrite("")
 	}

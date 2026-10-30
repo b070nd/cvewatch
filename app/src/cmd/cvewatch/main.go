@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"time"
 
@@ -174,7 +175,16 @@ func dispatch(ctx context.Context, root string, log *slog.Logger, args []string)
 		return tuiCmd(ctx, root, rest)
 	case "setup":
 		return with(func(s *ops.Session) error { return setupCmd(s, rest) })
+	case "settings":
+		return settingsCmd(root, rest)
 	case "project":
+		if verb, ok := lifecycleVerb(rest); ok {
+			lifecycle := func(s *ops.Session) error { return lifecycleCmd(s, verb, rest[1:]) }
+			if slices.Contains(rest, "-yes") || slices.Contains(rest, "--yes") {
+				return with(lifecycle)
+			}
+			return read(lifecycle) // a preview changes nothing
+		}
 		if len(rest) == 0 || rest[0] == "list" {
 			return read(func(s *ops.Session) error { return projectCmd(s, rest) })
 		}
