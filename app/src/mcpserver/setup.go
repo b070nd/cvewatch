@@ -42,7 +42,7 @@ func addSetupTools(srv *mcp.Server, s *server, allowWrite bool) {
 }
 
 type searchIn struct {
-	Query    string `json:"query,omitempty" jsonschema:"words to look for in names, vendors and keywords; empty lists the category"`
+	Query    string `json:"query,omitempty" jsonschema:"words to look for in names, vendors and aliases; empty lists the category"`
 	Category string `json:"category,omitempty" jsonschema:"only this category, for example database, runtime, framework, web-server, cms"`
 	Limit    int    `json:"limit,omitempty" jsonschema:"at most this many results (default 20, maximum 100)"`
 }

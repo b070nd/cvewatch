@@ -93,6 +93,10 @@ func (f *File) Bytes() ([]byte, error) {
 	return []byte(restoreLayout(f.src, buf.String())), nil
 }
 
+// RestoreLayout is restoreLayout for other YAML documents that keep their
+// user-written spacing the same way (the settings files).
+func RestoreLayout(orig, out string) string { return restoreLayout(orig, out) }
+
 // restoreLayout puts back what the YAML encoder normalises away: the spacing
 // before line comments and blank lines. The result is only used when it still
 // means the same as the encoder's output.

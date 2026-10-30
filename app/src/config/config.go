@@ -7,11 +7,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -156,7 +160,8 @@ type BrokenProject struct {
 	Err  string
 }
 
-func defaults() Settings {
+// Defaults are the settings in force when config.yaml says nothing.
+func Defaults() Settings {
 	return Settings{
 		Interval:  4 * time.Hour,
 		Lookback:  7 * 24 * time.Hour,
@@ -189,10 +194,114 @@ func LoadLenient(root string) (*Bundle, error) {
 }
 
 func load(root string, lenient bool) (*Bundle, error) {
-	b := &Bundle{Root: root, Settings: defaults()}
+	b, issues := assemble(root, lenient, nil)
+	if b == nil { // a document could not be read or parsed
+		return nil, issues[0].err
+	}
+	return b, joinIssues(issues)
+}
 
-	if err := decode(filepath.Join(root, "config", "config.yaml"), &b.Settings, true); err != nil {
-		return nil, err
+func joinIssues(issues []Issue) error {
+	errs := make([]error, len(issues))
+	for i, is := range issues {
+		errs[i] = is.err
+	}
+	return errors.Join(errs...)
+}
+
+// Issue is one thing wrong with the configuration, tied to the document and
+// the field when that is known. Field uses dotted yaml keys, with list items by
+// position (policy.rules.0.fix_within) or by their key (techs.[name=php].cpe).
+type Issue struct {
+	File  string // path of the document; empty when the problem spans documents
+	Field string // path inside the document; empty when unknown
+	Line  int    // 1-based line for syntax and unknown-key errors; 0 when unknown
+	Msg   string
+	err   error
+}
+
+func newIssue(file, field string, err error) Issue {
+	return Issue{File: file, Field: field, Msg: err.Error(), err: err}
+}
+
+// Overlay replaces files for Check: keys are paths as Load sees them
+// (filepath.Join(root, "config", "config.yaml")); a nil value hides the file.
+type Overlay map[string][]byte
+
+// Check assembles and validates the configuration with the overlay applied
+// instead of the files on disk, collecting every problem it can attribute.
+// Broken project files are listed in the bundle, as LoadLenient does. The
+// bundle is nil when a document cannot be parsed at all, and then the one
+// issue says which.
+func Check(root string, over Overlay) (*Bundle, []Issue) {
+	clean := Overlay{}
+	for p, data := range over {
+		clean[filepath.Clean(p)] = data
+	}
+	b, issues := assemble(root, true, clean)
+	if b != nil {
+		return b, issues
+	}
+	return nil, splitDecodeIssue(issues[0])
+}
+
+// splitDecodeIssue turns a yaml type error with several lines into one issue
+// per line, each with its line number.
+func splitDecodeIssue(is Issue) []Issue {
+	var de *decodeError
+	if !errors.As(is.err, &de) {
+		return []Issue{is}
+	}
+	var te *yaml.TypeError
+	if errors.As(de.err, &te) {
+		var out []Issue
+		for _, m := range te.Errors {
+			out = append(out, Issue{File: de.name, Line: lineOf(m), Msg: m, err: de})
+		}
+		return out
+	}
+	return []Issue{{File: de.name, Line: lineOf(de.err.Error()), Msg: strings.TrimPrefix(de.err.Error(), "yaml: "), err: de}}
+}
+
+var lineRE = regexp.MustCompile(`line (\d+)`)
+
+func lineOf(msg string) int {
+	if m := lineRE.FindStringSubmatch(msg); m != nil {
+		n, _ := strconv.Atoi(m[1])
+		return n
+	}
+	return 0
+}
+
+// Paths of the documents under a root.
+func SettingsPath(root string) string { return filepath.Join(root, "config", "config.yaml") }
+func TechsPath(root string) string    { return filepath.Join(root, "config", "techs.yaml") }
+func SourcesDir(root string) string   { return filepath.Join(root, "sources") }
+func ProjectsDir(root string) string  { return filepath.Join(root, "config", "projects") }
+
+// origins remembers which file each merged entry came from, for issues.
+type origins struct {
+	settings string
+	techs    string
+	userTech map[string]bool // lowercase names defined in the user's techs.yaml
+	projects map[string]string
+	sources  map[string]sourceAt
+}
+
+type sourceAt struct {
+	file  string
+	index int
+}
+
+func assemble(root string, lenient bool, over Overlay) (*Bundle, []Issue) {
+	b := &Bundle{Root: root, Settings: Defaults()}
+	fail := func(err error) (*Bundle, []Issue) { return nil, []Issue{newIssue("", "", err)} }
+	rd := reader{over}
+	og := origins{settings: SettingsPath(root), techs: TechsPath(root), userTech: map[string]bool{},
+		projects: map[string]string{}, sources: map[string]sourceAt{}}
+
+	if err := rd.decode(og.settings, &b.Settings, true); err != nil {
+		return fail(err)
 	}
 	b.DataDir = resolve(root, b.DataDir)
 	b.AlertsDir = resolve(root, b.AlertsDir)
@@ -205,33 +314,36 @@ func load(root string, lenient bool) (*Bundle, error) {
 		Techs []model.Tech `yaml:"techs"`
 	}
 	if err := decodeBytes("shipped techs.yaml", shipped.Techs(), &shippedTechs); err != nil {
-		return nil, err
+		return fail(err)
 	}
-	techsPath := filepath.Join(root, "config", "techs.yaml")
-	if _, err := os.Stat(techsPath); errors.Is(err, os.ErrNotExist) {
+	if _, err := rd.read(og.techs); errors.Is(err, os.ErrNotExist) {
 		b.DefaultTechs = true
-	} else if err := decode(techsPath, &userTechs, false); err != nil {
-		return nil, err
+	} else if err := rd.decode(og.techs, &userTechs, false); err != nil {
+		return fail(err)
+	}
+	for _, t := range userTechs.Techs {
+		og.userTech[strings.ToLower(t.Name)] = true
 	}
 	b.Techs = catalog.Merge(shippedTechs.Techs, userTechs.Techs)
 	b.Catalog = catalog.New(b.Techs)
 
 	decoded := map[string]bool{}
-	err := each(filepath.Join(root, "config", "projects"), func(path string) error {
+	err := rd.each(ProjectsDir(root), func(path string) error {
 		var p model.Project
-		if err := decode(path, &p, false); err != nil {
+		if err := rd.decode(path, &p, false); err != nil {
 			if !lenient {
 				return err
 			}
 			b.Broken = append(b.Broken, brokenProject(path, err))
 			return nil
 		}
+		og.projects[p.Name] = path
 		for i, lf := range p.Lockfiles {
 			p.Lockfiles[i].Path = resolve(root, lf.Path) // relative paths follow the app root, not the working directory
 		}
 		if lenient {
 			if errs := projectErrors(p, decoded); len(errs) > 0 {
-				b.Broken = append(b.Broken, brokenProject(path, errors.Join(errs...)))
+				b.Broken = append(b.Broken, brokenProject(path, joinFieldErrs(errs)))
 				return nil
 			}
 		}
@@ -240,7 +352,7 @@ func load(root string, lenient bool) (*Bundle, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return fail(err)
 	}
 	for _, br := range b.Broken {
 		decoded[br.Name] = true
@@ -250,104 +362,146 @@ func load(root string, lenient bool) (*Bundle, error) {
 		Sources []model.Source `yaml:"sources"`
 	}
 	if err := decodeBytes("shipped sources", shipped.Sources(), &shippedSrc); err != nil {
-		return nil, err
+		return fail(err)
 	}
-	err = each(filepath.Join(root, "sources"), func(path string) error {
+	err = rd.each(SourcesDir(root), func(path string) error {
 		var s struct {
 			Sources []model.Source `yaml:"sources"`
 		}
-		if err := decode(path, &s, false); err != nil {
+		if err := rd.decode(path, &s, false); err != nil {
 			return err
+		}
+		for i, src := range s.Sources {
+			og.sources[src.ID] = sourceAt{file: path, index: i}
 		}
 		userSrc.Sources = append(userSrc.Sources, s.Sources...)
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return fail(err)
 	}
 	b.DefaultSources = len(userSrc.Sources) == 0
 	b.Sources = mergeSources(shippedSrc.Sources, userSrc.Sources)
 	b.Sources = b.withTechFeeds(b.Sources)
 
-	return b, b.validate(decoded)
+	return b, b.validate(decoded, og)
 }
 
-func (b *Bundle) validate(decoded map[string]bool) error {
-	var errs []error
-	fail := func(f string, a ...any) { errs = append(errs, fmt.Errorf(f, a...)) }
+func (b *Bundle) validate(decoded map[string]bool, og origins) []Issue {
+	var out []Issue
+	fail := func(file, field, f string, a ...any) { out = append(out, newIssue(file, field, fmt.Errorf(f, a...))) }
 
 	for _, err := range b.Catalog.Validate() {
-		errs = append(errs, err)
+		is := newIssue("", "", err)
+		var p *catalog.Problem
+		if errors.As(err, &p) {
+			if p.Tech == "" {
+				is.File, is.Field = og.techs, "techs"
+			} else if og.userTech[strings.ToLower(p.Tech)] {
+				is.File, is.Field = og.techs, "techs.[name="+p.Tech+"]"
+				if p.Field != "" {
+					is.Field += "." + p.Field
+				}
+			}
+		}
+		out = append(out, is)
 	}
 	known := map[string]bool{}
 	for _, t := range b.Techs {
 		key := strings.ToLower(t.Name)
 		switch {
 		case t.Name == "":
-			fail("tech without a name")
+			fail(og.techs, "techs", "tech without a name")
 		case known[key]:
-			fail("duplicate tech %q", t.Name)
+			fail(og.techs, "techs.[name="+t.Name+"].name", "duplicate tech %q", t.Name)
 		}
 		known[key] = true
 	}
 
 	seen := map[string]bool{}
 	for _, p := range b.Projects {
-		errs = append(errs, projectErrors(p, seen)...)
+		for _, fe := range projectErrors(p, seen) {
+			out = append(out, newIssue(og.projects[p.Name], fe.field, fe.err))
+		}
 		b.Warnings = append(b.Warnings, projectWarnings(p, known)...)
 	}
 
-	for actor, g := range b.Access {
+	for _, actor := range slices.Sorted(maps.Keys(b.Access)) {
+		g := b.Access[actor]
 		for _, name := range g.Projects {
 			if name != "*" && !decoded[name] {
-				fail("access for %q names unknown project %q", actor, name)
+				fail(og.settings, "access."+actor+".projects", "access for %q names unknown project %q", actor, name)
 			}
 		}
 	}
 
 	ids := map[string]bool{}
 	for _, s := range b.Sources {
+		at, mine := og.sources[s.ID]
+		file, base := "", ""
+		if mine {
+			file, base = at.file, "sources.[id="+s.ID+"]"
+			if s.ID == "" {
+				base = "sources." + strconv.Itoa(at.index)
+			}
+		}
 		if s.ID == "" || s.Type == "" || s.URL == "" || ids[s.ID] {
-			fail("source %q needs a unique id, a type and a url", s.ID)
+			field := ""
+			if mine {
+				switch {
+				case s.ID == "" || ids[s.ID]:
+					field = base + ".id"
+				case s.Type == "":
+					field = base + ".type"
+				default:
+					field = base + ".url"
+				}
+			}
+			fail(file, field, "source %q needs a unique id, a type and a url", s.ID)
 		}
 		ids[s.ID] = true
 		if err := b.checkURL(s.URL); err != nil {
-			fail("source %q: %v", s.ID, err) // never echo the URL: it may hold a token
+			field := ""
+			if mine {
+				field = base + ".url"
+			}
+			fail(file, field, "source %q: %v", s.ID, err) // never echo the URL: it may hold a token
 		}
 	}
 	if b.Interval <= 0 {
-		fail("interval must be positive")
+		fail(og.settings, "interval", "interval must be positive")
 	}
 	if d := b.Notify.Digest; d.DailyAt != "" {
 		if _, err := time.Parse("15:04", d.DailyAt); err != nil {
-			fail("notify.digest.daily_at must look like 08:00")
+			fail(og.settings, "notify.digest.daily_at", "notify.digest.daily_at must look like 08:00")
 		}
 		if d.Env != "" && !d.Env.Valid() {
-			fail("notify.digest.env %q is unknown", d.Env)
+			fail(og.settings, "notify.digest.env", "notify.digest.env %q is unknown", d.Env)
 		}
 		for _, c := range d.Channels {
 			if !slices.Contains([]string{"slack", "webhook", "email"}, c) {
-				fail("notify.digest.channels: unknown channel %q", c)
+				fail(og.settings, "notify.digest.channels", "notify.digest.channels: unknown channel %q", c)
 			}
 		}
 	}
 	for i, r := range b.Policy.Rules {
+		at := "policy.rules." + strconv.Itoa(i)
 		switch {
 		case r.Name == "":
-			fail("policy rule %d needs a name", i+1)
+			fail(og.settings, at+".name", "policy rule %d needs a name", i+1)
 		case r.OwnerWithin <= 0 && r.FixWithin <= 0:
-			fail("policy rule %q needs owner_within or fix_within", r.Name)
+			fail(og.settings, at+".fix_within", "policy rule %q needs owner_within or fix_within", r.Name)
 		case r.Env != "" && !r.Env.Valid():
-			fail("policy rule %q: unknown env %q", r.Name, r.Env)
+			fail(og.settings, at+".env", "policy rule %q: unknown env %q", r.Name, r.Env)
 		}
 	}
 	if !slices.Contains([]string{"", "file", "sqlite"}, b.Storage.Backend) {
-		fail("storage.backend must be file or sqlite")
+		fail(og.settings, "storage.backend", "storage.backend must be file or sqlite")
 	}
 	if b.Retention > 0 && b.Retention < 2*b.Lookback {
-		fail("retention must be at least twice the lookback, or old items could be judged again")
+		fail(og.settings, "retention", "retention must be at least twice the lookback, or old items could be judged again")
 	}
-	return errors.Join(errs...)
+	return out
 }
 
 var placeholders = strings.NewReplacer("{since}", "x", "{since_unix}", "0", "{since_date}", "x", "{now}", "x")
@@ -367,30 +521,44 @@ func (b *Bundle) checkURL(raw string) error {
 	return nil
 }
 
-func projectErrors(p model.Project, seen map[string]bool) []error {
-	var errs []error
-	fail := func(f string, a ...any) { errs = append(errs, fmt.Errorf(f, a...)) }
+type fieldErr struct {
+	field string
+	err   error
+}
+
+func joinFieldErrs(fes []fieldErr) error {
+	errs := make([]error, len(fes))
+	for i, fe := range fes {
+		errs[i] = fe.err
+	}
+	return errors.Join(errs...)
+}
+
+func projectErrors(p model.Project, seen map[string]bool) []fieldErr {
+	var errs []fieldErr
+	fail := func(field, f string, a ...any) { errs = append(errs, fieldErr{field, fmt.Errorf(f, a...)}) }
 
 	if p.Name == "" || seen[p.Name] {
-		fail("project name %q is empty or duplicated", p.Name)
+		fail("name", "project name %q is empty or duplicated", p.Name)
 	}
 	seen[p.Name] = true
 	for _, e := range p.Envs {
 		if !e.Valid() {
-			fail("project %s: unknown env %q (use dev, int, staging, prod)", p.Name, e)
+			fail("envs", "project %s: unknown env %q (use dev, int, staging, prod)", p.Name, e)
 		}
 	}
-	for _, lf := range p.Lockfiles {
+	for i, lf := range p.Lockfiles {
+		at := "lockfiles." + strconv.Itoa(i)
 		if !slices.Contains(matrix.Types(), lf.Type) {
-			fail("project %s: lockfile type %q is unknown (use %s)", p.Name, lf.Type, strings.Join(matrix.Types(), ", "))
+			fail(at+".type", "project %s: lockfile type %q is unknown (use %s)", p.Name, lf.Type, strings.Join(matrix.Types(), ", "))
 		}
 		if lf.Env != "" && !lf.Env.Valid() {
-			fail("project %s: lockfile env %q is unknown", p.Name, lf.Env)
+			fail(at+".env", "project %s: lockfile env %q is unknown", p.Name, lf.Env)
 		}
 	}
 	for env := range p.Environments {
 		if !env.Valid() {
-			fail("project %s: environments: unknown env %q", p.Name, env)
+			fail("environments."+string(env), "project %s: environments: unknown env %q", p.Name, env)
 		}
 	}
 	return errs
@@ -447,9 +615,22 @@ func resolve(root, p string) string {
 	return filepath.Clean(filepath.Join(root, p))
 }
 
+// reader reads documents from disk, or from an overlay that replaces them.
+type reader struct{ over Overlay }
+
+func (r reader) read(path string) ([]byte, error) {
+	if data, ok := r.over[filepath.Clean(path)]; ok {
+		if data == nil {
+			return nil, &fs.PathError{Op: "open", Path: path, Err: fs.ErrNotExist}
+		}
+		return data, nil
+	}
+	return os.ReadFile(path)
+}
+
 // decode parses strict YAML. A missing file is fine when optional.
-func decode(path string, out any, optional bool) error {
-	raw, err := os.ReadFile(path)
+func (r reader) decode(path string, out any, optional bool) error {
+	raw, err := r.read(path)
 	if errors.Is(err, os.ErrNotExist) && optional {
 		return nil
 	}
@@ -459,21 +640,36 @@ func decode(path string, out any, optional bool) error {
 	return decodeBytes(path, raw, out)
 }
 
+// decodeError keeps the document name apart from yaml's own message.
+type decodeError struct {
+	name string
+	err  error
+}
+
+func (e *decodeError) Error() string { return e.name + ": " + e.err.Error() }
+func (e *decodeError) Unwrap() error { return e.err }
+
 func decodeBytes(name string, raw []byte, out any) error {
 	dec := yaml.NewDecoder(bytes.NewReader(raw))
 	dec.KnownFields(true)
 	if err := dec.Decode(out); err != nil && !errors.Is(err, io.EOF) {
-		return fmt.Errorf("%s: %w", name, err)
+		return &decodeError{name, err}
 	}
 	return nil
 }
 
 // each runs fn for every *.yaml file in dir, in name order. A missing dir is empty.
-func each(dir string, fn func(path string) error) error {
+func (r reader) each(dir string, fn func(path string) error) error {
 	files, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
 	if err != nil {
 		return err
 	}
+	for p, data := range r.over {
+		if filepath.Dir(p) == filepath.Clean(dir) && filepath.Ext(p) == ".yaml" && data != nil && !slices.Contains(files, p) {
+			files = append(files, p)
+		}
+	}
+	files = slices.DeleteFunc(files, func(f string) bool { data, ok := r.over[filepath.Clean(f)]; return ok && data == nil })
 	sort.Strings(files)
 	for _, f := range files {
 		if err := fn(f); err != nil {
@@ -487,10 +683,15 @@ func each(dir string, fn func(path string) error) error {
 // open is true when no access rules exist, so everything is allowed. A nil
 // projects slice with open false means the actor has no access at all.
 func (b *Bundle) Allowed(actor string) (projects []string, write, open bool) {
-	if len(b.Access) == 0 {
+	return AllowedBy(b.Access, actor)
+}
+
+// AllowedBy is Allowed for a bare list of access rules.
+func AllowedBy(access map[string]Grant, actor string) (projects []string, write, open bool) {
+	if len(access) == 0 {
 		return nil, true, true
 	}
-	g, ok := b.Access[actor]
+	g, ok := access[actor]
 	if !ok {
 		return nil, false, false
 	}
