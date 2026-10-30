@@ -25,9 +25,9 @@ Setup tools (read-only unless noted) let an agent configure the monitor with the
 | Tool | Does |
 |---|---|
 | `search_catalog` | find technologies (open and closed source) by name, vendor or keyword, optionally within a category |
-| `discover_stack` | look at a repository folder and propose technologies, versions and lockfiles, each with evidence and a confidence; reads files only |
+| `discover_stack` | look at a repository folder, or at one Dockerfile, compose file or Kubernetes manifest, and propose technologies, versions and lockfiles, each with evidence and a confidence. Technologies that only appear in container files are marked `infra`, with their catalog category; reads files only |
 | `list_projects` | the monitored projects with environments, technologies and lockfiles |
-| `check_projects` | problems in project files: technologies not in the catalog, lockfiles missing, unreadable or of the wrong type, lockfiles whose environment is not in `envs`, entries skipped while reading a lockfile. Optional `project`; each problem may come with fixes. A project file that cannot be read is reported as an error on field `file`, not as a failure of the tool. Writes nothing |
+| `check_projects` | problems in project files: technologies not in the catalog, lockfiles missing, unreadable or of the wrong type, lockfiles whose environment is not in `envs`, a file whose name differs from the `name:` it declares (a warning on field `name`), entries skipped while reading a lockfile. Optional `project`; each problem may come with fixes. A project file that cannot be read is reported as an error on field `file`, not as a failure of the tool. Writes nothing |
 | `preview_project_change` | the diff and problems a change to a project file would produce; writes nothing |
 | `edit_project` | only with `-allow-write`: apply the change (comments kept, old file backed up, audited as `project`). Takes the same inputs as `preview_project_change` |
 | `get_status` | health of the monitor: daemon, feeds, channels, recent cycles |
@@ -37,6 +37,8 @@ Setup tools (read-only unless noted) let an agent configure the monitor with the
 | `manage_project` | only with `-allow-write`: rename, duplicate, delete, disable or enable a whole project. Without `confirm` it returns the consequences and changes nothing; with `confirm: true` it carries the change out |
 
 The settings tools need an actor that may see every project, because the settings name all of them. A restricted actor gets an access refusal.
+
+A project is named by the `name:` in its file, not by the file's name. The `project` input of these tools is that name, so `magento2-shop.yaml` declaring `shop` is `shop`.
 
 Each change is two steps. Preview first, show the user the diff or the consequences, and save only after a clear yes. `preview_project_change` and `preview_settings_change` write nothing. `manage_project` is one tool: call it without `confirm` to get the consequences, and again with `confirm: true` once the user agreed. Without `-allow-write` the write tools are not listed at all, so a read-only client cannot preview `manage_project` either.
 
@@ -59,7 +61,7 @@ The project edit inputs, for `preview_project_change` and `edit_project`:
 - `lockfile`: one object with `type`, `path`, `env` (optional) and `dev` (optional, a boolean). `dev: true` counts the lockfile's development-only packages in every environment. The flat fields `lockfile_type`, `lockfile_path`, `lockfile_env` and `lockfile_dev` do the same.
 - `kind`: one of the op kinds in `projectfile.OpTable`, each described in the schema with the inputs it takes. The kinds are `set_envs`, `set_tech`, `remove_tech`, `set_env_tech`, `remove_env_tech`, `set_image`, `add_lockfile`, `remove_lockfile`, `set_lockfile_dev` and `set_since`.
 
-`discover_stack` reads files in the folder it is given and nothing else: it never executes anything, never follows symbolic links, skips dependency folders and caps depth, file count and file size. Its output is evidence for a human to confirm, not a decision.
+`discover_stack` reads files in the folder or the file it is given and nothing else: it never executes anything, never follows symbolic links, skips dependency folders and caps depth, file count and file size. Its output is evidence for a human to confirm, not a decision.
 
 Skill files for Claude Code live in `skills/`: `cvewatch-setup` walks through the tools above with the user, and `cvewatch-triage` reads and records findings. Copy them to `~/.claude/skills/` or a project's `.claude/skills/`.
 

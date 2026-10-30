@@ -109,6 +109,9 @@ func (m *app) stack() []*mode {
 	if m.frm != nil {
 		s = append(s, formMode(m.frm))
 	}
+	if m.chs != nil {
+		s = append(s, mo.picker)
+	}
 	switch {
 	case m.prm != nil && m.prm.submitting:
 		s = append(s, mo.promptBusy)

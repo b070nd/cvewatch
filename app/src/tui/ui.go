@@ -13,11 +13,14 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/b070nd/cvewatch/app/src/config"
 )
 
 // Options configure the program.
 type Options struct {
 	Refresh time.Duration // how often to re-read the state; default 30s
+	Fetch   time.Duration // how often to fetch the feeds; 0 only on request
 	Dir     string        // when set, start the setup flow for a new project on this folder
 }
 
@@ -31,8 +34,11 @@ func (o Options) refresh() time.Duration {
 // Run shows the TUI full screen until the user quits or ctx ends. A cancelled
 // context is a normal way out and returns nil.
 func Run(ctx context.Context, b Backend, o Options) error {
-	p := tea.NewProgram(New(b, o), tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
+	m := newApp(ctx, b, o)
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
 	_, err := p.Run()
+	m.stop()
+	m.waitFetch(5 * time.Second) // the fetch lets go of the data before the process ends
 	if err != nil && ctx.Err() != nil {
 		return nil
 	}
@@ -40,8 +46,11 @@ func Run(ctx context.Context, b Backend, o Options) error {
 }
 
 // New returns the program's model; it is exported so tests can drive it.
-func New(b Backend, o Options) tea.Model {
-	m := &app{b: b, o: o, loading: true, helpVP: scrolling(), after: afterCmd, sys: newSysDesktop()}
+func New(b Backend, o Options) tea.Model { return newApp(context.Background(), b, o) }
+
+func newApp(ctx context.Context, b Backend, o Options) *app {
+	m := &app{b: b, o: o, loading: true, helpVP: scrolling(), after: afterCmd, sys: newSysDesktop(), tui: config.TUI{Refresh: o.refresh(), Fetch: o.Fetch}}
+	m.ctx, m.stop = context.WithCancel(ctx)
 	for i := range m.txt {
 		m.txt[i] = scrolling()
 	}
@@ -66,30 +75,43 @@ type app struct {
 	data    *snapshot
 	loadErr error
 	loading bool
-	pend    pending // the writes and scans in flight
+	pend    pending         // the writes and scans in flight
+	ctx     context.Context // ends with the program; the fetch runs under it
+	stop    context.CancelFunc
+	tui     config.TUI // the tui settings as last read: the periods of the re-read and the fetch
+	fet     fetchState
 	sys     desktop // the browser and the clipboard
 
 	flash    string
 	flashErr bool
+	flashDim bool // a neutral note: muted, not a success and not an error
 	flashSeq int  // which note is on screen, so that an old timer leaves a newer one alone
 	flashDue bool // a note was set and its timer is not started yet
 	after    func(d time.Duration, msg tea.Msg) tea.Cmd
 
 	fnd findingsState
+	ovw overviewState
 	prj projectsState
 	set settingsState
 	frm *form
 	prm *prompt
+	chs *picker // a list to choose from, over the screen
 	cfm *confirm
 	jmp *jumpBox
 	nt  *notice
 	ret *returnPoint // where the last jump came from
+
+	scope    string       // the project the overview and the findings are narrowed to; empty for all
+	narrowed scopedIssues // the issues of the snapshot in that scope
 }
 
 // ---- tea.Model ----
 
 func (m *app) Init() tea.Cmd {
-	cmds := []tea.Cmd{loadCmd(m.b), tickCmd(m.o.refresh())}
+	cmds := []tea.Cmd{loadCmd(m.b), tickCmd(m.refreshEvery())}
+	if m.tui.Fetch > 0 {
+		cmds = append(cmds, m.fetchBegin(true), m.armFetch())
+	}
 	if m.o.Dir != "" {
 		cmds = append(cmds, m.start("scanning "+clean(m.o.Dir)+"...", "flow", 0, nil, startFlowCmd(m.b, "", m.o.Dir)))
 	}
@@ -125,13 +147,19 @@ func afterCmd(d time.Duration, msg tea.Msg) tea.Cmd {
 }
 
 func (m *app) say(s string) {
-	m.flash, m.flashErr = oneLine(s), false
+	m.flash, m.flashErr, m.flashDim = oneLine(s), false, false
 	m.flashSeq++
 	m.flashDue = true
 }
 
+// note is say for what is neither good nor bad news.
+func (m *app) note(s string) {
+	m.say(s)
+	m.flashDim = true
+}
+
 func (m *app) fail(s string) {
-	m.flash, m.flashErr = oneLine(s), true
+	m.flash, m.flashErr, m.flashDim = oneLine(s), true, false
 	m.flashSeq++
 	m.flashDue = false
 }
@@ -163,9 +191,14 @@ func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		return m.key(msg)
 	case tea.MouseMsg:
+		if cmd, ok := m.fetchClick(msg); ok {
+			return m, cmd
+		}
 		return m, m.mouse(msg)
+	case tuiMsg, fetchDueMsg, fetchProgressMsg, fetchDoneMsg:
+		return m, m.fetchUpdate(msg)
 	case tickMsg:
-		next := tickCmd(m.o.refresh())
+		next := tickCmd(m.refreshEvery())
 		if m.loading {
 			return m, next
 		}
@@ -183,7 +216,7 @@ func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		before := m.prj.proj.id()
 		m.loadErr, m.data = nil, msg.snap
-		m.fnd.refit(m.data.Issues)
+		m.checkScope()
 		m.refitProjects(before)
 		if msg.land != nil {
 			m.landOn(*msg.land)
@@ -222,6 +255,7 @@ func (m *app) flowStarted(msg flowMsg) outcome {
 	}
 	m.scr = scrProjects
 	m.frm = newForm(msg.flow, msg.creating, msg.name)
+	m.frm.infra = msg.infra
 	return outcome{note: msg.note, then: m.frm.enter(m)}
 }
 
@@ -234,6 +268,14 @@ func (m *app) scanned(msg scanMsg) outcome {
 	}
 	m.frm.flow.UseDiscovery(msg.res.Root, msg.res)
 	m.frm.touched = true
+	if inf := infraOf(msg.res); len(inf) > 0 {
+		if m.frm.infra == nil {
+			m.frm.infra = map[string]bool{}
+		}
+		for k := range inf {
+			m.frm.infra[k] = true
+		}
+	}
 	m.frm.load()
 	return outcome{note: scanNote(msg.res), then: m.frm.enter(m)}
 }
@@ -264,7 +306,7 @@ func (m *app) saved(msg savedMsg) outcome {
 
 func (m *app) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if k.String() == "ctrl+c" {
-		return m, tea.Quit
+		return m, m.quit()
 	}
 	seq := m.flashSeq
 	cmd, moved := m.dispatch(k)
@@ -316,6 +358,9 @@ func (m *app) layout() {
 	default:
 		screens[m.scr].layout(m, w, h)
 	}
+	if m.chs != nil {
+		m.chs.vp.fit(max(h-pickHead-2, 1))
+	}
 	if m.jmp != nil {
 		_, th := m.size()
 		m.jmp.vp.fit(jumpRows(th))
@@ -336,6 +381,8 @@ func (m *app) View() string {
 		lines := m.helpText(w)
 		start, end := m.helpVP.window(bodyH)
 		body = lines[min(start, len(lines)):min(end, len(lines))]
+	case m.chs != nil:
+		body = m.chs.view(w, bodyH)
 	case m.frm != nil:
 		body = m.frm.view(w, bodyH)
 	default:
@@ -388,9 +435,15 @@ func (m *app) tabs() (tabs []string, spans [numScreens][2]int) {
 }
 
 func (m *app) header(w int) string {
+	left, right, _, _ := m.headerParts(w)
+	return left + spaces(max(1, w-width(left)-width(right))) + right
+}
+
+// headerParts are the two ends of the header and the cells the fetch progress
+// covers in it, which are none when it is not shown.
+func (m *app) headerParts(w int) (left, right string, from, to int) {
 	tabs, _ := m.tabs()
-	left := stBold.Render("cvewatch") + "  " + strings.Join(tabs, " ")
-	right := ""
+	left = stBold.Render("cvewatch") + "  " + strings.Join(tabs, " ")
 	switch {
 	case m.pend.count() > 0:
 		right = m.pend.status()
@@ -399,17 +452,35 @@ func (m *app) header(w int) string {
 	case m.data != nil:
 		right = levelText(m.data.Status.Level) + stMuted.Render("  updated "+m.data.At.Local().Format("15:04:05"))
 	}
-	gap := w - width(left) - width(right)
-	if gap < 1 {
-		right, gap = "", max(1, w-width(left))
+	text := m.fet.cell()
+	cell := stMuted.Render(text)
+	full := cell
+	if right != "" {
+		full = cell + "  " + right
 	}
-	return left + spaces(gap) + right
+	switch {
+	case text == "":
+		if w-width(left)-width(right) < 1 {
+			right = ""
+		}
+		return left, right, 0, 0
+	case w-width(left)-width(full) >= 1:
+		right = full
+	case w-width(left)-width(cell) >= 1:
+		right = cell
+	default:
+		return left, "", 0, 0
+	}
+	from = w - width(right)
+	return left, right, from, from + width(cell)
 }
 
 func (m *app) flashLine(w int) string {
 	switch {
 	case m.flash != "" && m.flashErr:
 		return stErr.Render("error: ") + trunc(m.flash, w-7)
+	case m.flash != "" && m.flashDim:
+		return stMuted.Render(trunc(m.flash, w))
 	case m.flash != "":
 		return stGood.Render("ok: ") + trunc(m.flash, w-4)
 	case m.loadErr != nil:

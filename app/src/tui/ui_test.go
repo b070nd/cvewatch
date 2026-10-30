@@ -24,10 +24,10 @@ func TestOverviewShowsCounts(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
 	v := d.view()
 	for _, re := range []string{
-		`open issues\s+3`, `open findings\s+4`, `critical \+ high open\s+2`, `open in prod\s+1`,
-		`critical\s+1\s`, `high\s+1\s`, `medium\s+0\s`, `low\s+1\s`,
-		`dev\s+1\s`, `staging\s+1\s`, `prod\s+2\s`,
-		`policy violations\s+0`, `items 40  new 3`,
+		`open issues 3`, `open findings 4`, `critical \+ high 2`, `in prod 1`,
+		`critical 1\s`, `high 1\s`, `medium 0\s`, `low 1\s`,
+		`dev 1\s`, `staging 1\s`, `prod 2\s`,
+		`policy violations 0`, `items 40  new 3`,
 	} {
 		if !regexp.MustCompile(re).MatchString(v) {
 			t.Errorf("overview lacks %q:\n%s", re, v)

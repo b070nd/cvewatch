@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"github.com/b070nd/cvewatch/app/src/ledger"
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/ops"
+	"github.com/b070nd/cvewatch/app/src/pipeline"
 	"github.com/b070nd/cvewatch/app/src/store"
 )
 
@@ -43,6 +45,8 @@ type fake struct {
 	settings int          // settings sessions opened
 	active   atomic.Int32 // backend calls started and not yet finished
 	disk     string       // when set, every session loads the configuration from this folder, like the real backend
+	fetches  int          // Fetch calls started
+	fetchFn  func(context.Context, func(ops.RefreshProgress)) (pipeline.Result, error)
 }
 
 func (f *fake) busy() bool { return f.active.Load() > 0 }
@@ -101,6 +105,38 @@ func (f *fake) Settings(fn func(*ops.SettingsSession) error) error {
 	}
 	ss.Actor, ss.Now = actor(), func() time.Time { return tNow }
 	return fn(ss)
+}
+
+// Fetch runs a refresh without sources, so no test touches the network; a test
+// may script the whole call through fetchFn.
+func (f *fake) Fetch(ctx context.Context, progress func(ops.RefreshProgress)) (pipeline.Result, error) {
+	f.active.Add(1)
+	defer f.active.Add(-1)
+	f.mu.Lock()
+	f.fetches++
+	fn := f.fetchFn
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, progress)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s, err := f.session(true)
+	if err != nil {
+		return pipeline.Result{}, err
+	}
+	defer s.Close()
+	cfg := *s.Cfg
+	cfg.Sources = nil
+	s.Cfg = &cfg
+	return s.RefreshWith(ctx, progress)
+}
+
+func (f *fake) TUISettings() config.TUI {
+	if f.disk != "" {
+		return config.LoadTUI(f.disk)
+	}
+	return f.cfg.TUI
 }
 
 func (f *fake) Write(fn func(*ops.Session) error) error {

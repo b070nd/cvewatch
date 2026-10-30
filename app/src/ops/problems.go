@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -58,7 +59,7 @@ func levelRank(level string) string {
 }
 
 func (s *Session) fileProblems(name string, problems []inventory.Problem) ([]projectfile.Issue, error) {
-	path, err := projectfile.Path(s.projectsDir(), name)
+	path, err := s.ProjectFile(name)
 	if err != nil {
 		return nil, err
 	}
@@ -75,6 +76,9 @@ func (s *Session) fileProblems(name string, problems []inventory.Problem) ([]pro
 	}
 	p := f.Project()
 	issues := f.ValidateCatalog(s.Cfg.Catalog)
+	if stem := strings.TrimSuffix(filepath.Base(path), ".yaml"); stem != p.Name && p.Name != "" {
+		issues = append(issues, projectfile.Issue{Level: "warning", Field: "name", Message: fmt.Sprintf("file %s declares %s", filepath.Base(path), p.Name)})
+	}
 	missing := map[string]bool{}
 	for _, i := range projectfile.CheckFiles(p, s.Cfg.Root) {
 		missing[i.Field] = true

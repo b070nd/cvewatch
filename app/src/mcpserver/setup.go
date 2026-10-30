@@ -13,6 +13,7 @@ import (
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/ops"
 	"github.com/b070nd/cvewatch/app/src/projectfile"
+	"github.com/b070nd/cvewatch/app/src/projectflow"
 	"github.com/b070nd/cvewatch/app/src/status"
 )
 
@@ -25,7 +26,7 @@ func addSetupTools(srv *mcp.Server, s *server, allowWrite bool) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "search_catalog", Annotations: ro,
 		Description: "Search the technology catalog (open and closed source: runtimes, frameworks, databases, servers, platforms and so on) by name, vendor or alias, optionally within one category. Use the returned name in a project's techs."}, s.searchCatalog)
 	mcp.AddTool(srv, &mcp.Tool{Name: "discover_stack", Annotations: ro,
-		Description: "Look at a repository folder on this machine and propose the technologies, versions and lockfiles it uses, each with evidence and a confidence. Reads files only; nothing is executed or changed. Treat low-confidence proposals as questions for the user."}, s.discover)
+		Description: "Look at a repository folder, or a single Dockerfile, compose file or Kubernetes manifest, on this machine and propose the technologies, versions and lockfiles it uses, each with evidence and a confidence. Technologies that only appear in container files are marked infra, with their catalog category. Reads files only; nothing is executed or changed. Treat low-confidence proposals as questions for the user."}, s.discover)
 	mcp.AddTool(srv, &mcp.Tool{Name: "get_status", Annotations: ro,
 		Description: "Health of the monitor itself: whether the daemon is running, whether each feed and notification channel works, and what the last cycles did."}, s.status)
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_projects", Annotations: ro,
@@ -110,7 +111,7 @@ func matchKind(t model.Tech) string {
 }
 
 type discoverIn struct {
-	Dir string `json:"dir" jsonschema:"absolute path of the repository or monorepo folder to look at"`
+	Dir string `json:"dir" jsonschema:"absolute path of the repository or monorepo folder to look at, or of a Dockerfile, compose file or Kubernetes manifest"`
 }
 
 func (s *server) discover(_ context.Context, _ *mcp.CallToolRequest, in discoverIn) (*mcp.CallToolResult, discovery.Result, error) {
@@ -119,7 +120,11 @@ func (s *server) discover(_ context.Context, _ *mcp.CallToolRequest, in discover
 		return nil, out, errors.New("dir must be an absolute path")
 	}
 	err := s.withRead(func(sess *ops.Session) (err error) {
-		out, err = discovery.Scan(in.Dir, sess.Cfg.Catalog, discovery.Options{})
+		src, err := projectflow.ResolveSource(in.Dir)
+		if err != nil {
+			return err
+		}
+		out, err = projectflow.ScanSource(src, sess.Cfg.Catalog)
 		return err
 	})
 	return nil, out, err

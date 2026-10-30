@@ -387,3 +387,30 @@ func TestEditExistingFolderTypedThroughOtherSpelling(t *testing.T) {
 		t.Fatalf("edits = %+v, want none", got)
 	}
 }
+
+func TestOpenEditsAProjectWhoseFileHasAnotherName(t *testing.T) {
+	for name, mk := range layouts {
+		t.Run(name, func(t *testing.T) {
+			l := mk(t)
+			write(t, filepath.Join(l.real, "config", "projects", "magento2-shop.yaml"),
+				"name: shop\nlockfiles:\n  - {type: composer, path: repos/app/composer.lock}\n")
+			write(t, filepath.Join(l.repo, "composer.lock"), composerLock)
+			write(t, filepath.Join(l.repo, "package-lock.json"), npmLock)
+			s := session(t, l.root, "alice", nil)
+
+			o, err := Open(s, Request{Project: "shop", Folder: l.repo})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ex := o.Flow.Draft().Existing; ex == nil || ex.Name != "shop" || len(ex.Lockfiles) != 1 {
+				t.Fatalf("existing = %+v", ex)
+			}
+			if got := Edits(s, o.Flow); len(got) != 1 || got[0].Kind != "add_lockfile" {
+				t.Fatalf("edits = %+v", got)
+			}
+			if stored := storedLockfiles(s, "shop"); len(stored) != 1 || stored[0].Path != "repos/app/composer.lock" {
+				t.Fatalf("stored = %+v", stored)
+			}
+		})
+	}
+}

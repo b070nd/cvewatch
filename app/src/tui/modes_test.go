@@ -133,6 +133,9 @@ func TestFootersFitInEveryLiveState(t *testing.T) {
 
 func crumbOf(d *driver) string {
 	line := strings.Split(d.view(), "\n")[1]
+	if i := strings.LastIndex(line, " scope: "); i >= 0 { // the chip of the scope sits at the right end
+		line = line[:i]
+	}
 	return strings.TrimSpace(strings.TrimRight(line, "─ "))
 }
 
@@ -428,11 +431,11 @@ func TestMouseWheelScrollsTheFocusedList(t *testing.T) {
 	if got := selectedName(t, d); got != "shop" {
 		t.Fatalf("wheel up: %q", got)
 	}
-	d.press("1")
+	d.press("4")
 	d.send(tea_window(80, 10))
 	a := d.m.(*app)
 	d.wheel(false, 10, 6)
-	if a.txt[scrOverview].at() == 0 {
+	if a.txt[scrStatus].at() == 0 {
 		t.Fatal("the wheel scrolls a text screen")
 	}
 	// the wheel scrolls the page of an issue, not its environment row

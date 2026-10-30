@@ -58,8 +58,8 @@ func init() {
 		binds: []binding{
 			{keys: ks("d", "enter"), disp: "enter/d", help: "lockfiles: include or leave out development packages in every environment", short: "toggle dev", prio: 1, when: onLockRow, do: plain((*app).fieldDev)},
 			{keys: ks("enter", "right", "l"), disp: "enter", help: "change the selected item (its version, deployed version or image); on the last row, add one", short: "edit", prio: 1, do: plain((*app).fieldOpen)},
-			{keys: ks("a"), help: "add a technology or a lockfile", short: "add", prio: 2, when: canAdd, do: plain((*app).fieldAdd)},
-			{keys: ks("x", "delete"), disp: "x", help: "remove the selected item (a deployed version or an image is cleared)", short: "remove", prio: 2, when: canRemove, do: plain((*app).fieldRemove)},
+			{keys: ks("+", "a"), disp: "+", help: "add a technology, or a lockfile by picking its file (the type is taken from its name)", short: "add", prio: 2, when: canAdd, do: plain((*app).fieldAdd)},
+			{keys: ks("-", "x", "delete"), disp: "-", help: "remove the selected item after asking (a deployed version or an image is cleared); x does the same", short: "remove", prio: 2, when: canRemove, do: plain((*app).fieldRemove)},
 			bindBack("back to the list of fields", (*app).closeFieldList),
 			bindJump(), bindRefresh(), bindTabs(), bindHelp(),
 		},

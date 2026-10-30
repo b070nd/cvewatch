@@ -4,8 +4,8 @@ One package per concern under `app/src`. The arrows show who depends on whom; th
 
 | Module | Owns | Seam |
 |---|---|---|
-| `ops` | every operation (list, show, search, why, rescan, calendar, status, assign, evidence, export, policy, digest, inventory, refresh), the issue page (`IssueDetail`), project edits and problems, project lifecycle (`lifecycle.go`: rename, duplicate, delete, disable and enable; previewed, then applied with undo), settings (`settings.go`: previewed, then saved), validation, access rules, audit order | CLI, TUI and MCP are its adapters; read-only sessions read a lock-free snapshot |
-| `pipeline` | one refresh cycle: fetch, judge, record, reconcile, enrich, report, alert, digest | `feeds.Getter`, `notify.Channel` |
+| `ops` | every operation (list, show, search, why, rescan, calendar, status, assign, evidence, export, policy, digest, inventory, refresh; `RefreshWith` reports the phases of a refresh), the issue page (`IssueDetail`), project files (`ProjectFile`: a project is found by the name its file declares), project edits and problems, project lifecycle (`lifecycle.go`: rename, duplicate, delete, disable and enable; previewed, then applied with undo), settings (`settings.go`: previewed, then saved), validation, access rules, audit order | CLI, TUI and MCP are its adapters; read-only sessions read a lock-free snapshot |
+| `pipeline` | one refresh cycle: fetch, judge, record, reconcile, enrich, report, alert, digest; `Progress` names the phase and, while fetching, the source that finished | `feeds.Getter`, `notify.Channel`, `Runner.Progress` (optional: nil changes nothing) |
 | `inventory` | what runs in each project environment | `matrix` adapters |
 | `matrix` | reading lockfiles and SBOMs | one adapter per type (ten today) |
 | `ecosystem` | package names, aliases, normalization | none: pure |
@@ -24,19 +24,19 @@ One package per concern under `app/src`. The arrows show who depends on whom; th
 | `audit` | hash-chained audit log, readable by issue | |
 | `doctor` | configuration and environment checks, `init` (saves through `projectflow` and `ops`) | |
 | `catalog` | the technology catalog (open and closed source): lookup by name, image, package, file or word; validation | shipped entries layered with the user's `techs.yaml` |
-| `discovery` | what a repository uses, with evidence and confidence (lockfiles, version files, Dockerfiles, compose, Kubernetes, Terraform, `.tool-versions`); `Suggest` and `Complete` for the TUI folder box: child folders with project marks, and tab completion | one detector per source; reads files only |
+| `discovery` | what a repository uses, with evidence and confidence (lockfiles, version files, Dockerfiles, compose, Kubernetes, Terraform, `.tool-versions`); `ScanFile` reads one Dockerfile, compose or manifest file, and marks what only container files show as `Infra`; `Suggest` and `Complete` for the TUI folder box: child folders with project marks, and tab completion | one detector per source; reads files only |
 | `projectfile` | comment-preserving edits of a project file: validate, diff, backup, atomic write; `OpTable` (`opspec.go`) is the one list of edit kinds, with their inputs, CLI flags and an example each; `CheckFiles` finds lockfiles that are missing or of the wrong type, with fixes (`Issue`, `Fix`) | none: pure plus one file write |
 | `confdoc` | the configuration documents: `config.yaml`, `techs.yaml` and `sources/*.yaml`. `doc.go` reads them and keeps their YAML trees; `schema.go` describes every setting (path, type, section, allowed values, default, secret); `edit.go` applies set, unset, append and replace by path; `check.go` validates the result the way `config.Load` does; `write.go` saves atomically with a backup; `view.go` shows values, with secrets as `(set)` | none: pure, plus one file write |
 | `mcpserver`, `cmd/cvewatch` | the MCP server and the CLI: parse input, call `ops`, print or return the result. The setup tools are in `setup.go`, the settings and whole-project tools in `manage.go`; the project input schema is built from `OpTable` (`schema.go`) | `ops` |
 | `setup` | the setup flow: steps as data, defaults, validation, answers turned into project-file edits | `wizard`, `tui` and MCP are its adapters |
-| `projectflow` | the one place that turns a typed folder (`ResolveFolder`) or an existing project into a setup flow (`Open`), and the flow into project-file edits (`Edits`); lockfile paths made relative to the root | `ops.Session`; used by `tui`, `wizard` and `doctor` (`init`). Imports `ops`, `setup`, `discovery`, `projectfile`, `model` |
-| `wizard`, `tui` | plain prompt and full-screen front ends of the setup flow. The TUI has five screens (Overview, Findings, Projects, Status and Settings), the project forms, the field editor, the lifecycle prompts, prompts and the folder box; see [The TUI](#the-tui). `tui` is its own program (`cvewatch-tui`) because Bubble Tea queries the terminal at start-up | `ops.Session` and `ops.SettingsSession`, through the `Backend` seam (`Read`, `Write` and `Settings`) |
+| `projectflow` | the one place that turns a typed folder or file (`ResolveSource`, scanned by `ScanSource`) or an existing project into a setup flow (`Open`), and the flow into project-file edits (`Edits`); lockfile paths made relative to the root | `ops.Session`; used by `tui`, `wizard` and `doctor` (`init`). Imports `ops`, `setup`, `discovery`, `projectfile`, `model` |
+| `wizard`, `tui` | plain prompt and full-screen front ends of the setup flow. The TUI has five screens (Overview, Findings, Projects, Status and Settings), the project forms, the field editor, the lifecycle prompts, prompts and the folder box; see [The TUI](#the-tui). `tui` is its own program (`cvewatch-tui`) because Bubble Tea queries the terminal at start-up | `ops.Session` and `ops.SettingsSession`, through the `Backend` seam (`Read`, `Write`, `Settings`, `Fetch` and `TUISettings`) |
 | `status` | health of the tool: daemon, feeds, channels, cycles | none: pure |
 | `dashboard` | static HTML status and findings page, no scripts | none: pure |
 | `daemon` | the refresh loop: heartbeat, dashboard, short sessions | |
 | `defaults` | built-in catalog, feeds and starter files | embedded; the user's folder is layered over it |
 | `host` | everything that differs per operating system | Unix and Windows adapters |
-| `config`, `model` | configuration and shared types; `LoadLenient` lists broken project files under `Broken` instead of failing the load (repair sessions, `ops.OpenRepair`) | |
+| `config`, `model` | configuration and shared types; `LoadLenient` lists broken project files under `Broken` instead of failing the load (repair sessions, `ops.OpenRepair`); `LoadTUI` reads only the `tui` periods, so the interface starts when the rest is broken | |
 | `testkit`, `golden` | shared test rig; replay of fixtures through the shipped configuration | |
 
 ## The TUI
@@ -59,6 +59,10 @@ The TUI is a Bubble Tea program in `app/src/tui`. Its state is the `app` model i
 | `pending.go` | the writes and scans in flight. A count, not a flag, with one key per operation: a second operation with the same key is refused. When one ends, its reloads run and its result is reported (`opDone`) |
 | `goto.go` | go-to targets (a screen, an issue, a project, a findings filter), `goTo` that moves to one, and the return point that Esc uses to come back |
 | `jump.go` | the jump box: matching issues and projects as the user types |
+| `overview.go` | the Overview: the summary above the list of every open issue, and the policy violations page (`v`) |
+| `findings.go` | `issueList`, the searchable list that Findings and Overview share: rows, cursor, severity floor and search text. Each screen has its own, so a search on one does not narrow the other |
+| `scope.go` | the project scope: `m.scope` narrows the issues (`narrow`, `dataIssues`), the policy violations and the counts to one project, and is dropped when its project is gone or disabled |
+| `fetch.go` | the background fetch: one run at a time (`fetchJob`), the progress cell in the header, progress messages throttled per phase, the failed sources, and the timers of `tui.refresh` and `tui.fetch`. The run holds the store only inside `Backend.Fetch`; the screens keep reading the ledger meanwhile, and quitting cancels the run |
 | `fix.go`, `form.go`, `prompt.go`, `folder.go` | the flows that use the modes: fix previews, the project form, the prompts and the folder box |
 
 Rule for keys: a key is one binding in its mode's table (`keymap.go`, `editkeys.go` or `settings.go`). The footer and the help pick it up by themselves. Do not add a key in a second place.
@@ -67,9 +71,9 @@ Rule for keys: a key is one binding in its mode's table (`keymap.go`, `editkeys.
 
 | Key | Screen | Shows |
 |---|---|---|
-| 1 | Overview | the health line and the policy violations, each opening its issue |
+| 1 | Overview | the health line, the list of every open issue (searchable, narrowed by the project scope) and the policy violations (`v`), each opening its issue |
 | 2 | Findings | the issue list, the issue page, triage and the filter |
-| 3 | Projects | the project list, each project's problems and fixes, the field editor, the folder box and the lifecycle keys |
+| 3 | Projects | the project list, each project's problems and fixes, its security issues, the field editor, the add chooser (`+`), the folder box and the lifecycle keys; Enter on a project sets the scope |
 | 4 | Status | the daemon, the feeds, the channels and the last cycles |
 | 5 | Settings | the configuration files as sections and fields. It is the only screen that works without the snapshot of the others, so it opens when a file is broken |
 
@@ -83,6 +87,7 @@ Rules of thumb kept by the structure:
 - A new screen is one row in the screens table (`screens.go`).
 - Front ends hold no behaviour. `cmd/cvewatch`, `mcpserver`, `wizard` and `tui` parse input and draw output; setup rules live in `setup`, operations in `ops`, and the folder-to-flow and flow-to-edits steps in `projectflow`.
 - Viewers never block the daemon: reads use a snapshot without the lock, and every write is one short session that retries once if another process saved first.
+- Long work reports through callbacks and never blocks a key. `Runner.Progress` and `RefreshWith` only report; the TUI turns the reports into messages, and a fetch that finds the store busy is retried later instead of failing.
 - Only technologies a project declares are judged, so a large catalog costs nothing in noise.
 - Persistence is replaceable (three adapters share one contract test). `ledger` never touches files; `store` never makes domain decisions.
 - Feed text is untrusted at every step: cleaned on the way in, escaped on the way out.

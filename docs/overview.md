@@ -31,13 +31,25 @@ A failed source keeps its cursor and is retried next cycle. A finding counts as 
 
 The built-in catalog lists open and closed source technologies: runtimes, frameworks, databases, servers, platforms, appliances and more. Search it with `cvewatch catalog WORDS`. A technology is judged only when a project declares it, so a big catalog adds no noise. Add your own in `config/techs.yaml`: an entry with the same name replaces the built-in one, and `disabled: true` removes it. A technology can bring its vendor's advisory feed (for example CSAF), which turns on when a project declares it.
 
-`cvewatch discover DIR` shows what a repository uses and why. It reads lockfiles and their packages, `.tool-versions`, `go.mod`, `package.json`, Dockerfiles, compose files, Kubernetes manifests, Terraform and marker files. Each proposal has evidence and a confidence (high, medium, low). Low ones are asked about, never declared silently. It only reads files, never follows symlinks, and limits depth, file count and file size.
+`cvewatch discover DIR|FILE` shows what a repository uses and why. It reads lockfiles and their packages, `.tool-versions`, `go.mod`, `package.json`, Dockerfiles, compose files, Kubernetes manifests, Terraform and marker files. Each proposal has evidence and a confidence (high, medium, low). Low ones are asked about, never declared silently. It only reads files, never follows symlinks, and limits depth, file count and file size.
+
+A single Dockerfile, Containerfile, compose file or Kubernetes manifest can be the source too (`cvewatch discover FILE`, `cvewatch setup FILE`, and the `discover_stack` MCP tool). Its base images (`FROM`, with `ARG` defaults filled in), compose services, Kubernetes images and packages installed in a Dockerfile are proposals marked as infrastructure, with their catalog category. A project proposed from such a file is named after the file's folder.
 
 ## Terminal UI
 
 `cvewatch tui` opens the full-screen interface. It has five screens, shown as tabs under the title: **1 Overview**, **2 Findings**, **3 Projects**, **4 Status** and **5 Settings**. Findings shows the number of open issues, and Settings shows `(!)` when a settings file has an error.
 
-The header also shows what is going on. `refreshing...` means the data is being read. While a change is written, the header shows what runs, such as `saving...`, with `+1` when more run. Otherwise it shows the health and the time of the last read. The data reloads by itself every 30 seconds. Press `r` to reload now.
+The header also shows what is going on. `refreshing...` means the data is being read. While a change is written, the header shows what runs, such as `saving...`, with `+1` when more run. Otherwise it shows the health and the time of the last read. Press `r` to reload now.
+
+### Refresh and fetch
+
+The screens re-read the state every `refresh` (`tui.refresh` in `config.yaml`, 30 seconds by default, at least 1s). Reading never waits for the daemon.
+
+A re-read only shows what is stored; it does not fetch. The feeds are fetched when you press `F`, and `tui.fetch` (`0s` by default, which means only on request) makes the TUI fetch once at start and then every so often, while it runs. A running daemon already fetches every `interval`, so `tui.fetch` matters mainly when no daemon runs. Both values are on the Settings screen, under Core, and a change applies at the next re-read.
+
+A fetch runs in the background, one at a time, and the screens keep working. It needs write access to every project, like a daemon cycle. Its progress shows in the header as one small cell: `fetch 3/12` is three of twelve sources done, with a spinner. The matching, enriching, saving and alerting steps show their own word. When the run ends, a note says `fetched: 4 new, 2 findings`, and `, 1 source failed` when a source failed. Click the cell at any time to see the sources that failed.
+
+If another cvewatch holds the data, such as a daemon cycle, the fetch waits for the next period, or for `F`, and the note says so. That is not an error.
 
 ### Moving around
 
@@ -53,10 +65,10 @@ The header also shows what is going on. `refreshing...` means the data is being 
 
 Some keys take you to another place. Esc (or Backspace) brings you back to where you came from, on the level you land on.
 
-- Overview: Enter on a policy violation opens its issue.
+- Overview: Enter on an issue opens it. Enter on a policy violation (`v`) opens its issue.
 - Status: Enter on an error that names a project goes to that project. Other errors show in full.
 - Issue: `p` goes to the project of the selected environment.
-- Projects: `i` (or `F`) shows that project's issues on Findings, filtered to it.
+- Projects: `i` shows that project's issues on Findings, filtered to it. Enter opens the project and sets the scope (see [Project scope](#project-scope)).
 
 If you type a new filter after the jump, Esc clears the filter first. Changing screen ends the way back. This happens with Tab, a number key, or Left and Right on a root.
 
@@ -69,19 +81,36 @@ The mouse is optional. Every action works from the keys.
 - In an issue, a click selects an environment row.
 - Click a screen tab to switch to it. Click a breadcrumb to go back to that level.
 
+### Project scope
+
+Enter on a project on the Projects screen sets the project scope. The Overview and the Findings then list only that project's issues, with only its environments, and the counts and severity bars follow them. The breadcrumb line shows the chip `scope: shop ×`. `0`, or a click on the chip, shows all projects again. The scope survives a re-read, and it is dropped when its project is deleted or disabled. Opening one of a project's security issues (`s`, then Enter) sets it too.
+
 ### Keys by screen
 
 The footer at the bottom shows the keys for where you are. Keys in brackets also work, but the footer and the help leave them out.
 
-Everywhere except in forms, the fix preview and text boxes: `:` jump, `r` reload, `?` help, Tab and 1 to 5 switch screens.
+Everywhere except in forms, the fix preview and text boxes: `:` jump, `r` reload, `F` fetch the feeds, `?` help, Tab and 1 to 5 switch screens.
 
-**Overview and Status**
+**Overview**
+
+Below the summary, the list holds every open issue. It is searched and sorted like the Findings list, and when a project scope is set, only that project's issues are listed (see [Project scope](#project-scope)).
 
 | Key | What it does |
 |---|---|
-| Up, Down | select a row: a policy violation (Overview) or an error (Status) |
+| Up, Down, PgUp, PgDn, Home, End | move in the list of open issues |
+| Enter | open the selected issue |
+| `/` | filter by words or fields, with the same syntax as Findings. Enter keeps the filter, Esc clears it |
+| `s` | cycle the minimum severity |
+| `v` | show the policy violations and the warnings, in place of the list. Enter on a violation opens its issue; Esc goes back to the list |
+| `0` | show all projects again, when a project scope is set |
+
+**Status**
+
+| Key | What it does |
+|---|---|
+| Up, Down | select an error |
 | PgUp, PgDn, Home, End | scroll the page |
-| Enter | Overview: open the issue of the selected violation. Status: go to the project the error names, else show the error in full |
+| Enter | go to the project the error names, else show the error in full |
 
 **Findings**
 
@@ -120,16 +149,18 @@ Everywhere except in forms, the fix preview and text boxes: `:` jump, `r` reload
 | Key | What it does |
 |---|---|
 | Up, Down | select a project |
-| Enter | open the project: its problems, each with its fix |
+| Enter | open the project: its problems, each with its fix, and its security issues. It also sets the project scope (see [Project scope](#project-scope)) |
+| `+` | add a project: from a folder, from a Dockerfile, compose or Kubernetes file, or an empty one (see [Adding a project](#adding-a-project-tui)) |
+| `-` | remove the selected project: it shows what it affects, asks for its name, and the file moves to the backups |
 | `c` | open the project's fields: environments, technologies, lockfiles, versions, images, since (see [Editing a project](#editing-a-project)) |
 | `e` | edit the project step by step in the guided form |
 | `a` | add a project in the guided form (`n` too) |
 | `N` | new empty project: a name and its environments, no folder needed |
-| `d` | add a project from a folder (see the folder box below) |
+| `d` | add a project from a folder, or a Dockerfile, through the folder box (see below) |
 | `x` | preview the fix of the selected problem (`f` too) |
 | `E` | open the project file in `$EDITOR`, then reload (`o` too) |
 | `p`, `P` | next or previous problem of the selected project |
-| `i` | show this project's issues on Findings (`F` too) |
+| `i` | show this project's issues on Findings |
 | `R`, `D`, `X`, `Z` | rename, duplicate, delete, or disable a project (enable it when it is disabled). See [Creating, renaming, copying, disabling and deleting projects](#creating-renaming-copying-disabling-and-deleting-projects) |
 | Esc, Backspace | back to where a jump came from |
 
@@ -143,7 +174,10 @@ Everywhere except in forms, the fix preview and text boxes: `:` jump, `r` reload
 | `c` | open the project's fields and change them directly |
 | `e` | edit the project step by step in the guided form |
 | `E` | open the file in `$EDITOR` at the problem's line (see below) |
-| `a`, `d`, `i`, `N` | add a project, add from a folder, show this project's issues, new empty project |
+| `s` | select among the project's security issues; Enter opens the one selected, and back returns here |
+| `i` | show this project's issues on Findings |
+| `+`, `-` | add a project, or remove this one (as on the list) |
+| `a`, `d`, `N` | add a project in the guided form, from a folder or a Dockerfile, or a new empty project |
 | `R`, `D`, `X`, `Z` | rename, duplicate, delete, or disable (enable when disabled) the project |
 | Left, Esc, Backspace, `q` | back to the list of projects, or to where a jump came from |
 
@@ -279,9 +313,17 @@ Project edits keep the file's comments, are checked before saving, back up the o
 
 `check_projects` (MCP, read-only) lists the problems in project files, each with the edits that would fix it. See [agents.md](agents.md).
 
-### Adding a project from a folder (TUI)
+### Adding a project (TUI)
 
-On the Projects screen, `d` opens a folder box:
+On the Projects screen, `+` asks where the project comes from:
+
+- **From a folder:** the folder box described below, which `d` opens too.
+- **From a Dockerfile or compose file:** a path box that takes one file: a Dockerfile, Containerfile, compose file, Kubernetes manifest or Terraform file. Tab completes it. The project is proposed from that file alone. Its base images, services and packages are listed as infrastructure, and the review groups them under "Infrastructure". The project is named after the file's folder, as a folder project is.
+- **Empty:** a name and its environments, as `N` asks.
+
+In the lockfiles step and on the review, `+` adds a lockfile. Pick its file, with Tab completion; its type is read from the name (`package-lock.json`, `composer.lock`, `go.sum` and the other names the detector knows) and asked only when the name does not tell it. `-` leaves the selected lockfile out of the project, after a question. Nothing is written until you save from the review.
+
+The folder box works like this:
 
 - Type a path (`~` is your home folder), or pick a row with Up and Down. Enter uses the picked folder, or the typed text when no row is picked.
 - Tab completes the name. With one match it adds the folder and a slash. With several it adds the part they share, if that is longer than what you typed.
@@ -309,10 +351,10 @@ On the Projects screen, `c` opens the fields of the selected project. Inside a p
 | Field | What it holds | Keys |
 |---|---|---|
 | Environments | the environments the project runs in | Enter opens a list to tick |
-| Technologies | each technology and its version | Enter changes the version; `a` adds a technology from the catalog; `x` removes it |
-| Lockfiles | the type, path, environment and dev flag of each lockfile | Enter or `d` toggles dev; `a` picks a type, then asks for the path, the environment (empty means every environment) and dev (yes or no); `x` removes it |
-| Versions per environment | the version deployed in an environment, where it differs from the declared one | Enter sets it, and an empty value removes it; `x` removes it |
-| Image per environment | an image tag or digest, recorded only | Enter sets it, and an empty value clears it; `x` clears it |
+| Technologies | each technology and its version | Enter changes the version; `+` (or `a`) adds a technology from the catalog; `-` (or `x`) removes it after a question |
+| Lockfiles | the type, path, environment and dev flag of each lockfile | Enter or `d` toggles dev; `+` (or `a`) adds a lockfile by picking its file with Tab completion: the type comes from the name, then the prompt asks for the environment (empty means every environment) and dev (yes or no); `-` (or `x`) removes it after a question |
+| Versions per environment | the version deployed in an environment, where it differs from the declared one | Enter sets it, and an empty value removes it; `-` (or `x`) removes it after a question |
+| Image per environment | an image tag or digest, recorded only | Enter sets it, and an empty value clears it; `-` (or `x`) clears it after a question |
 | Since | the first day advisories count from | Enter opens a date prompt (`YYYY-MM-DD`); an empty value clears it |
 
 A lockfile with dev set to yes counts its development-only packages in every environment. By default they count in dev and int only.
@@ -324,6 +366,8 @@ A disabled project, or one whose file does not load, cannot be edited in these f
 ### Creating, renaming, copying, disabling and deleting projects
 
 These keys act on a whole project. Each one shows its consequences first, and nothing changes until you confirm.
+
+A project is found by the `name:` its file declares, not by the file's name. A file `magento2-shop.yaml` that declares `name: shop` is the project `shop`, and rename, delete, disable, edit and the CLI commands work on it. Its problems carry a warning, `file magento2-shop.yaml declares shop`, so the mismatch is visible; making the file name and the `name:` match clears it. A new project's file is named after the project.
 
 - **New (`N`):** a name, then the environments, separated by commas. An empty answer means all four. No folder is needed. Creating a project needs write access to every project.
 - **Rename (`R`):** a new name. The findings move to the new name, the access rules that name the project follow it, and the reports of its issues are rewritten. The old name stays in the audit log and in past evidence. The new name must be free, and the ledger must not already hold a finding under that name for the same issue and environment.
@@ -522,7 +566,7 @@ Channels switch on when their secret is in the environment, so one config file i
 
 | Path | Purpose |
 |---|---|
-| `config/config.yaml` | interval, HTTP limits, Slack, notify, policy, enrich, storage, access |
+| `config/config.yaml` | interval, HTTP limits, Slack, notify, policy, enrich, storage, access, tui (refresh and fetch periods) |
 | `config/techs.yaml` | your additions to the built-in technology catalog |
 | `config/projects/*.yaml` | one file per project |
 | `sources/*.yaml` | your additions to the built-in feeds (same `id` replaces; `disabled: true` switches one off) |

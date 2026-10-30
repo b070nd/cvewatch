@@ -207,7 +207,7 @@ func TestEditRejectsBadValues(t *testing.T) {
 	c := mustWith(t, s, Edit{Op: OpSet, Path: "http.retries", Value: "5"}, Edit{Op: OpSet, Path: "http.allow_private", Value: "yes"}, Edit{Op: OpSet, Path: "http.rate", Value: "0.5"},
 		Edit{Op: OpSet, Path: "notify.email.to", Value: "a@x.test, b@x.test"}, Edit{Op: OpSet, Path: "retention", Value: "0"})
 	got := text(t, c, IDSettings)
-	for _, want := range []string{"retries: 5", "allow_private: true", "rate: 0.5", "to: [a@x.test, b@x.test]", "retention: 0\n"} {
+	for _, want := range []string{"retries: 5", "allow_private: true", "rate: 0.5", "to: [a@x.test, b@x.test]", "retention: 0s\n"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in\n%s", want, got)
 		}
@@ -568,5 +568,33 @@ func TestShippedTemplatesEditCleanly(t *testing.T) {
 	}
 	if got := text(t, c, IDTechs); !strings.Contains(got, "# Your own technologies.") || !strings.Contains(got, "  - name: acme\n    aliases: [acme gateway]") {
 		t.Fatalf("%s", got)
+	}
+}
+
+func TestTUISettingsAreEditableAndChecked(t *testing.T) {
+	root := t.TempDir()
+	f, ok := Lookup(KindSettings, "tui.refresh")
+	if !ok || f.Default != "30s" || f.Type != TypeDuration || f.Min == nil || *f.Min != 1 {
+		t.Fatalf("tui.refresh: %+v", f)
+	}
+	if f, ok = Lookup(KindSettings, "tui.fetch"); !ok || f.Default != "" || f.Min == nil || *f.Min != 0 {
+		t.Fatalf("tui.fetch: %+v", f)
+	}
+	s := mustRead(t, root)
+	for _, e := range []Edit{
+		{Op: OpSet, Path: "tui.refresh", Value: "500ms"},
+		{Op: OpSet, Path: "tui.refresh", Value: "0"},
+		{Op: OpSet, Path: "tui.fetch", Value: "-5m"},
+	} {
+		if _, err := s.With(e); err == nil {
+			t.Errorf("%v %v accepted", e.Path, e.Value)
+		}
+	}
+	c := mustWith(t, s, Edit{Op: OpSet, Path: "tui.refresh", Value: "5s"}, Edit{Op: OpSet, Path: "tui.fetch", Value: "0"})
+	if r := c.Validate(); r.Blocked() {
+		t.Fatalf("a valid tui section must pass the loader: %+v", r.Issues)
+	}
+	if got := text(t, c, IDSettings); !strings.Contains(got, "refresh: 5s") || !strings.Contains(got, "fetch: 0s") {
+		t.Fatalf("\n%s", got)
 	}
 }

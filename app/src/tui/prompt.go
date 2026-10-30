@@ -26,6 +26,7 @@ const (
 	pkDuplicate                   // the name of the copy of a project
 	pkDelete                      // the name of the project to delete, typed to confirm
 	pkSetting                     // the value of a setting, or what a new item of a list needs
+	pkLock                        // the file of a lockfile to add to a project, or to the project being set up
 )
 
 type field struct {
@@ -45,7 +46,7 @@ type prompt struct {
 	hint   string
 	fields []field
 	idx    int
-	box    *folderBox // pkPath
+	box    *folderBox // pkPath, pkLock
 
 	submitting bool   // the write is in flight; the prompt stays open until it ends
 	problem    string // why the last submit was refused
@@ -68,7 +69,9 @@ func (p *prompt) view(w, h int) []string {
 	if p.box != nil {
 		bl := p.box.view(w, h)
 		lines = append(lines, bl[:2]...)
-		lines = append(lines, stMuted.Render(trunc("  "+p.hint, w)))
+		if h >= 10 { // a short terminal keeps the room for the page above
+			lines = append(lines, stMuted.Render(trunc("  "+p.hint, w)))
+		}
 		lines = append(lines, p.status(w)...)
 		return append(lines, bl[2:]...)
 	}
@@ -231,8 +234,15 @@ func (m *app) startPath() {
 	if m.frm != nil {
 		what = "Scan a folder and merge what it finds into this project"
 	}
-	m.prm = &prompt{kind: pkPath, title: what, hint: "a repository or monorepo folder; nothing in it is executed",
+	m.prm = &prompt{kind: pkPath, title: what, hint: "a repository or monorepo folder, or a Dockerfile, compose file or manifest; nothing in it is executed",
 		box: newFolderBox()}
+}
+
+// startFilePath asks for the one file a project is proposed from.
+func (m *app) startFilePath() {
+	m.prm = &prompt{kind: pkPath, title: "Add a project from a Dockerfile, compose file or manifest",
+		hint: "a Dockerfile, compose file, Kubernetes manifest or Terraform file; a folder opens with tab; nothing in it is executed",
+		box:  newBox(boxSource, "File")}
 }
 
 // promptEnter moves to the next field, or submits from the last one.
@@ -305,6 +315,8 @@ func (m *app) promptSubmit() tea.Cmd {
 			return nil
 		}
 		return m.previewLife(ops.LifecycleRequest{Verb: verb, Project: p.project, NewName: val(0)}, p)
+	case pkLock:
+		return m.lockPicked(p)
 	case pkDelete:
 		if val(0) != p.project || m.prj.life == nil {
 			p.problem = "type the name of the project exactly, " + p.project + ", to delete it"
@@ -314,7 +326,7 @@ func (m *app) promptSubmit() tea.Cmd {
 	}
 	path := p.box.chosen()
 	if path == "" {
-		p.problem = "no folder given"
+		p.problem = "no folder given: type a folder, or a Dockerfile, compose file or manifest"
 		m.fail(p.problem)
 		return nil
 	}
@@ -322,4 +334,16 @@ func (m *app) promptSubmit() tea.Cmd {
 		return m.start("scanning...", "scan", 0, p, scanCmd(m.b, path))
 	}
 	return m.start("scanning...", "flow", 0, p, startFlowCmd(m.b, "", path))
+}
+
+// startLockPath asks for the file of a lockfile to add to a project, or to the
+// project being set up when project is empty.
+func (m *app) startLockPath(project string) {
+	title := "Add a lockfile to the project being set up"
+	if project != "" {
+		title = "Add a lockfile to " + project
+	}
+	m.prm = &prompt{kind: pkLock, title: oneLine(title), project: project,
+		hint: "a package-lock.json, composer.lock, go.sum or another lockfile; the type is taken from its name",
+		box:  newBox(boxLockfile, "Lockfile")}
 }

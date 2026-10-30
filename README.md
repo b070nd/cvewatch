@@ -139,7 +139,7 @@ cvewatch tui                           # or browse and triage in a full-screen i
 
 `setup` looks at lockfiles, `.tool-versions`, `go.mod`, `package.json`, Dockerfiles, compose files, Kubernetes manifests and Terraform, also in monorepos, and says why it believes each thing ("nginx 1.25.3: image in `docker-compose.yml`"). Guesses it is unsure about are asked, not declared. `cvewatch init -repo ~/code/shop` does the same without questions.
 
-The technology catalog and the feeds are built in, so one binary is enough. `setup` writes a project file per repository. Check the versions it could not guess: a repository says what is *declared*, not what *runs in prod*.
+The technology catalog and the feeds are built in, so one binary is enough. `setup` writes a project file per repository. `cvewatch setup FILE` does the same for one Dockerfile, compose file or Kubernetes manifest, and lists its base images and services as infrastructure. Check the versions it could not guess: a repository says what is *declared*, not what *runs in prod*.
 
 ### What it does for you
 
@@ -188,7 +188,7 @@ cvewatch not-affected CVE-2026-109619 -project shop -env dev -note "dev has no n
 cvewatch evidence CVE-2026-109618
 ```
 
-**Always on.** Run `cvewatch daemon` (or the Docker image) and it refreshes every few hours. If you upgrade a lockfile, the open findings are re-checked on their own and each finding's history says what changed.
+**Always on.** Run `cvewatch daemon` (or the Docker image) and it refreshes every few hours. The full-screen interface re-reads the state every 30 seconds and fetches the feeds when you press `F`; `tui.fetch` in `config.yaml` makes it fetch by itself. If you upgrade a lockfile, the open findings are re-checked on their own and each finding's history says what changed.
 
 ### The life of a finding
 

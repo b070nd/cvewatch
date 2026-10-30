@@ -36,3 +36,9 @@ slack:
 # dashboard:
 #   enabled: true
 #   file: dashboard.html     # default: inside alerts_dir
+
+# The full-screen interface (cvewatch tui).
+# tui:
+#   refresh: 30s     # how often it re-reads the state; at least 1s
+#   fetch: 0s        # how often it fetches the feeds itself; 0 only on request.
+#                    # A running daemon already fetches every interval.

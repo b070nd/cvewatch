@@ -70,7 +70,7 @@ func TestProjectGoesToItsFindingsFiltered(t *testing.T) {
 	d.want("3 of 3 open issues")
 	d.wantNot("project:mw")
 
-	d.press("3", "up", "enter", "F") // from inside the project too
+	d.press("3", "up", "enter", "i") // from inside the project too
 	d.want("[2 Findings (3)]", "filter: project:shop", "3 of 3")
 	d.press("/")
 	d.typ(" env:prod")
@@ -79,8 +79,11 @@ func TestProjectGoesToItsFindingsFiltered(t *testing.T) {
 	d.press("esc") // a filter typed afterwards is cleared first
 	d.wantNot("filter:")
 	d.want("[2 Findings (3)]")
-	d.press("esc")
-	d.want("[3 Projects]", "> shop")
+	d.press("esc") // back inside the project it came from
+	d.want("[3 Projects]")
+	if got := crumbOf(d); got != "Projects › shop" {
+		t.Fatalf("crumb %q", got)
+	}
 }
 
 func TestOverviewViolationsAreSelectableAndOpenTheirIssue(t *testing.T) {
@@ -90,7 +93,12 @@ func TestOverviewViolationsAreSelectableAndOpenTheirIssue(t *testing.T) {
 		l.Update(l.Lookup([]string{"CVE-2026-4"}).ID, "shop", model.EnvStaging, ledger.Update{Due: &due}, t0)
 	})
 	d := start(t, newFake(t, st), Options{})
+	d.want("policy violations 2", "v violations")
+	d.press("v")
 	d.want("Policy violations", "> - due date", "enter open")
+	if got := crumbsText(d); got != "Overview > Policy violations" {
+		t.Fatalf("crumbs %q", got)
+	}
 	a := d.m.(*app)
 	first := a.pageSel[scrOverview].id()
 	d.press("down")
@@ -133,13 +141,23 @@ func TestStatusErrorsOpenDetailsOrTheProjectTheyName(t *testing.T) {
 	d.want("[4 Status]")
 }
 
+func jumpLabels(d *driver) string {
+	var out []string
+	for _, it := range d.m.(*app).jmp.items {
+		out = append(out, it.label)
+	}
+	return strings.Join(out, ",")
+}
+
 func TestJumpBoxFindsAnIssueAndAProject(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
 	d.press(":")
 	d.want("Go to an issue or a project", "CVE-2026-3", "CVE-2026-1", "shop", "mw", "project")
 	d.typ("cve-2026-4")
 	d.want("> CVE-2026-4", "low Minor thing")
-	d.wantNot("CVE-2026-3")
+	if got := jumpLabels(d); got != "CVE-2026-4" { // the list under the box is the overview's, not the box's
+		t.Fatalf("suggestions %q", got)
+	}
 	d.press("enter")
 	d.want("[2 Findings (3)]", "Minor thing", "Environments")
 	if got := crumbsText(d); got != "Findings > CVE-2026-4 > shop:staging" {
@@ -151,7 +169,9 @@ func TestJumpBoxFindsAnIssueAndAProject(t *testing.T) {
 	d.press("ctrl+g")
 	d.typ("sh")
 	d.want("> shop")
-	d.wantNot("CVE-2026")
+	if got := jumpLabels(d); !strings.HasPrefix(got, "shop") || strings.Contains(got, "CVE") {
+		t.Fatalf("suggestions %q", got)
+	}
 	d.press("enter")
 	d.want("[3 Projects]", "> shop")
 	d.press("esc")
@@ -223,12 +243,13 @@ func TestOverviewRowsRespondToTheMouse(t *testing.T) {
 		l.Update(l.Lookup([]string{"CVE-2026-4"}).ID, "shop", model.EnvStaging, ledger.Update{Due: &due}, t0)
 	})
 	d := start(t, newFake(t, st), Options{})
+	d.press("v")
 	a := d.m.(*app)
 	rows := a.page(scrOverview, 120).rows
 	if len(rows) != 2 {
 		t.Fatalf("rows %+v", rows)
 	}
-	y := bodyTop + rows[1].at - a.txt[scrOverview].at()
+	y := bodyTop + a.ovw.top + rows[1].at - a.txt[scrOverview].at()
 	d.click(10, y)
 	if a.pageSel[scrOverview].at() != 1 {
 		t.Fatal("a click selects the row")
@@ -237,7 +258,7 @@ func TestOverviewRowsRespondToTheMouse(t *testing.T) {
 	if a.pageSel[scrOverview].at() != 1 {
 		t.Fatal("the wheel moved the selection")
 	}
-	y = bodyTop + rows[1].at - a.txt[scrOverview].at()
+	y = bodyTop + a.ovw.top + rows[1].at - a.txt[scrOverview].at()
 	d.click(10, y) // a second click opens
 	if a.scr != scrFindings || a.fnd.det == nil || a.fnd.det.id != rows[1].tgt.issue {
 		t.Fatalf("screen %d, page %+v, want %s", a.scr, a.fnd.det, rows[1].tgt.issue)

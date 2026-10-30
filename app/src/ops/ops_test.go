@@ -319,3 +319,23 @@ func TestDigestAndInventoryViews(t *testing.T) {
 		t.Fatalf("shop runs in four environments: %+v %v", inv.Targets, err)
 	}
 }
+
+func TestRefreshWithReportsEachPhase(t *testing.T) {
+	cfg, st := bundle(t, nil), seeded(t) // no sources, so nothing leaves the machine
+	s := open(t, cfg, st, "alice")
+	var phases []string
+	if _, err := s.RefreshWith(t.Context(), func(p RefreshProgress) { phases = append(phases, string(p.Phase)) }); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(phases, " "); got != "fetch process enrich save alert" {
+		t.Fatalf("phases %q", got)
+	}
+	if _, err := s.Refresh(t.Context()); err != nil { // the plain call still works
+		t.Fatal(err)
+	}
+	restricted := bundle(t, map[string]config.Grant{"bob": {Projects: []string{"shop"}, Write: true}})
+	calls := 0
+	if _, err := open(t, restricted, st, "bob").RefreshWith(t.Context(), func(RefreshProgress) { calls++ }); !errors.Is(err, ErrDenied) || calls != 0 {
+		t.Fatalf("a refresh needs access to every project and must not start: err=%v calls=%d", err, calls)
+	}
+}

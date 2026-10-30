@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -87,9 +86,8 @@ func loadSnapshot(s *ops.Session) (*snapshot, error) {
 	for _, i := range problems {
 		byProject[i.Project] = append(byProject[i.Project], i)
 	}
-	dir := filepath.Join(s.Cfg.Root, "config", "projects")
 	fileOf := func(name string) string {
-		path, _ := projectfile.Path(dir, name)
+		path, _ := s.ProjectFile(name)
 		return path
 	}
 	allowed, _, open := s.Cfg.Allowed(audit.Actor())
@@ -124,7 +122,8 @@ func loadSnapshot(s *ops.Session) (*snapshot, error) {
 		if slices.ContainsFunc(sn.Projects, func(p projectRow) bool { return p.Name == name }) {
 			continue // a live file of the same name wins; the disabled one is a leftover
 		}
-		sn.Projects = append(sn.Projects, projectRow{ProjectView: ops.ProjectView{Name: name}, HasFile: true, File: fileOf(name) + ".disabled", Disabled: true})
+		file, _ := s.DisabledFile(name)
+		sn.Projects = append(sn.Projects, projectRow{ProjectView: ops.ProjectView{Name: name}, HasFile: true, File: file, Disabled: true})
 	}
 	return sn, nil
 }
@@ -212,6 +211,7 @@ type (
 		creating bool
 		name     string
 		note     string
+		infra    map[string]bool // the technologies the scan found only in container or orchestration files
 		err      error
 	}
 	scanMsg struct {
@@ -423,13 +423,30 @@ func catalogOf(s *ops.Session) *catalog.Catalog {
 }
 
 // startFlowCmd builds a setup flow: for a new project when name is empty,
-// otherwise for editing the named one. A folder is scanned first and merged
-// in. The flow is handed to Update only once it is complete, so no goroutine
-// shares it.
+// otherwise for editing the named one. A folder, or a Dockerfile, compose file
+// or manifest, is scanned first and merged in. The flow is handed to Update
+// only once it is complete, so no goroutine shares it.
 func startFlowCmd(b Backend, name, dir string) tea.Cmd {
 	return func() tea.Msg {
 		var out flowMsg
 		out.err = b.Read(func(s *ops.Session) error {
+			if name == "" && strings.TrimSpace(dir) != "" { // scanned here, so the infrastructure stays known
+				src, err := projectflow.ResolveSource(dir)
+				if err != nil {
+					return err
+				}
+				res, err := projectflow.ScanSource(src, catalogOf(s))
+				if err != nil {
+					return err
+				}
+				o, err := projectflow.Open(s, projectflow.Request{})
+				if err != nil {
+					return err
+				}
+				o.Flow.UseDiscovery(res.Root, res)
+				out.flow, out.creating, out.name, out.note, out.infra = o.Flow, o.Creating, o.Name, scanNote(res), infraOf(res)
+				return nil
+			}
 			o, err := projectflow.Open(s, projectflow.Request{Project: name, Folder: dir})
 			if err != nil {
 				return err
@@ -441,26 +458,41 @@ func startFlowCmd(b Backend, name, dir string) tea.Cmd {
 	}
 }
 
+// infraOf names the technologies of a scan that are infrastructure.
+func infraOf(res discovery.Result) map[string]bool {
+	out := map[string]bool{}
+	for _, t := range res.Techs {
+		if t.Infra {
+			out[strings.ToLower(t.Tech)] = true
+		}
+	}
+	return out
+}
+
 func scanNote(res discovery.Result) string {
-	s := fmt.Sprintf("scanned %s: %s, %s", clean(res.Root), plural(len(res.Techs), "technology", "technologies"), plural(len(res.Lockfiles), "lockfile", "lockfiles"))
+	where := res.Root
+	if res.File != "" {
+		where = res.File
+	}
+	s := fmt.Sprintf("scanned %s: %s, %s", clean(where), plural(len(res.Techs), "technology", "technologies"), plural(len(res.Lockfiles), "lockfile", "lockfiles"))
 	if res.Truncated {
 		s += " (scan stopped early)"
 	}
 	return s
 }
 
-// scanCmd scans a folder for merging into a running flow. The merge itself
+// scanCmd scans a folder or a file for merging into a running flow. The merge itself
 // happens in Update.
 func scanCmd(b Backend, dir string) tea.Cmd {
 	return func() tea.Msg {
 		var m scanMsg
-		root, err := projectflow.ResolveFolder(dir)
+		src, err := projectflow.ResolveSource(dir)
 		if err != nil {
 			m.err = err
 			return m
 		}
 		m.err = b.Read(func(s *ops.Session) (e error) {
-			m.res, e = discovery.Scan(root, catalogOf(s), discovery.Options{})
+			m.res, e = projectflow.ScanSource(src, catalogOf(s))
 			return e
 		})
 		return m

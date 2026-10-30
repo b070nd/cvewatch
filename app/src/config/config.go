@@ -41,6 +41,7 @@ type Settings struct {
 	Enrich    Enrich        `yaml:"enrich"`    // optional outside lookups
 	Storage   Storage       `yaml:"storage"`   // where state lives
 	Dashboard Dashboard     `yaml:"dashboard"` // a static status page, refreshed by the daemon
+	TUI       TUI           `yaml:"tui"`       // the full-screen interface
 	// Access optionally limits who may see and change which projects, by the
 	// actor name (CVEWATCH_ACTOR or the OS user). Empty means everyone may do
 	// everything, which is right for a single operator. This is authorization
@@ -110,6 +111,12 @@ type Dashboard struct {
 	File    string `yaml:"file"`    // default: dashboard.html inside alerts_dir
 }
 
+// TUI sets the rhythm of the full-screen interface.
+type TUI struct {
+	Refresh time.Duration `yaml:"refresh"` // how often it re-reads the state; at least 1s
+	Fetch   time.Duration `yaml:"fetch"`   // how often it fetches the feeds itself; 0 only on request
+}
+
 // Storage selects the state backend.
 type Storage struct {
 	Backend string `yaml:"backend"` // file (default) or sqlite
@@ -149,6 +156,8 @@ type Bundle struct {
 	Warnings []string // non-fatal problems worth logging
 	Broken   []BrokenProject
 
+	projectFiles map[string]string // project name -> the file it was read from
+
 	Catalog        *catalog.Catalog // shipped technologies layered with config/techs.yaml
 	DefaultTechs   bool             // no config/techs.yaml: only the shipped catalog
 	DefaultSources bool             // no sources/*.yaml: only the shipped feeds
@@ -180,7 +189,32 @@ func Defaults() Settings {
 			Cooldown429:  2 * time.Minute,
 		},
 		Slack: Slack{WebhookEnv: "SLACK_WEBHOOK_URL", MinSeverity: model.SevUnknown},
+		TUI:   TUI{Refresh: 30 * time.Second},
 	}
+}
+
+// LoadTUI reads only the tui section of config.yaml. The interface must start
+// when the rest of the configuration is broken, so any problem, or a value
+// validation would reject, falls back to the default for that value.
+func LoadTUI(root string) TUI {
+	t := Defaults().TUI
+	raw, err := os.ReadFile(SettingsPath(root))
+	if err != nil {
+		return t
+	}
+	var doc struct {
+		TUI TUI `yaml:"tui"`
+	}
+	if yaml.Unmarshal(raw, &doc) != nil {
+		return t
+	}
+	if doc.TUI.Refresh >= time.Second {
+		t.Refresh = doc.TUI.Refresh
+	}
+	if doc.TUI.Fetch > 0 {
+		t.Fetch = doc.TUI.Fetch
+	}
+	return t
 }
 
 // Load reads root/config/{config,techs}.yaml, root/config/projects/*.yaml and
@@ -335,6 +369,7 @@ func assemble(root string, lenient bool, over Overlay) (*Bundle, []Issue) {
 				return err
 			}
 			b.Broken = append(b.Broken, brokenProject(path, err))
+			b.addProjectFile(b.Broken[len(b.Broken)-1].Name, path)
 			return nil
 		}
 		og.projects[p.Name] = path
@@ -344,10 +379,12 @@ func assemble(root string, lenient bool, over Overlay) (*Bundle, []Issue) {
 		if lenient {
 			if errs := projectErrors(p, decoded); len(errs) > 0 {
 				b.Broken = append(b.Broken, brokenProject(path, joinFieldErrs(errs)))
+				b.addProjectFile(b.Broken[len(b.Broken)-1].Name, path)
 				return nil
 			}
 		}
 		decoded[p.Name] = true
+		b.addProjectFile(p.Name, path)
 		b.Projects = append(b.Projects, p)
 		return nil
 	})
@@ -495,6 +532,12 @@ func (b *Bundle) validate(decoded map[string]bool, og origins) []Issue {
 			fail(og.settings, at+".env", "policy rule %q: unknown env %q", r.Name, r.Env)
 		}
 	}
+	if b.TUI.Refresh < time.Second {
+		fail(og.settings, "tui.refresh", "tui.refresh must be at least 1s")
+	}
+	if b.TUI.Fetch < 0 {
+		fail(og.settings, "tui.fetch", "tui.fetch must not be negative (0 fetches only on request)")
+	}
 	if !slices.Contains([]string{"", "file", "sqlite"}, b.Storage.Backend) {
 		fail(og.settings, "storage.backend", "storage.backend must be file or sqlite")
 	}
@@ -596,6 +639,22 @@ func brokenProject(path string, err error) BrokenProject {
 		}
 	}
 	return BrokenProject{Name: strings.TrimSuffix(filepath.Base(path), ".yaml"), File: file, Err: strings.Join(lines, "; ")}
+}
+
+func (b *Bundle) addProjectFile(name, path string) {
+	if b.projectFiles == nil {
+		b.projectFiles = map[string]string{}
+	}
+	if _, dup := b.projectFiles[name]; !dup { // the first file to claim a name keeps it
+		b.projectFiles[name] = path
+	}
+}
+
+// ProjectFiles maps each project to the file it was read from. A project is
+// named by the `name:` its file declares, which need not be the file's name; a
+// file that did not load is listed under its file name without .yaml.
+func (b *Bundle) ProjectFiles() map[string]string {
+	return maps.Clone(b.projectFiles)
 }
 
 // TechNames lists configured tech names, sorted, for display.

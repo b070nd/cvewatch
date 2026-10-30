@@ -267,3 +267,27 @@ func TestLifecycleUsageAndErrors(t *testing.T) {
 		t.Error("a project called delete can still be edited")
 	}
 }
+
+func TestProjectInAFileWithAnotherNameCanBeListedEditedAndDeleted(t *testing.T) {
+	root := fixtureRoot(t)
+	dir := filepath.Join(root, "config", "projects")
+	if err := os.Rename(filepath.Join(dir, "shop.yaml"), filepath.Join(dir, "magento2-shop.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runProject(t, root)
+	if err != nil || !strings.Contains(out, "shop") {
+		t.Fatalf("list: %v\n%s", err, out)
+	}
+	if out, err = runProject(t, root, "shop", "-since", "2026-01-02", "-save"); err != nil || !strings.Contains(readFile(t, root, "config/projects/magento2-shop.yaml"), "2026-01-02") {
+		t.Fatalf("edit: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "shop.yaml")); err == nil {
+		t.Fatal("the edit created shop.yaml")
+	}
+	if out, err = runProject(t, root, "delete", "shop", "-yes"); err != nil || !strings.Contains(out, "done: delete shop") {
+		t.Fatalf("delete: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "magento2-shop.yaml")); err == nil {
+		t.Fatal("the file is still there")
+	}
+}

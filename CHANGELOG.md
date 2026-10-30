@@ -26,6 +26,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - MCP tools `get_settings` and `preview_settings_change` (read-only), and `edit_settings` and `manage_project` (with `-allow-write`).
 - Project edit operations are defined once, in `projectfile.OpTable`. The CLI flags, the MCP schema and the parity tests are built from that table.
 - TUI project form: `e` on the review changes one step and returns to the review.
+- `tui` section in `config.yaml`: `refresh` (how often the TUI re-reads the state, 30s by default, at least 1s) and `fetch` (how often it fetches the feeds itself; `0s` by default, which means only on request). Both are on the Settings screen. A running daemon already fetches every `interval`.
+- TUI fetches the feeds in the background: `F` fetches now, the header shows the run as `fetch 3/12`, and a click on it lists the sources that failed. A store busy with a daemon cycle is retried later without an error.
+- TUI Overview lists every open issue, not only the policy violations. `/` and `s` search and filter it with the Findings syntax; `v` shows the violations and warnings.
+- TUI project scope: Enter on a project narrows Overview, Findings and their counts to it, shown as `scope: NAME` in the breadcrumb line. `0` shows all projects again.
+- TUI `+` adds a project from a folder, from a Dockerfile, compose or Kubernetes file, or empty. `-` removes the selected project after its name is typed, and removes a lockfile, technology, version or image after a question.
+- TUI lockfiles: `+` adds one by picking its file with Tab completion; the type comes from the file name.
+- Projects from a Dockerfile, compose or Kubernetes file: `cvewatch discover FILE` and `cvewatch setup FILE` read one file, and the `discover_stack` MCP tool accepts one. Base images, compose services, Kubernetes images and packages installed in a Dockerfile are marked as infrastructure, with their category.
 
 ### Changed
 - TUI has five screens, Overview, Findings, Projects, Status and Settings, on keys 1 to 5.
@@ -36,6 +43,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - TUI: `a` adds a project (`n` still works). `x` previews a fix (`f` still works). `E` opens the editor (`o` still works on Projects).
 - TUI: Esc cancels a fix preview. `n` no longer cancels it.
 - TUI: `q` quits only from the root of a screen. Inside a level or a popup it goes back.
+- TUI: `F` fetches the feeds now. It showed the project's issues before; `i` still does.
+- TUI: the re-read period is the `tui.refresh` setting, no longer fixed at 30 seconds in the code.
 
 ### Fixed
 - `edit_project` and `preview_project_change` accept a `lockfile` object, so fixes from `check_projects` can be passed on as they are.
@@ -46,6 +55,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - TUI open issue reloads after a status, assign, bulk or editor change.
 - TUI refuses a second submit of a change that is still being saved, so it is not written twice.
 - The `user-techs.yaml` example said `keywords`; the field is `aliases`.
+- A project whose file name differs from the `name:` it declares (`magento2-shop.yaml` declaring `shop`) could not be deleted, disabled, renamed or edited: `cvewatch project delete shop` said unknown project. Projects are found by their declared name now, and the mismatch is a warning.
 
 ## [1.2.0] - 2026-10-29
 

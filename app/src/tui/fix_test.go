@@ -1,13 +1,16 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/b070nd/cvewatch/app/src/config"
 	"github.com/b070nd/cvewatch/app/src/ops"
+	"github.com/b070nd/cvewatch/app/src/pipeline"
 )
 
 func writeProjectFile(t *testing.T, root, name, body string) string {
@@ -135,6 +138,11 @@ func (failing) Write(func(*ops.Session) error) error { return errors.New("no con
 func (failing) Settings(func(*ops.SettingsSession) error) error {
 	return errors.New("no config here")
 }
+
+func (failing) Fetch(context.Context, func(ops.RefreshProgress)) (pipeline.Result, error) {
+	return pipeline.Result{}, errors.New("no config here")
+}
+func (failing) TUISettings() config.TUI { return config.Defaults().TUI }
 
 func TestLoadFailureStillOffersRetryAndQuit(t *testing.T) {
 	d := start(t, failing{}, Options{})

@@ -49,6 +49,31 @@ type Runner struct {
 	Audit    *audit.Log // nil disables the audit trail
 	Log      *slog.Logger
 	Now      func() time.Time
+	Progress func(Progress) // optional; see Progress
+}
+
+// Phase is a step of a cycle, in the order they run.
+type Phase string
+
+const (
+	PhaseFetch   Phase = "fetch"   // polling the sources
+	PhaseProcess Phase = "process" // judging items, then re-checking findings
+	PhaseEnrich  Phase = "enrich"  // outside lookups, when switched on
+	PhaseSave    Phase = "save"    // reports, audit trail and the ledger
+	PhaseAlert   Phase = "alert"   // alerts and digests
+)
+
+// Progress is reported from a running cycle through Runner.Progress: once at
+// the start of every phase, and in the fetch phase once more for each source
+// that finishes. It is never sent per item. Calls are serialized, but the
+// fetch ones come from the goroutine of a source, so the callback must not
+// block for long.
+type Progress struct {
+	Phase  Phase
+	Done   int    // fetch: sources finished so far
+	Total  int    // fetch: sources polled
+	Source string // fetch: the source that just finished; empty at the start of the phase
+	Failed bool   // fetch: that source errored
 }
 
 // Result summarizes a cycle. The JSON names are part of the MCP contract.
@@ -94,6 +119,7 @@ func (r *Runner) Run(ctx context.Context) (Result, error) {
 		r.Log.Warn("inventory problem", "problem", p.String())
 	}
 	results := r.fetchAll(ctx, c.now)
+	r.report(Progress{Phase: PhaseProcess})
 
 	for i, src := range r.activeSources() {
 		f := results[i]
@@ -112,10 +138,12 @@ func (r *Runner) Run(ctx context.Context) (Result, error) {
 	}
 
 	c.reconcile()
+	r.report(Progress{Phase: PhaseEnrich})
 	c.enrich(ctx)
 	if r.Cfg.Retention > 0 {
 		c.res.Pruned = r.Ledger.Prune(c.now.Add(-r.Cfg.Retention))
 	}
+	r.report(Progress{Phase: PhaseSave})
 	if err := c.writeReports(); err != nil {
 		return c.res, err
 	}
@@ -126,6 +154,7 @@ func (r *Runner) Run(ctx context.Context) (Result, error) {
 	if err := r.Save(); err != nil { // persist before alerting: a crash then repeats an alert, never loses a finding
 		return c.res, err
 	}
+	r.report(Progress{Phase: PhaseAlert})
 	c.res.Alerted = r.alert(ctx, c.now)
 	c.res.Digests = r.digests(ctx, c.now)
 	r.Ledger.RecordCycle(model.CycleRecord{
@@ -136,6 +165,12 @@ func (r *Runner) Run(ctx context.Context) (Result, error) {
 	return c.res, r.Save()
 }
 
+func (r *Runner) report(p Progress) {
+	if r.Progress != nil {
+		r.Progress(p)
+	}
+}
+
 func (r *Runner) activeSources() []model.Source {
 	return slices.DeleteFunc(slices.Clone(r.Cfg.Sources), func(s model.Source) bool { return s.Disabled })
 }
@@ -144,13 +179,20 @@ func (r *Runner) activeSources() []model.Source {
 func (r *Runner) fetchAll(ctx context.Context, now time.Time) []fetched {
 	srcs := r.activeSources()
 	out := make([]fetched, len(srcs))
+	r.report(Progress{Phase: PhaseFetch, Total: len(srcs)})
 	var wg sync.WaitGroup
+	var mu sync.Mutex
+	done := 0
 	for i, src := range srcs {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			st := r.Ledger.Feed(src.ID) // read-only here; written after the join
 			out[i].items, out[i].val, out[i].err = feeds.Fetch(ctx, r.Getter, src, st, now, r.Cfg.Lookback)
+			mu.Lock()
+			defer mu.Unlock()
+			done++
+			r.report(Progress{Phase: PhaseFetch, Done: done, Total: len(srcs), Source: src.ID, Failed: out[i].err != nil})
 		}()
 	}
 	wg.Wait()

@@ -16,6 +16,7 @@ import (
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/ops"
 	"github.com/b070nd/cvewatch/app/src/projectfile"
+	"github.com/b070nd/cvewatch/app/src/projectflow"
 	"github.com/b070nd/cvewatch/app/src/status"
 	"github.com/b070nd/cvewatch/app/src/wizard"
 )
@@ -142,13 +143,17 @@ func discoverCmd(s *ops.Session, args []string) error {
 	fs := flag.NewFlagSet("discover", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "print JSON")
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return errors.New("usage: cvewatch discover DIR [-json]")
+		return errors.New("usage: cvewatch discover DIR|FILE [-json] (FILE is a Dockerfile, compose file or Kubernetes manifest)")
 	}
-	dir := args[0]
+	typed := args[0]
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
-	res, err := discovery.Scan(dir, s.Cfg.Catalog, discovery.Options{})
+	src, err := projectflow.ResolveSource(typed)
+	if err != nil {
+		return err
+	}
+	res, err := projectflow.ScanSource(src, s.Cfg.Catalog)
 	if err != nil {
 		return err
 	}
@@ -160,11 +165,18 @@ func discoverCmd(s *ops.Session, args []string) error {
 }
 
 func printDiscovery(res discovery.Result) {
-	fmt.Println("Looked at", res.Root)
+	looked := res.Root
+	if res.File != "" {
+		looked = res.File
+	}
+	fmt.Println("Looked at", looked)
 	for _, t := range res.Techs {
 		v := t.Version
 		if v == "" {
 			v = "version unknown"
+		}
+		if res.File != "" && t.Infra && t.Category != "" {
+			v += " (" + t.Category + ")" // a file scan is mostly infrastructure: say what kind
 		}
 		fmt.Printf("  %-7s %-16s %s\n", t.Confidence, t.Tech, v)
 		for _, e := range t.Evidence {
@@ -393,8 +405,8 @@ func relTo(root, path string) string {
 	return path
 }
 
-// setupCmd runs the prompt wizard: with a folder it proposes a project from
-// it, with -project it edits that project, and with neither it shows a menu.
+// setupCmd runs the prompt wizard: with a folder, or a Dockerfile or compose
+// file, it proposes a project from it, with -project it edits that project, and with neither it shows a menu.
 func setupCmd(s *ops.Session, args []string) error {
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
 	project := fs.String("project", "", "edit this existing project")

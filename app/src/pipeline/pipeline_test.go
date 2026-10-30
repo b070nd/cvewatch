@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -329,5 +330,63 @@ func TestSinceKeepsOlderVulnerabilitiesOutOfProjectsThatStartLater(t *testing.T)
 	}
 	if f := g.Findings("CVE-2026-4141"); len(f) != 1 || f[0].Project != "middleware" {
 		t.Fatalf("findings after the later article = %+v", f)
+	}
+}
+
+func TestProgressReportsEveryPhaseAndSource(t *testing.T) {
+	g := rig(t, phpTech, map[string]string{"shop": "name: shop\nenvs: [prod]\ntechs: [{name: php}]\n"},
+		map[string]string{feedURL: rss})
+	g.Getter.Bodies[kevURL] = "this is not json"
+	var got []pipeline.Progress
+	g.Runner.Progress = func(p pipeline.Progress) { got = append(got, p) }
+	res := g.Run()
+
+	var active []string
+	for _, s := range g.Runner.Cfg.Sources {
+		if !s.Disabled {
+			active = append(active, s.ID)
+		}
+	}
+	n := len(active)
+	if len(got) != 1+n+4 {
+		t.Fatalf("want start + %d sources + 4 phases, got %+v", n, got)
+	}
+	if got[0] != (pipeline.Progress{Phase: pipeline.PhaseFetch, Total: n}) {
+		t.Fatalf("first event %+v", got[0])
+	}
+	var seen []string
+	failed := ""
+	for i, p := range got[1 : 1+n] {
+		if p.Phase != pipeline.PhaseFetch || p.Done != i+1 || p.Total != n {
+			t.Fatalf("fetch event %d: %+v", i, p)
+		}
+		seen = append(seen, p.Source)
+		if p.Failed {
+			failed = p.Source
+		}
+	}
+	slices.Sort(seen)
+	slices.Sort(active)
+	if !slices.Equal(seen, active) || failed != "kev" || len(res.Failed) != 1 {
+		t.Fatalf("sources seen %v, failed %q, result %v", seen, failed, res.Failed)
+	}
+	var phases []pipeline.Phase
+	for _, p := range got[1+n:] {
+		phases = append(phases, p.Phase)
+	}
+	want := []pipeline.Phase{pipeline.PhaseProcess, pipeline.PhaseEnrich, pipeline.PhaseSave, pipeline.PhaseAlert}
+	if !slices.Equal(phases, want) {
+		t.Fatalf("phases %v, want %v", phases, want)
+	}
+}
+
+func TestRunWithoutProgressCallbackIsUnchanged(t *testing.T) {
+	g := rig(t, phpTech, map[string]string{"shop": "name: shop\nenvs: [prod]\ntechs: [{name: php}]\n"},
+		map[string]string{feedURL: rss})
+	if g.Runner.Progress != nil {
+		t.Fatal("progress must be off unless asked for")
+	}
+	if res := g.Run(); res.Items != 3 {
+		t.Fatalf("%+v", res)
 	}
 }

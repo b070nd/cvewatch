@@ -729,7 +729,7 @@ func init() {
 			{keys: ks("esc"), help: "clear the filter", short: "clear filter", prio: 2, when: setHasText, do: plain((*app).setClearFilter)},
 		}, findBinds()...), []binding{
 			bindBack("back one level", (*app).setBack),
-			bindJump(), bindRefresh(), bindTabs(), bindHelp(),
+			bindJump(), bindRefresh(), bindFetch(), bindTabs(), bindHelp(),
 		}...),
 	}
 	mo.setFilter = &mode{name: "settings filter", title: "Keys while typing a filter of the settings", modal: true,

@@ -6,7 +6,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/projectfile"
+	"github.com/b070nd/cvewatch/app/src/query"
 )
 
 type projectsState struct {
@@ -16,6 +18,7 @@ type projectsState struct {
 	deep bool         // inside the selected project: up/down move between its problems
 	ed   *fieldEditor // the focus is on the fields of the selected project
 	life *lifeState   // a change to the whole project awaits its confirmation
+	sec  secState     // the open security issues of the selected project
 
 	fixOf string // the problem whose fix was chosen (see chosenFix)
 	fixAt int
@@ -42,6 +45,7 @@ func (m *app) refitProjects(before string) {
 	if m.prj.proj.id() != before {
 		m.prj.prob.reset(len(probs))
 		m.prj.deep = false
+		m.prj.sec.focus = false
 	}
 	if !ok {
 		m.prj.deep = false
@@ -67,9 +71,16 @@ func (m *app) stepProblem(k tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
+// enterProject opens the selected project and narrows the overview and the
+// findings to it, so its security issues are what the lists show.
 func (m *app) enterProject() tea.Cmd {
-	if _, ok := m.selectedProject(); ok {
-		m.prj.deep = true
+	p, ok := m.selectedProject()
+	if !ok {
+		return nil
+	}
+	m.prj.deep, m.prj.sec.focus = true, false
+	if !p.Disabled && m.scope != p.Name {
+		m.setScope(p.Name)
 	}
 	return nil
 }
@@ -145,7 +156,7 @@ func projectsPanel(rows []projectRow, st *projectsState, w, h int) (detail []str
 // number of lockfiles, and below the list the selected project in full.
 func renderProjects(rows []projectRow, st *projectsState, w, h int) []string {
 	if len(rows) == 0 {
-		return []string{stMuted.Render("No projects yet."), "", "Press n to create one, or d to scan a folder and propose one."}
+		return []string{stMuted.Render("No projects yet."), "", "Press + to add one: from a folder, from a Dockerfile or compose file, or empty."}
 	}
 	nameW := 8
 	for _, p := range rows {
@@ -204,6 +215,9 @@ func projectDetail(p projectRow, st *projectsState, w, room int, deep bool) []st
 	if !p.HasFile {
 		out[0] += stMuted.Render("  defined in the main config, not editable here")
 	}
+	if n := len(st.sec.issues); deep && n > 0 && p.Broken == "" && !p.Disabled {
+		out[0] += stMuted.Render("  " + securitySummary(st.sec.issues))
+	}
 	if p.Disabled {
 		out = append(out, "  "+stMuted.Render("disabled: the file is switched off, so no findings are matched; Z enables it, X deletes it"))
 		out = append(out, "  file: "+trunc(oneLine(p.File), w-8))
@@ -220,12 +234,12 @@ func projectDetail(p projectRow, st *projectsState, w, room int, deep bool) []st
 		return out
 	}
 	if deep {
-		out = append(out, stMuted.Render("  c edits the fields (environments, technologies, lockfiles, versions, images, since)"))
+		out = append(out, stMuted.Render("  c edits the fields (environments, technologies, lockfiles, versions, images, since)   + add   - remove"))
 	} else {
-		out = append(out, stMuted.Render("  c edit fields   R rename   D duplicate   Z disable   X delete   N new empty project"))
+		out = append(out, stMuted.Render("  + add   - remove   c edit fields   R rename   D duplicate   Z disable"))
 	}
 	if len(p.Lockfiles) == 0 {
-		return append(out, "  lockfiles: none")
+		out = append(out, "  lockfiles: none")
 	}
 	for i, l := range p.Lockfiles {
 		if i == 4 {
@@ -237,6 +251,9 @@ func projectDetail(p projectRow, st *projectsState, w, room int, deep bool) []st
 			s += " (" + oneLine(l.Env) + ")"
 		}
 		out = append(out, indentWrap("  lockfile: ", s, w)...)
+	}
+	if deep {
+		out = append(out, securityLines(&st.sec, w)...)
 	}
 	return out
 }
@@ -291,4 +308,161 @@ func fixLines(is projectfile.Issue, chosen, w int) []string {
 		out = append(out, stMuted.Render(trunc(fmt.Sprintf("      %sfix %d: %s", mark, j+1, oneLine(is.Fixes[j].Label)), w)))
 	}
 	return append(out, stMuted.Render(trunc(fmt.Sprintf("        (fix %d of %d: [ and ] choose another)", chosen+1, len(is.Fixes)), w)))
+}
+
+// ---- security issues ----
+
+// secState is the open issues of the selected project, narrowed from the
+// snapshot once per snapshot and project.
+type secState struct {
+	snap    *snapshot
+	project string
+	issues  []query.Issue
+	vp      viewport
+	focus   bool // the focus is on the issues
+}
+
+// secHead is the number of lines above the first issue of the security page: title, summary, column heads.
+const secHead = 3
+
+func (m *app) syncSecurity() {
+	sc := &m.prj.sec
+	p, ok := m.selectedProject()
+	if !ok || m.data == nil {
+		*sc = secState{}
+		return
+	}
+	if sc.snap == m.data && sc.project == p.Name {
+		return
+	}
+	if sc.project != p.Name {
+		sc.vp.reset(0)
+		sc.focus = false
+	}
+	sc.snap, sc.project = m.data, p.Name
+	sc.issues = narrow(m.data.Issues, p.Name)
+	sc.vp.refit(len(sc.issues), func(i int) string { return sc.issues[i].ID })
+}
+
+var sevOrder = []model.Severity{model.SevCritical, model.SevHigh, model.SevMedium, model.SevLow, model.SevUnknown}
+
+// securitySummary counts the issues by severity, in words.
+func securitySummary(issues []query.Issue) string {
+	if len(issues) == 0 {
+		return "no open security issues"
+	}
+	var parts []string
+	for _, sev := range sevOrder {
+		n := 0
+		for _, is := range issues {
+			if is.Severity == sev || (sev == model.SevUnknown && is.Severity.Rank() == 0) {
+				n++
+			}
+		}
+		if n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", n, sevWord(sev)))
+		}
+	}
+	return plural(len(issues), "open security issue", "open security issues") + ": " + strings.Join(parts, ", ")
+}
+
+func securityEnvs(is query.Issue) string {
+	var envs []string
+	for _, t := range is.Targets {
+		if t.Status == model.StatusOpen {
+			envs = append(envs, string(t.Env))
+		}
+	}
+	return strings.Join(envs, ",")
+}
+
+func securityRow(is query.Issue, sel bool, w int) string {
+	title := oneLine(is.Untrusted.Title)
+	if is.KEV != nil {
+		title = "[KEV] " + title
+	}
+	rest := " " + pad(oneLine(is.ID), 16) + " " + pad(oneLine(securityEnvs(is)), 18) + " " + title
+	if sel {
+		return stSel.Render(pad("> "+pad(sevWord(is.Severity), 8)+rest, w))
+	}
+	return "  " + sevText(is.Severity, 8) + trunc(rest, max(w-10, 1))
+}
+
+// securityLines is the section of the project page: the counts and the first issues.
+func securityLines(sc *secState, w int) []string {
+	const shown = 4
+	out := []string{"", section("Security issues") + stMuted.Render("  "+securitySummary(sc.issues))}
+	for _, is := range sc.issues[:min(len(sc.issues), shown)] {
+		out = append(out, securityRow(is, false, w))
+	}
+	if more := len(sc.issues) - shown; more > 0 {
+		out = append(out, stMuted.Render(fmt.Sprintf("  ... and %d more", more)))
+	}
+	if len(sc.issues) > 0 {
+		out = append(out, stMuted.Render("  s selects them, i lists them on the findings screen"))
+	}
+	return out
+}
+
+// securityPage is the project page with the focus on its security issues.
+func securityPage(p projectRow, sc *secState, w, h int) []string {
+	out := []string{section("Security issues of " + oneLine(p.Name)), stMuted.Render(trunc("  "+securitySummary(sc.issues)+"   enter opens one, i lists them on the findings screen", w))}
+	if len(sc.issues) == 0 {
+		return append(out, "", "Nothing is open for this project.")
+	}
+	out = append(out, stHead.Render(trunc("  "+pad("SEVERITY", 8)+" "+pad("ID", 16)+" "+pad("OPEN IN", 18)+" TITLE", w)))
+	start, end := sc.vp.window(max(h-secHead, 1))
+	for i := start; i < end; i++ {
+		out = append(out, securityRow(sc.issues[i], i == sc.vp.at(), w))
+	}
+	return out
+}
+
+func hasSecurity(m *app) bool { return len(m.prj.sec.issues) > 0 }
+
+// onlySecurity is whether enter on the project page can only mean the issues: there is no problem to fix.
+func onlySecurity(m *app) bool {
+	p, ok := m.selectedProject()
+	return ok && len(p.Problems) == 0 && hasSecurity(m)
+}
+
+func (m *app) focusSecurity() tea.Cmd {
+	if hasSecurity(m) {
+		m.prj.sec.focus = true
+	}
+	return nil
+}
+
+func (m *app) leaveSecurity() tea.Cmd {
+	if m.retAt(lvProblem) {
+		return m.goBack()
+	}
+	m.prj.sec.focus = false
+	return nil
+}
+
+// openSecurityIssue shows the issue under the cursor; back comes to the list of them.
+func (m *app) openSecurityIssue() tea.Cmd {
+	sc := &m.prj.sec
+	if len(sc.issues) == 0 {
+		return nil
+	}
+	if m.scope != sc.project {
+		m.setScope(sc.project)
+	}
+	return m.goTo(issueTarget(sc.issues[sc.vp.at()].ID, true))
+}
+
+// clickSecurity selects the issue drawn on the given body row; a click on the selected one opens it.
+func (m *app) clickSecurity(line int) tea.Cmd {
+	sc := &m.prj.sec
+	i := rowAt(&sc.vp, line-secHead)
+	switch {
+	case i < 0:
+		return nil
+	case i == sc.vp.at():
+		return m.openSecurityIssue()
+	}
+	sc.vp.to(i)
+	return nil
 }
