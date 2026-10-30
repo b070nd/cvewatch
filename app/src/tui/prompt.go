@@ -25,7 +25,8 @@ type field struct {
 
 // prompt is a small inline form shown at the bottom of the screen: one or a
 // few single-line fields. Whatever is typed goes to ops unchecked; ops
-// decides what is valid and says so in the status line.
+// decides what is valid. The prompt stays open while the write runs, and
+// comes back with its values and the reason when ops refuses.
 type prompt struct {
 	kind   promptKind
 	title  string
@@ -33,6 +34,9 @@ type prompt struct {
 	fields []field
 	idx    int
 	box    *folderBox // pkPath
+
+	submitting bool   // the write is in flight; the prompt stays open until it ends
+	problem    string // why the last submit was refused
 
 	change ops.Change     // pkStatus
 	assign ops.Assignment // pkAssign
@@ -44,6 +48,7 @@ func (p *prompt) view(w, h int) []string {
 		bl := p.box.view(w, h)
 		lines = append(lines, bl[:2]...)
 		lines = append(lines, stMuted.Render(trunc("  "+p.hint, w)))
+		lines = append(lines, p.status(w)...)
 		return append(lines, bl[2:]...)
 	}
 	lw := 0
@@ -60,7 +65,18 @@ func (p *prompt) view(w, h int) []string {
 	if p.hint != "" {
 		lines = append(lines, stMuted.Render(trunc("  "+p.hint, w)))
 	}
-	return lines
+	return append(lines, p.status(w)...)
+}
+
+// status is the line about the last submit: still running, or refused.
+func (p *prompt) status(w int) []string {
+	switch {
+	case p.submitting:
+		return []string{stMuted.Render("  working...")}
+	case p.problem != "":
+		return []string{stErr.Render("  problem: ") + trunc(p.problem, w-12)}
+	}
+	return nil
 }
 
 // startStatus asks for a note, then changes the status of the selected
@@ -130,28 +146,28 @@ func (m *app) promptEnter() tea.Cmd {
 
 func (m *app) promptSubmit() tea.Cmd {
 	p := m.prm
-	m.prm = nil
+	if p.submitting {
+		return nil
+	}
 	val := func(i int) string { return strings.TrimSpace(p.fields[i].in.String()) }
 	switch p.kind {
 	case pkStatus:
 		c := p.change
 		c.Note = val(0)
-		m.busy = "saving..."
-		return resolveCmd(m.b, c)
+		return m.start("saving...", "status "+c.ID+" "+where(c.Project, c.Env), reList|reDetail, p, resolveCmd(m.b, c))
 	case pkAssign:
 		a := p.assign
 		a.Owner, a.Due, a.Ticket = val(0), val(1), val(2)
-		m.busy = "saving..."
-		return assignCmd(m.b, a)
+		return m.start("saving...", "assign "+a.ID+" "+where(a.Project, a.Env), reList|reDetail, p, assignCmd(m.b, a))
 	}
 	path := p.box.chosen()
 	if path == "" {
-		m.fail("no folder given")
+		p.problem = "no folder given"
+		m.fail(p.problem)
 		return nil
 	}
-	m.busy = "scanning..."
 	if m.frm != nil {
-		return scanCmd(m.b, path)
+		return m.start("scanning...", "scan", 0, p, scanCmd(m.b, path))
 	}
-	return startFlowCmd(m.b, "", path)
+	return m.start("scanning...", "flow", 0, p, startFlowCmd(m.b, "", path))
 }

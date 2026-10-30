@@ -41,7 +41,7 @@ func Run(ctx context.Context, b Backend, o Options) error {
 
 // New returns the program's model; it is exported so tests can drive it.
 func New(b Backend, o Options) tea.Model {
-	m := &app{b: b, o: o, loading: true, helpVP: scrolling()}
+	m := &app{b: b, o: o, loading: true, helpVP: scrolling(), after: afterCmd}
 	for i := range m.txt {
 		m.txt[i] = scrolling()
 	}
@@ -77,10 +77,13 @@ type app struct {
 	data    *snapshot
 	loadErr error
 	loading bool
-	busy    string // a write in progress
+	pend    pending // the writes and scans in flight
 
 	flash    string
 	flashErr bool
+	flashSeq int  // which note is on screen, so that an old timer leaves a newer one alone
+	flashDue bool // a note was set and its timer is not started yet
+	after    func(d time.Duration, msg tea.Msg) tea.Cmd
 
 	fnd findingsState
 	prj projectsState
@@ -94,8 +97,7 @@ type app struct {
 func (m *app) Init() tea.Cmd {
 	cmds := []tea.Cmd{loadCmd(m.b), tickCmd(m.o.refresh())}
 	if m.o.Dir != "" {
-		m.busy = "scanning " + clean(m.o.Dir) + "..."
-		cmds = append(cmds, startFlowCmd(m.b, "", m.o.Dir))
+		cmds = append(cmds, m.start("scanning "+clean(m.o.Dir)+"...", "flow", 0, nil, startFlowCmd(m.b, "", m.o.Dir)))
 	}
 	return tea.Batch(cmds...)
 }
@@ -117,17 +119,36 @@ func (m *app) bodyH() int {
 	return h - 4
 }
 
-func (m *app) say(s string)  { m.flash, m.flashErr = oneLine(s), false }
-func (m *app) fail(s string) { m.flash, m.flashErr = oneLine(s), true }
+// flashTTL is how long a success note stays; an error stays until the next
+// action that is not just moving around (see key).
+const flashTTL = 4 * time.Second
 
-func (m *app) reload() tea.Cmd {
-	m.loading = true
-	return loadCmd(m.b)
+// flashExpiredMsg ends the note numbered seq, if it is still the one shown.
+type flashExpiredMsg struct{ seq int }
+
+func afterCmd(d time.Duration, msg tea.Msg) tea.Cmd {
+	return tea.Tick(d, func(time.Time) tea.Msg { return msg })
+}
+
+func (m *app) say(s string) {
+	m.flash, m.flashErr = oneLine(s), false
+	m.flashSeq++
+	m.flashDue = true
+}
+
+func (m *app) fail(s string) {
+	m.flash, m.flashErr = oneLine(s), true
+	m.flashSeq++
+	m.flashDue = false
 }
 
 func (m *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := m.update(msg)
 	m.layout()
+	if m.flashDue && m.after != nil {
+		cmd = tea.Batch(cmd, m.after(flashTTL, flashExpiredMsg{seq: m.flashSeq}))
+	}
+	m.flashDue = false
 	return model, cmd
 }
 
@@ -145,7 +166,12 @@ func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.loading {
 			return m, next
 		}
-		return m, tea.Batch(next, m.reload())
+		return m, tea.Batch(next, m.refresh(reList|reDetail))
+	case flashExpiredMsg:
+		if msg.seq == m.flashSeq && !m.flashErr {
+			m.flash = ""
+		}
+		return m, nil
 	case dataMsg:
 		m.loading = false
 		if msg.err != nil {
@@ -160,12 +186,8 @@ func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case detailMsg:
 		m.detailLoaded(msg)
 		return m, nil
-	case actionMsg:
-		return m.actionDone(msg)
-	case flowMsg:
-		return m.flowStarted(msg)
-	case scanMsg:
-		return m.scanned(msg)
+	case opMsg:
+		return m, m.opDone(msg)
 	case previewMsg:
 		if msg.f == m.frm && msg.seq == msg.f.seq {
 			msg.f.prev, msg.f.prevErr = nil, ""
@@ -178,80 +200,45 @@ func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
-	case savedMsg:
-		return m.saved(msg)
 	case fixPreviewMsg:
 		m.fixPreviewed(msg)
 		return m, nil
-	case fixSavedMsg:
-		return m.fixSaved(msg)
-	case editedMsg:
-		if msg.err != nil {
-			m.fail("editor: " + msg.err.Error())
-		}
-		return m, m.reload()
 	}
 	return m, nil
 }
 
-func (m *app) actionDone(msg actionMsg) (tea.Model, tea.Cmd) {
-	m.busy = ""
-	switch {
-	case msg.err != nil:
-		m.fail(msg.err.Error())
-	case msg.warn != nil:
-		m.fail(msg.info + ", but: " + msg.warn.Error())
-	default:
-		m.say(msg.info)
-	}
-	cmds := []tea.Cmd{m.reload()}
-	if d := m.fnd.det; d != nil {
-		cmds = append(cmds, detailCmd(m.b, d.id))
-	}
-	return m, tea.Batch(cmds...)
-}
-
-func (m *app) flowStarted(msg flowMsg) (tea.Model, tea.Cmd) {
-	m.busy = ""
+func (m *app) flowStarted(msg flowMsg) outcome {
 	if msg.err != nil {
-		m.fail(msg.err.Error())
-		return m, nil
+		return outcome{err: msg.err}
 	}
 	m.scr = scrProjects
 	m.frm = newForm(msg.flow, msg.creating, msg.name)
-	if msg.note != "" {
-		m.say(msg.note)
-	}
-	return m, m.frm.enter(m)
+	return outcome{note: msg.note, then: m.frm.enter(m)}
 }
 
-func (m *app) scanned(msg scanMsg) (tea.Model, tea.Cmd) {
-	m.busy = ""
+func (m *app) scanned(msg scanMsg) outcome {
 	if msg.err != nil {
-		m.fail(msg.err.Error())
-		return m, nil
+		return outcome{err: msg.err}
 	}
 	if m.frm == nil || m.frm.waiting() || m.frm.saving {
-		return m, nil // a preview or save is reading the flow right now
+		return outcome{} // a preview or save is reading the flow right now
 	}
 	m.frm.flow.UseDiscovery(msg.res.Root, msg.res)
 	m.frm.touched = true
 	m.frm.load()
-	m.say(scanNote(msg.res))
-	return m, m.frm.enter(m)
+	return outcome{note: scanNote(msg.res), then: m.frm.enter(m)}
 }
 
-func (m *app) saved(msg savedMsg) (tea.Model, tea.Cmd) {
+func (m *app) saved(msg savedMsg) outcome {
 	if msg.f != m.frm {
-		return m, nil
+		return outcome{err: msg.err}
 	}
 	f := m.frm
 	f.saving = false
 	if msg.err != nil {
 		f.flow.Back() // un-finish the review so the user can fix or leave
 		f.step = f.flow.Current()
-		m.fail(msg.err.Error())
-		return m, nil
+		return outcome{err: msg.err}
 	}
 	m.frm = nil
 	if msg.prev.Saved {
@@ -259,11 +246,9 @@ func (m *app) saved(msg savedMsg) (tea.Model, tea.Cmd) {
 		if msg.prev.Created {
 			verb = "created"
 		}
-		m.say(fmt.Sprintf("%s project %s", verb, msg.prev.Project))
-	} else {
-		m.say("no changes to save in " + msg.prev.Project)
+		return outcome{note: fmt.Sprintf("%s project %s", verb, msg.prev.Project)}
 	}
-	return m, m.reload()
+	return outcome{note: "no changes to save in " + msg.prev.Project}
 }
 
 // ---- keys ----
@@ -272,8 +257,12 @@ func (m *app) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if k.String() == "ctrl+c" {
 		return m, tea.Quit
 	}
-	m.flash = ""
-	return m, m.dispatch(k)
+	seq := m.flashSeq
+	cmd, moved := m.dispatch(k)
+	if !moved && m.flashSeq == seq { // moving around keeps what is on screen, an action ends it
+		m.flash = ""
+	}
+	return m, cmd
 }
 
 func (m *app) stepScreen(d int) { m.scr = (m.scr + numScreens + screen(d)) % numScreens }
@@ -428,8 +417,8 @@ func (m *app) header(w int) string {
 	left := stBold.Render("cvewatch") + "  " + strings.Join(tabs, " ")
 	right := ""
 	switch {
-	case m.busy != "":
-		right = m.busy
+	case m.pend.count() > 0:
+		right = m.pend.status()
 	case m.loading:
 		right = "refreshing..."
 	case m.data != nil:

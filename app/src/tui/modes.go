@@ -40,6 +40,7 @@ type binding struct {
 	short string // label in the footer; empty keeps it out of the footer
 	prio  int    // 0 is never dropped from the footer; a higher number goes sooner
 	alias bool   // works, but is left out of footer and help
+	nav   bool   // only moves around: what is on screen, an error included, stays
 	when  func(m *app) bool
 	do    func(m *app, k tea.KeyMsg) tea.Cmd
 }
@@ -73,24 +74,26 @@ func printable(k tea.KeyMsg) bool { return k.Type == tea.KeyRunes || k.Type == t
 // dispatch runs a key against the top mode: a text input first for printable
 // keys, then the bindings, then the editing keys of the input or the shared
 // movement.
-func (m *app) dispatch(k tea.KeyMsg) tea.Cmd {
+//
+// moved says the key only moved around (a movement key, a screen switch).
+func (m *app) dispatch(k tea.KeyMsg) (cmd tea.Cmd, moved bool) {
 	md := m.top()
 	s := k.String()
 	if md.typed != nil && printable(k) && md.typed(m, k) {
-		return nil
+		return nil, false
 	}
 	for i := range md.binds {
 		if b := &md.binds[i]; b.do != nil && b.has(s) && b.on(m) {
-			return b.do(m, k)
+			return b.do(m, k), b.nav
 		}
 	}
 	switch {
 	case md.typed != nil:
 		md.typed(m, k)
 	case md.move != nil:
-		md.move(m, s)
+		moved = md.move(m, s)
 	}
-	return nil
+	return nil, moved
 }
 
 // stack is the open layers, the screen at the bottom and the mode that gets
@@ -126,6 +129,8 @@ func (m *app) stack() []*mode {
 		s = append(s, mo.fix)
 	}
 	switch {
+	case m.prm != nil && m.prm.submitting:
+		s = append(s, mo.promptBusy)
 	case m.prm != nil && m.prm.box != nil:
 		s = append(s, mo.folder)
 	case m.prm != nil:

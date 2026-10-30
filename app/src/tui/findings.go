@@ -280,11 +280,14 @@ func (m *app) detailLoaded(msg detailMsg) {
 	if d == nil || d.id != msg.id {
 		return
 	}
+	if msg.err != nil && !d.loading && d.err == nil {
+		return // a refresh failed: the page on screen is still the latest there is
+	}
 	d.loading, d.err, d.lay = false, msg.err, nil
 	if msg.err != nil {
 		return
 	}
-	d.is, d.ex = msg.is, msg.ex
+	d.is, d.ex, d.exErr = msg.is, msg.ex, ""
 	if msg.exErr != nil {
 		d.exErr = msg.exErr.Error()
 	}

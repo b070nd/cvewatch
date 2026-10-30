@@ -138,7 +138,9 @@ func TestFolderBoxMissingFolderStillGoesThroughToTheError(t *testing.T) {
 	d.typ("nope")
 	d.want("no such folder")
 	d.press("enter")
-	d.want("error: no such folder")
+	d.want("error: no such folder", "problem: no such folder")
+	d.want("Folder: nope") // the prompt stays with what was typed
+	d.press("esc")
 	d.wantNot("Scan a folder")
 }
 

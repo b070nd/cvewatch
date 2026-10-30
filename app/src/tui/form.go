@@ -158,9 +158,9 @@ func (m *app) formAnswer(v string) tea.Cmd {
 	}
 	f.touched = true
 	if f.flow.Done() {
-		f.saving = true
-		m.busy = "saving..."
-		return saveCmd(m.b, f, f.flow.Draft().Project.Name, f.flow)
+		cmd := m.start("saving...", "form save", reList, nil, saveCmd(m.b, f, f.flow.Draft().Project.Name, f.flow))
+		f.saving = cmd != nil
+		return cmd
 	}
 	f.load()
 	return f.enter(m)

@@ -95,16 +95,16 @@ func (m *app) cancelFix() tea.Cmd {
 
 func (m *app) applyFix() tea.Cmd {
 	fx := m.prj.fix
-	if fx.prev == nil {
+	if fx.prev == nil || fx.saving {
 		return nil
 	}
 	if fx.prev.Blocked() {
 		m.fail("this cannot be saved until the errors are fixed")
 		return nil
 	}
-	fx.saving = true
-	m.busy = "saving..."
-	return fixSaveCmd(m.b, fx, fx.project, fx.fix.Ops)
+	cmd := m.start("saving...", "fix "+fx.project, reList, nil, fixSaveCmd(m.b, fx, fx.project, fx.fix.Ops))
+	fx.saving = cmd != nil
+	return cmd
 }
 
 func (m *app) fixPreviewed(msg fixPreviewMsg) {
@@ -120,20 +120,18 @@ func (m *app) fixPreviewed(msg fixPreviewMsg) {
 	}
 }
 
-func (m *app) fixSaved(msg fixSavedMsg) (tea.Model, tea.Cmd) {
+func (m *app) fixSaved(msg fixSavedMsg) outcome {
 	if msg.fx != m.prj.fix {
-		return m, nil
+		return outcome{err: msg.err}
 	}
-	m.busy, m.prj.fix = "", nil
+	m.prj.fix = nil
 	switch {
 	case msg.err != nil:
-		m.fail(msg.err.Error())
+		return outcome{err: msg.err}
 	case msg.prev.Saved:
-		m.say("fixed " + msg.fx.project + ": " + msg.fx.fix.Label)
-	default:
-		m.say("no changes to save in " + msg.fx.project)
+		return outcome{note: "fixed " + msg.fx.project + ": " + msg.fx.fix.Label}
 	}
-	return m, m.reload()
+	return outcome{note: "no changes to save in " + msg.fx.project}
 }
 
 // frame is the lines above the preview and the room left for it.
@@ -191,6 +189,10 @@ func (m *app) openEditor() tea.Cmd {
 		m.fail("$EDITOR is not set; the file is " + p.File)
 		return nil
 	}
+	id, ok := m.begin("editing "+oneLine(p.Name)+"...", "editor", reList|reDetail, nil)
+	if !ok {
+		return nil
+	}
 	cmd := exec.Command(ed[0], append(ed[1:], p.File)...)
-	return tea.ExecProcess(cmd, func(err error) tea.Msg { return editedMsg{err: err} })
+	return tea.ExecProcess(cmd, func(err error) tea.Msg { return opMsg{id: id, msg: editedMsg{err: err}} })
 }

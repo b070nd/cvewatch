@@ -12,7 +12,7 @@ import (
 var mo struct {
 	noData, overview, status, findings, detail, filter, projects, project, fix *mode
 	formText, formChoice, formMulti, formConfirm, formReview, formBusy         *mode
-	prompt, folder, confirm, help                                              *mode
+	prompt, promptBusy, folder, confirm, help                                  *mode
 }
 
 var statusKeys = map[string]model.Status{
@@ -23,7 +23,7 @@ var statusKeys = map[string]model.Status{
 // ---- shared bindings ----
 
 func bindHelp() binding {
-	return binding{keys: ks("?"), help: "show or hide this help", short: "help", do: plain(func(m *app) tea.Cmd { m.openHelp(); return nil })}
+	return binding{keys: ks("?"), help: "show or hide this help", short: "help", nav: true, do: plain(func(m *app) tea.Cmd { m.openHelp(); return nil })}
 }
 
 // bindHelpTyped is help for the modes where ? is a letter of the text.
@@ -34,7 +34,7 @@ func bindHelpTyped() binding {
 
 func bindRefresh() binding {
 	return binding{keys: ks("r"), help: "refresh now (it also refreshes by itself)", short: "refresh", prio: 3,
-		do: plain(func(m *app) tea.Cmd { return m.reload() })}
+		do: plain(func(m *app) tea.Cmd { return m.refresh(reList | reDetail) })}
 }
 
 func bindQuit() binding {
@@ -49,7 +49,7 @@ func bindBack(what string, f func(m *app) tea.Cmd) binding {
 // bindTabs switches the screen from a level inside one.
 func bindTabs() binding {
 	return binding{keys: ks("tab", "shift+tab", "1", "2", "3", "4"), disp: "tab, 1-4",
-		help: "switch screen: tab and shift+tab cycle, 1-4 jump", prio: 4, do: func(m *app, k tea.KeyMsg) tea.Cmd {
+		help: "switch screen: tab and shift+tab cycle, 1-4 jump", prio: 4, nav: true, do: func(m *app, k tea.KeyMsg) tea.Cmd {
 			switch s := k.String(); s {
 			case "tab":
 				m.stepScreen(1)
@@ -64,7 +64,7 @@ func bindTabs() binding {
 
 // bindScreens is left and right on the first level of a screen.
 func bindScreens() binding {
-	return binding{keys: ks("left", "h", "right", "l"), disp: "left/right", help: "previous or next screen (it wraps around)", short: "screens", prio: 2,
+	return binding{keys: ks("left", "h", "right", "l"), disp: "left/right", help: "previous or next screen (it wraps around)", short: "screens", prio: 2, nav: true,
 		do: func(m *app, k tea.KeyMsg) tea.Cmd {
 			if s := k.String(); s == "left" || s == "h" {
 				m.stepScreen(-1)
@@ -103,7 +103,7 @@ func textScreen(scr screen, name, title string) *mode {
 func init() {
 	mo.noData = &mode{name: "nodata", title: "Keys while nothing is loaded", level: true,
 		binds: []binding{
-			{keys: ks("r"), help: "try to load the state again", short: "try again", do: plain(func(m *app) tea.Cmd { return m.reload() })},
+			{keys: ks("r"), help: "try to load the state again", short: "try again", do: plain(func(m *app) tea.Cmd { return m.refresh(reList | reDetail) })},
 			bindQuit(), bindHelp(), bindScreens(), bindTabs(),
 		}}
 	mo.overview = textScreen(scrOverview, "overview", "Keys on the overview screen")
@@ -263,6 +263,13 @@ func init() {
 			{keys: ks("esc"), help: "cancel; nothing is written", short: "cancel", do: plain(func(m *app) tea.Cmd { m.prm = nil; return nil })},
 			bindHelpTyped(),
 		}}
+	mo.promptBusy = &mode{name: "prompt busy", title: "Keys in a prompt that is saving", modal: true,
+		typed: func(*app, tea.KeyMsg) bool { return true },
+		binds: []binding{
+			{short: "working", help: "wait for the change to be written"},
+			{keys: ks("esc"), help: "close the prompt; the change that is being written still lands", short: "close", do: plain(func(m *app) tea.Cmd { m.prm = nil; return nil })},
+			bindHelpTyped(),
+		}}
 	boxKey := func(m *app, k tea.KeyMsg) tea.Cmd { m.prm.box.key(k); return nil }
 	mo.folder = &mode{name: "folder", title: "Keys in the folder box", modal: true,
 		typed: func(m *app, k tea.KeyMsg) bool { m.prm.box.key(k); return true },
@@ -282,7 +289,7 @@ func init() {
 		}}
 	mo.help = &mode{name: "help", title: "Keys in the help", modal: true, move: viewportOf(func(m *app) *viewport { return &m.helpVP }), moveShort: "scroll",
 		binds: []binding{
-			{keys: ks("?", "f1", "esc", "left", "h", "backspace", "q"), disp: "? or esc", help: "close the help", short: "close help", do: plain(func(m *app) tea.Cmd { m.closeHelp(); return nil })},
+			{keys: ks("?", "f1", "esc", "left", "h", "backspace", "q"), disp: "? or esc", help: "close the help", short: "close help", nav: true, do: plain(func(m *app) tea.Cmd { m.closeHelp(); return nil })},
 		}}
 }
 
@@ -311,7 +318,7 @@ func formMode(f *form) *mode {
 // allModes lists every mode, for the tests.
 func allModes() []*mode {
 	return []*mode{mo.noData, mo.overview, mo.status, mo.findings, mo.filter, mo.detail, mo.projects, mo.project, mo.fix,
-		mo.formBusy, mo.formText, mo.formChoice, mo.formMulti, mo.formConfirm, mo.formReview, mo.prompt, mo.folder, mo.confirm, mo.help}
+		mo.formBusy, mo.formText, mo.formChoice, mo.formMulti, mo.formConfirm, mo.formReview, mo.prompt, mo.promptBusy, mo.folder, mo.confirm, mo.help}
 }
 
 func wheelStep(up bool) int {

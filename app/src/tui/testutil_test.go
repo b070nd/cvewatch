@@ -143,10 +143,11 @@ func newFake(t *testing.T, st store.Storage) *fake {
 // driver feeds messages to the model and runs the commands it returns by
 // hand, feeding their results back, as the Bubble Tea runtime would.
 type driver struct {
-	t    *testing.T
-	m    tea.Model
-	quit bool
-	b    Backend
+	t      *testing.T
+	m      tea.Model
+	quit   bool
+	b      Backend
+	timers []tea.Msg // what the model asked a timer to deliver; tests send them by hand
 }
 
 func start(t *testing.T, b Backend, o Options) *driver {
@@ -155,6 +156,7 @@ func start(t *testing.T, b Backend, o Options) *driver {
 		o.Refresh = time.Hour
 	}
 	d := &driver{t: t, m: New(b, o), b: b}
+	d.m.(*app).after = func(_ time.Duration, msg tea.Msg) tea.Cmd { d.timers = append(d.timers, msg); return nil }
 	d.send(tea.WindowSizeMsg{Width: 120, Height: 40})
 	d.run(loadCmd(b)) // what Init does, minus the timer that would only wait
 	return d

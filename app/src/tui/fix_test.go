@@ -121,7 +121,7 @@ func TestBrokenProjectFileDoesNotBlockTheTUI(t *testing.T) {
 
 	// the editor returns with a repaired file
 	os.WriteFile(bad, []byte("name: bad\ntechs:\n  - {name: php}\n"), 0o600)
-	d.send(editedMsg{})
+	d.send(opMsg{id: d.m.(*app).pend.ops[0].id, msg: editedMsg{}})
 	d.wantNot("BROKEN")
 	d.want("bad", "good")
 	d.press("e")

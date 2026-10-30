@@ -72,13 +72,11 @@ func (m *app) editProject() tea.Cmd {
 		m.fail("the file of " + p.Name + " does not load; press E to edit it")
 		return nil
 	}
-	m.busy = "opening " + oneLine(p.Name) + "..."
-	return startFlowCmd(m.b, p.Name, "")
+	return m.start("opening "+oneLine(p.Name)+"...", "flow", 0, nil, startFlowCmd(m.b, p.Name, ""))
 }
 
 func (m *app) addProject() tea.Cmd {
-	m.busy = "opening..."
-	return startFlowCmd(m.b, "", "")
+	return m.start("opening...", "flow", 0, nil, startFlowCmd(m.b, "", ""))
 }
 
 func (m *app) scanFolder() tea.Cmd {

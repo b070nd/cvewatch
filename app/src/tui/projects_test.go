@@ -189,8 +189,7 @@ func TestDiscoveryOnAFolderProposesAndSavesRelativePaths(t *testing.T) {
 	d.press("3", "d")
 	d.want("Scan a folder for a new project", "Folder")
 	d.press("enter") // nothing typed
-	d.want("error: no folder given")
-	d.press("d")
+	d.want("error: no folder given", "problem: no folder given", "Scan a folder for a new project")
 	d.typ(site)
 	d.press("enter")
 	d.want("New project", "Project name", "> site", "ok: scanned")
