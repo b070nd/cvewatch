@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -14,8 +13,8 @@ import (
 )
 
 type findingsState struct {
-	cursor    int
-	selID     string // the issue under the cursor, so a refresh keeps it
+	vp        viewport // over vis; follows its issue by id
+	vis       []query.Issue
 	min       model.Severity
 	text      string
 	filtering bool
@@ -70,54 +69,21 @@ func targetWords(is query.Issue) []string {
 	return out
 }
 
-func (m *app) visible() []query.Issue {
-	if m.data == nil {
-		return nil
-	}
-	return filterIssues(m.data.Issues, m.fnd.min, m.fnd.text)
-}
-
-// refit puts the cursor back on the selected issue after the list changed.
+// refit filters the issues again after they or the filter changed and puts
+// the cursor back on its issue.
 func (f *findingsState) refit(all []query.Issue) {
-	vis := filterIssues(all, f.min, f.text)
-	if i := slices.IndexFunc(vis, func(is query.Issue) bool { return is.ID == f.selID }); i >= 0 {
-		f.cursor = i
-	} else {
-		f.cursor = clamp(f.cursor, 0, len(vis)-1)
-	}
-	f.sync(vis)
-}
-
-func (f *findingsState) sync(vis []query.Issue) {
-	f.selID = ""
-	if f.cursor >= 0 && f.cursor < len(vis) {
-		f.selID = vis[f.cursor].ID
-	}
-}
-
-func (m *app) move(d int) {
-	vis := m.visible()
-	m.fnd.cursor = clamp(m.fnd.cursor+d, 0, len(vis)-1)
-	m.fnd.sync(vis)
+	f.vis = filterIssues(all, f.min, f.text)
+	f.vp.refit(len(f.vis), func(i int) string { return f.vis[i].ID })
 }
 
 func (m *app) findingsKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.fnd.det != nil {
 		return m.detailKey(k)
 	}
+	if m.fnd.vp.handle(k.String()) {
+		return m, nil
+	}
 	switch k.String() {
-	case "up", "k":
-		m.move(-1)
-	case "down", "j":
-		m.move(1)
-	case "pgup":
-		m.move(-max(m.bodyH()-3, 1))
-	case "pgdown":
-		m.move(max(m.bodyH()-3, 1))
-	case "home", "g":
-		m.move(-1 << 20)
-	case "end", "G":
-		m.move(1 << 20)
 	case "s":
 		m.fnd.min = minCycle[(m.fnd.min.Rank()+1)%len(minCycle)] // the cycle is in rank order
 		m.fnd.refit(m.dataIssues())
@@ -131,12 +97,11 @@ func (m *app) findingsKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.fnd.refit(m.dataIssues())
 		}
 	case "enter":
-		vis := m.visible()
-		if len(vis) == 0 {
+		if len(m.fnd.vis) == 0 {
 			return m, nil
 		}
-		is := vis[clamp(m.fnd.cursor, 0, len(vis)-1)]
-		m.fnd.det = &detail{id: is.ID, loading: true}
+		is := m.fnd.vis[m.fnd.vp.at()]
+		m.fnd.det = &detail{id: is.ID, loading: true, body: scrolling()}
 		return m, detailCmd(m.b, is.ID)
 	}
 	return m, nil
@@ -165,9 +130,9 @@ func (m *app) filterKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *app) findingsBody(w, h int) []string {
 	if d := m.fnd.det; d != nil {
-		return d.view(m.data.At, w, h)
+		return d.view(w, h)
 	}
-	return renderFindings(m.visible(), len(m.data.Issues), &m.fnd, w, h)
+	return renderFindings(len(m.data.Issues), &m.fnd, w, h)
 }
 
 // projectEnvs summarises where an issue is open, e.g. "shop:dev,prod mw:prod".
@@ -203,9 +168,13 @@ func owners(is query.Issue) string {
 	return strings.Join(out, ",")
 }
 
+// findingsRoom is the number of issue rows under the count line and the header.
+func findingsRoom(h int) int { return max(h-2, 1) }
+
 // renderFindings draws the table: a count line, a header and the rows around
-// the cursor. rows is the filtered list, total the unfiltered count.
-func renderFindings(rows []query.Issue, total int, st *findingsState, w, h int) []string {
+// the cursor. total is the unfiltered count.
+func renderFindings(total int, st *findingsState, w, h int) []string {
+	rows := st.vis
 	info := fmt.Sprintf("%d of %d open issues   min severity: %s", len(rows), total, minLabel(st.min))
 	switch {
 	case st.filtering:
@@ -249,9 +218,7 @@ func renderFindings(rows []query.Issue, total int, st *findingsState, w, h int) 
 	head = append(head, "TITLE")
 	lines = append(lines, stHead.Render(trunc("  "+row(head...), w)))
 
-	room := max(h-len(lines), 1)
-	start := clamp(st.cursor-room/2, 0, len(rows)-room)
-	end := min(start+room, len(rows))
+	start, end := st.vp.window(findingsRoom(h))
 	for i := start; i < end; i++ {
 		is := rows[i]
 		title := oneLine(is.Untrusted.Title)
@@ -272,7 +239,7 @@ func renderFindings(rows []query.Issue, total int, st *findingsState, w, h int) 
 			}
 			return append(c, trunc(title, titleW))
 		}
-		if i == st.cursor {
+		if i == st.vp.at() {
 			lines = append(lines, stSel.Render(pad("> "+row(cells(pad(sevWord(is.Severity), sevW))...), w)))
 		} else {
 			lines = append(lines, "  "+row(cells(sevText(is.Severity, sevW))...))
@@ -290,16 +257,19 @@ type detail struct {
 	is      query.Issue
 	ex      *ops.Explanation
 	exErr   string
-	sel     int // the selected environment row
-	scroll  int
+	sel     viewport // the environment rows, followed by project and env
+	body    viewport // the scrolling page
+	lay     *detailLayout
 }
+
+func targetID(t query.Target) string { return t.Project + "/" + string(t.Env) }
 
 func (m *app) detailLoaded(msg detailMsg) {
 	d := m.fnd.det
 	if d == nil || d.id != msg.id {
 		return
 	}
-	d.loading, d.err = false, msg.err
+	d.loading, d.err, d.lay = false, msg.err, nil
 	if msg.err != nil {
 		return
 	}
@@ -313,12 +283,18 @@ func (m *app) detailLoaded(msg detailMsg) {
 		}
 		return slices.Index(model.AllEnvs, a.Env) - slices.Index(model.AllEnvs, b.Env)
 	})
-	d.sel = clamp(d.sel, 0, len(d.is.Targets)-1)
+	d.sel.refit(len(d.is.Targets), func(i int) string { return targetID(d.is.Targets[i]) })
+}
+
+// reveal scrolls the page so that the selected environment row is visible.
+func (d *detail) reveal() {
+	if d.lay != nil && d.sel.at() >= 0 && d.sel.at() < len(d.lay.rows) {
+		d.body.show(d.lay.rows[d.sel.at()].at)
+	}
 }
 
 func (m *app) detailKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	d := m.fnd.det
-	w, _ := m.size()
 	switch s := k.String(); s {
 	case "esc", "backspace", "left", "h":
 		m.fnd.det = nil
@@ -326,23 +302,12 @@ func (m *app) detailKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if d.loading || len(d.is.Targets) == 0 {
 			return m, nil
 		}
-		step := 1
-		if s == "up" || s == "k" {
-			step = -1
-		}
-		d.sel = clamp(d.sel+step, 0, len(d.is.Targets)-1)
-		_, selLine := d.lines(m.data.At, w)
-		if selLine < d.scroll {
-			d.scroll = selLine
-		} else if selLine >= d.scroll+m.bodyH() {
-			d.scroll = selLine - m.bodyH() + 1
-		}
-	case "pgup":
-		d.scroll = max(0, d.scroll-m.bodyH()+1)
-	case "pgdown", " ":
-		d.scroll += m.bodyH() - 1
-	case "home", "g":
-		d.scroll = 0
+		d.sel.handle(s)
+		d.reveal()
+	case "pgup", "pgdown", "home", "g", "end", "G":
+		d.body.handle(s)
+	case " ":
+		d.body.handle("pgdown")
 	case "f":
 		m.startStatus(model.StatusFixed, false)
 	case "i":
@@ -367,9 +332,17 @@ func (m *app) detailKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (d *detail) view(now time.Time, w, h int) []string {
-	lines, _ := d.lines(now, w)
-	off := clamp(d.scroll, 0, len(lines)-h)
-	d.scroll = off
-	return lines[off:]
+// view is the visible part of the page. The page itself is laid out once per
+// load and width; the selected row is only swapped in here.
+func (d *detail) view(w, h int) []string {
+	lay := d.layout(w)
+	start, end := d.body.window(h)
+	start, end = min(start, len(lay.lines)), min(end, len(lay.lines))
+	out := slices.Clone(lay.lines[start:end])
+	if i := d.sel.at(); i >= 0 && i < len(lay.rows) {
+		if at := lay.rows[i].at; at >= start && at < end {
+			out[at-start] = lay.rows[i].hl
+		}
+	}
+	return out
 }

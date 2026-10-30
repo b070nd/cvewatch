@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -30,18 +29,40 @@ func orDash(s string) string {
 	return s
 }
 
-// lines lays the issue out as text and returns the line of the selected
-// environment, so the caller can keep it in view. Everything that came from
-// a feed, a repository or a person goes through clean first.
-func (d *detail) lines(_ time.Time, w int) ([]string, int) {
+// detailLayout is the issue laid out as text for one width. Each environment
+// row is there in two forms, plain and selected, and at says on which line.
+type detailLayout struct {
+	w     int
+	lines []string
+	rows  []detailRow
+}
+
+type detailRow struct {
+	at        int
+	plain, hl string
+}
+
+// layout is the cached page when it fits the width, else a fresh one (kept
+// by the caller's Update, not here).
+func (d *detail) layout(w int) *detailLayout {
+	if d.lay != nil && d.lay.w == w {
+		return d.lay
+	}
+	return d.build(w)
+}
+
+// build lays the issue out as text. Everything that came from a feed, a
+// repository or a person goes through clean first.
+func (d *detail) build(w int) *detailLayout {
 	switch {
 	case d.loading:
-		return []string{stMuted.Render("Loading " + oneLine(d.id) + "...")}, 0
+		return &detailLayout{w: w, lines: []string{stMuted.Render("Loading " + oneLine(d.id) + "...")}}
 	case d.err != nil:
-		return []string{stErr.Render("error: ") + oneLine(d.err.Error()), "", stMuted.Render("esc goes back")}, 0
+		return &detailLayout{w: w, lines: []string{stErr.Render("error: ") + oneLine(d.err.Error()), "", stMuted.Render("esc goes back")}}
 	}
 	is := d.is
 	var out []string
+	var rows []detailRow
 	add := func(l ...string) { out = append(out, l...) }
 
 	head := []string{stBold.Render(oneLine(is.ID)), sevTag(is.Severity)}
@@ -82,14 +103,10 @@ func (d *detail) lines(_ time.Time, w int) ([]string, int) {
 	}
 
 	add(section("Environments") + stMuted.Render("  up/down select; f i n o act on the selected row, F I N O on the whole project"))
-	selLine := 0
 	if len(is.Targets) == 0 {
 		add("  (no environment is tracked for this issue)")
 	}
-	for i, t := range is.Targets {
-		if i == d.sel {
-			selLine = len(out)
-		}
+	for _, t := range is.Targets {
 		due := "-"
 		if !t.Due.IsZero() {
 			due = day(t.Due)
@@ -105,11 +122,12 @@ func (d *detail) lines(_ time.Time, w int) ([]string, int) {
 		if t.Evidence > 0 {
 			rest += "  " + plural(t.Evidence, "evidence note", "evidence notes")
 		}
-		if i == d.sel {
-			add(stSel.Render(pad("> "+core+" "+rest, w)))
-		} else {
-			add("  " + statusStyle(t.Status).Render(core) + " " + trunc(rest, max(w-width(core)-3, 1)))
-		}
+		rows = append(rows, detailRow{
+			at:    len(out),
+			plain: "  " + statusStyle(t.Status).Render(core) + " " + trunc(rest, max(w-width(core)-3, 1)),
+			hl:    stSel.Render(pad("> "+core+" "+rest, w)),
+		})
+		add(rows[len(rows)-1].plain)
 		if t.Note != "" {
 			add(indentWrap("      note: ", oneLine(t.Note), w)...)
 		}
@@ -178,5 +196,5 @@ func (d *detail) lines(_ time.Time, w int) ([]string, int) {
 			add("  relevant under the current configuration: no")
 		}
 	}
-	return out, selLine
+	return &detailLayout{w: w, lines: out, rows: rows}
 }

@@ -20,7 +20,7 @@ type fixState struct {
 	prev    *ops.ProjectPreview
 	err     string
 	saving  bool
-	scroll  int
+	vp      viewport // scrolls the preview
 }
 
 func (f *fixState) waiting() bool { return f.prev == nil && f.err == "" }
@@ -67,7 +67,7 @@ func (m *app) selectedProject() (projectRow, bool) {
 	if m.data == nil || len(m.data.Projects) == 0 {
 		return projectRow{}, false
 	}
-	return m.data.Projects[clamp(m.prj.cursor, 0, len(m.data.Projects)-1)], true
+	return m.data.Projects[m.prj.proj.at()], true
 }
 
 // startFix previews the first fix of the selected problem.
@@ -77,12 +77,12 @@ func (m *app) startFix() tea.Cmd {
 		m.fail("no problems to fix here")
 		return nil
 	}
-	is := p.Problems[clamp(m.prj.issue, 0, len(p.Problems)-1)]
+	is := p.Problems[m.prj.prob.at()]
 	if len(is.Fixes) == 0 {
 		m.fail("no automatic fix for this problem; press o to edit the file")
 		return nil
 	}
-	fx := &fixState{project: p.Name, issue: is, fix: is.Fixes[0]}
+	fx := &fixState{project: p.Name, issue: is, fix: is.Fixes[0], vp: scrolling()}
 	m.prj.fix = fx
 	return fixPreviewCmd(m.b, fx, fx.project, fx.fix.Ops)
 }
@@ -107,16 +107,10 @@ func (m *app) fixKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		fx.saving = true
 		m.busy = "saving..."
 		return m, fixSaveCmd(m.b, fx, fx.project, fx.fix.Ops)
-	case "up", "k":
-		fx.scroll = max(0, fx.scroll-1)
-	case "down", "j":
-		fx.scroll++
-	case "pgup":
-		fx.scroll = max(0, fx.scroll-m.bodyH())
-	case "pgdown":
-		fx.scroll += m.bodyH()
 	case "q":
 		return m, tea.Quit
+	default:
+		fx.vp.handle(s)
 	}
 	return m, nil
 }
@@ -150,10 +144,15 @@ func (m *app) fixSaved(msg fixSavedMsg) (tea.Model, tea.Cmd) {
 	return m, m.reload()
 }
 
-func (fx *fixState) view(w, h int) []string {
-	out := []string{stBold.Render(trunc("Fix project: "+oneLine(fx.project), w)),
+// frame is the lines above the preview and the room left for it.
+func (fx *fixState) frame(w, h int) (head []string, room int) {
+	head = []string{stBold.Render(trunc("Fix project: "+oneLine(fx.project), w)),
 		section(oneLine(fx.fix.Label)),
 		stMuted.Render(trunc(oneLine(fx.issue.Level+": "+fx.issue.Field+": "+fx.issue.Message), w)), ""}
+	return head, max(h-len(head)-2, 1)
+}
+
+func (fx *fixState) body(w int) []string {
 	var body []string
 	switch {
 	case fx.saving:
@@ -167,9 +166,21 @@ func (fx *fixState) view(w, h int) []string {
 	if fx.prev != nil {
 		body = append(body, previewRows(fx.prev, w)...)
 	}
-	avail := max(h-len(out)-2, 1)
-	fx.scroll = clamp(fx.scroll, 0, len(body)-avail)
-	out = append(out, body[fx.scroll:min(fx.scroll+avail, len(body))]...)
+	return body
+}
+
+func (fx *fixState) layout(w, h int) {
+	_, room := fx.frame(w, h)
+	fx.vp.refit(len(fx.body(w)), nil)
+	fx.vp.fit(room)
+}
+
+func (fx *fixState) view(w, h int) []string {
+	out, room := fx.frame(w, h)
+	body := fx.body(w)
+	start, end := fx.vp.window(room)
+	start, end = min(start, len(body)), min(end, len(body))
+	out = append(out, body[start:end]...)
 	return append(out, "", stBold.Render("Apply this fix?")+"  y = apply, n or esc = cancel")
 }
 

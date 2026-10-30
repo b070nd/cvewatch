@@ -73,7 +73,7 @@ func (m *app) startStatus(st model.Status, whole bool) {
 		m.fail("nothing selected: open an issue with an environment first")
 		return
 	}
-	t := d.is.Targets[clamp(d.sel, 0, len(d.is.Targets)-1)]
+	t := d.is.Targets[d.sel.at()]
 	c := ops.Change{ID: d.is.ID, Project: t.Project, Env: t.Env, Status: st}
 	if whole {
 		c.Env = ""
@@ -93,7 +93,7 @@ func (m *app) startAssign(whole bool) {
 		m.fail("nothing selected: open an issue with an environment first")
 		return
 	}
-	t := d.is.Targets[clamp(d.sel, 0, len(d.is.Targets)-1)]
+	t := d.is.Targets[d.sel.at()]
 	a := ops.Assignment{ID: d.is.ID, Project: t.Project, Env: t.Env}
 	if whole {
 		a.Env = ""

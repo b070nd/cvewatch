@@ -18,10 +18,10 @@ type form struct {
 	existing string // the project being edited
 	step     setup.Step
 
-	in     input           // KindText
-	cur    int             // KindChoice and KindMulti: the row under the cursor
-	sel    map[string]bool // KindMulti: the ticked values
-	scroll int             // review: first visible diff line
+	in  input           // KindText
+	vp  viewport        // KindChoice and KindMulti: the option rows
+	sel map[string]bool // KindMulti: the ticked values
+	rev viewport        // review: the scrolling diff
 
 	prev    *ops.ProjectPreview // review: what saving would do
 	prevErr string
@@ -30,7 +30,7 @@ type form struct {
 }
 
 func newForm(fl *setup.Flow, creating bool, name string) *form {
-	f := &form{flow: fl, creating: creating, existing: name}
+	f := &form{flow: fl, creating: creating, existing: name, rev: scrolling()}
 	f.load()
 	return f
 }
@@ -38,14 +38,16 @@ func newForm(fl *setup.Flow, creating bool, name string) *form {
 // load shows the flow's current step with the flow's own defaults.
 func (f *form) load() {
 	f.step = f.flow.Current()
-	f.sel, f.cur, f.scroll = map[string]bool{}, 0, 0
+	f.sel = map[string]bool{}
+	f.vp.reset(len(f.step.Options))
+	f.rev.reset(0)
 	switch f.step.Kind {
 	case setup.KindText:
 		f.in.set(f.step.Default)
 	case setup.KindChoice:
 		for i, o := range f.step.Options {
 			if o.Value == f.step.Default {
-				f.cur = i
+				f.vp.to(i)
 			}
 		}
 	case setup.KindMulti:
@@ -81,8 +83,8 @@ func (f *form) answer() string {
 	case setup.KindText:
 		return f.in.String()
 	case setup.KindChoice:
-		if f.cur >= 0 && f.cur < len(f.step.Options) {
-			return f.step.Options[f.cur].Value
+		if i := f.vp.at(); i < len(f.step.Options) {
+			return f.step.Options[i].Value
 		}
 	case setup.KindMulti:
 		var vs []string
@@ -101,14 +103,14 @@ func (f *form) hint() string {
 	case setup.KindText:
 		return "type  enter next  esc back  ctrl+d scan a folder"
 	case setup.KindChoice:
-		return "up/down move  enter select  esc back  d scan a folder"
+		return "up/down move  enter select  esc back  d scan a folder  ? help"
 	case setup.KindMulti:
-		return "up/down move  space toggle  a all or none  enter confirm  esc back  d scan a folder"
+		return "up/down move  space toggle  a all/none  enter confirm  esc back  d folder  ? help"
 	}
 	if f.step.ID == "review" {
-		return "y save  n do not save  up/down scroll  esc back"
+		return "y save  n do not save  up/down scroll  esc back  ? help"
 	}
-	return "y yes  n no  esc back"
+	return "y yes  n no  esc back  ? help"
 }
 
 func (m *app) formKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -137,29 +139,27 @@ func (m *app) formKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "d":
 		m.startPath()
 		return m, nil
+	case "?":
+		m.openHelp()
+		return m, nil
 	}
 	n := len(f.step.Options)
 	switch f.step.Kind {
 	case setup.KindChoice:
-		switch s {
-		case "up", "k":
-			f.cur = clamp(f.cur-1, 0, n-1)
-		case "down", "j":
-			f.cur = clamp(f.cur+1, 0, n-1)
-		case "enter":
-			if n > 0 {
-				return m.formAnswer(f.answer())
-			}
+		if f.vp.handle(s) {
+			return m, nil
+		}
+		if s == "enter" && n > 0 {
+			return m.formAnswer(f.answer())
 		}
 	case setup.KindMulti:
+		if f.vp.handle(s) {
+			return m, nil
+		}
 		switch s {
-		case "up", "k":
-			f.cur = clamp(f.cur-1, 0, n-1)
-		case "down", "j":
-			f.cur = clamp(f.cur+1, 0, n-1)
 		case " ", "x":
 			if n > 0 {
-				v := f.step.Options[f.cur].Value
+				v := f.step.Options[f.vp.at()].Value
 				f.sel[v] = !f.sel[v]
 			}
 		case "a":
@@ -183,14 +183,8 @@ func (m *app) formKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.formAnswer("yes")
 		case "n", "N":
 			return m.formAnswer("no")
-		case "up", "k":
-			f.scroll = max(0, f.scroll-1)
-		case "down", "j":
-			f.scroll++
-		case "pgup":
-			f.scroll = max(0, f.scroll-m.bodyH())
-		case "pgdown":
-			f.scroll += m.bodyH()
+		default:
+			f.rev.handle(s)
 		}
 	}
 	return m, nil
@@ -238,24 +232,43 @@ func (f *form) title() string {
 	return "Edit project: " + oneLine(f.existing)
 }
 
-// view draws the step. Every string from the flow (help, option details,
-// problems) can carry repository text, so all of it is cleaned.
-func (f *form) view(w, h int) []string {
-	out := []string{stBold.Render(trunc(f.title(), w))}
+// frame is the lines above the step's rows and below them, and the room that
+// leaves for the rows.
+func (f *form) frame(w, h int) (head, tail []string, room int) {
+	head = []string{stBold.Render(trunc(f.title(), w))}
 	st := f.step
-	out = append(out, section(oneLine(st.Title)))
+	head = append(head, section(oneLine(st.Title)))
 	if st.ID != "review" && st.Help != "" {
 		for _, l := range wrap(oneLine(st.Help), w-2) {
-			out = append(out, stMuted.Render(l))
+			head = append(head, stMuted.Render(l))
 		}
 	}
-	out = append(out, "")
-	var tail []string
+	head = append(head, "")
 	if st.Problem != "" {
 		tail = append(tail, "", stErr.Render("problem: ")+trunc(oneLine(st.Problem), w-9))
 	}
-	room := max(h-len(out)-len(tail), 1)
+	return head, tail, max(h-len(head)-len(tail), 1)
+}
 
+// layout gives the step's list or diff its room; it runs from Update.
+func (f *form) layout(w, h int) {
+	_, _, room := f.frame(w, h)
+	switch f.step.Kind {
+	case setup.KindChoice, setup.KindMulti:
+		f.vp.fit(room)
+	default:
+		if f.step.ID == "review" {
+			f.rev.refit(len(f.reviewBody(w)), nil)
+			f.rev.fit(max(room-2, 1))
+		}
+	}
+}
+
+// view draws the step. Every string from the flow (help, option details,
+// problems) can carry repository text, so all of it is cleaned.
+func (f *form) view(w, h int) []string {
+	out, tail, room := f.frame(w, h)
+	st := f.step
 	switch st.Kind {
 	case setup.KindText:
 		out = append(out, "> "+f.in.view(w-2, true))
@@ -276,13 +289,12 @@ func (f *form) optionRows(w, room int) []string {
 	if len(opts) == 0 {
 		return []string{stMuted.Render("  nothing to choose here; press enter to continue")}
 	}
-	start := clamp(f.cur-room/2, 0, len(opts)-room)
-	end := min(start+room, len(opts))
+	start, end := f.vp.window(room)
 	var out []string
 	for i := start; i < end; i++ {
 		o := opts[i]
 		mark := "  "
-		if i == f.cur {
+		if i == f.vp.at() {
 			mark = "> "
 		}
 		box := ""
@@ -303,7 +315,7 @@ func (f *form) optionRows(w, room int) []string {
 			}
 		}
 		var line string
-		if i == f.cur {
+		if i == f.vp.at() {
 			line = stSel.Render(pad(head+tailTxt, w))
 		} else {
 			line = trunc(head, w) + stMuted.Render(tailTxt)
@@ -313,9 +325,7 @@ func (f *form) optionRows(w, room int) []string {
 	return out
 }
 
-// reviewRows shows the diff ops computed for the project file, the validation
-// issues, and the question.
-func (f *form) reviewRows(w, room int) []string {
+func (f *form) reviewBody(w int) []string {
 	var body []string
 	switch {
 	case f.saving:
@@ -329,11 +339,17 @@ func (f *form) reviewRows(w, room int) []string {
 	if f.prev != nil {
 		body = append(body, previewRows(f.prev, w)...)
 	}
+	return body
+}
+
+// reviewRows shows the diff ops computed for the project file, the validation
+// issues, and the question.
+func (f *form) reviewRows(w, room int) []string {
+	body := f.reviewBody(w)
 	ask := stBold.Render("Save this project?") + "  y = save, n = do not save, esc = back"
-	avail := max(room-2, 1)
-	f.scroll = clamp(f.scroll, 0, len(body)-avail)
-	end := min(f.scroll+avail, len(body))
-	out := append([]string{}, body[f.scroll:end]...)
+	start, end := f.rev.window(max(room-2, 1))
+	start, end = min(start, len(body)), min(end, len(body))
+	out := append([]string{}, body[start:end]...)
 	return append(out, "", ask)
 }
 
