@@ -334,7 +334,7 @@ func TestLifecycleFailureIsShownAndStaysUntilTheUserActs(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.press("enter")
-	d.want("error: rename of shop failed", "everything was put back", "Rename project: shop to webshop", "Rename shop?")
+	d.want("error: rename of shop failed", "put back", "Rename project: shop to webshop", "Rename shop?")
 	if !d.exists(root, "config/projects/shop.yaml") || d.exists(root, "config/projects/webshop.yaml") || len(findingsOfProject(t, b, "shop")) != 3 {
 		t.Fatal("nothing changed")
 	}
@@ -343,7 +343,7 @@ func TestLifecycleFailureIsShownAndStaysUntilTheUserActs(t *testing.T) {
 	d.want("error: rename of shop failed")
 	d.press("esc")
 	d.want("cancelled", "PROJECT")
-	d.wantNot("everything was put back")
+	d.wantNot("put back")
 }
 
 func TestLifecycleRefusalByTheCheckAtApplyTimeStaysOnScreen(t *testing.T) {
