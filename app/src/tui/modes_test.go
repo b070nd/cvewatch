@@ -206,8 +206,8 @@ func TestBreadcrumbIsTruncatedFromTheLeft(t *testing.T) {
 func TestLeftAndRightSwitchScreensAtTheRoot(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
 	for _, c := range []struct{ key, want string }{
-		{"right", "[2 Findings"}, {"right", "[3 Projects]"}, {"l", "[4 Status]"}, {"right", "[1 Overview]"},
-		{"left", "[4 Status]"}, {"h", "[3 Projects]"}, {"tab", "[4 Status]"}, {"shift+tab", "[3 Projects]"}, {"1", "[1 Overview]"},
+		{"right", "[2 Findings"}, {"right", "[3 Projects]"}, {"l", "[4 Status]"}, {"right", "[5 Settings]"}, {"right", "[1 Overview]"},
+		{"left", "[5 Settings]"}, {"left", "[4 Status]"}, {"h", "[3 Projects]"}, {"tab", "[4 Status]"}, {"shift+tab", "[3 Projects]"}, {"1", "[1 Overview]"},
 	} {
 		d.press(c.key)
 		d.want(c.want)

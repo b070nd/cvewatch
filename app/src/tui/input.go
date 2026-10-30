@@ -101,3 +101,10 @@ func (in *input) view(w int, focus bool) string {
 	b.WriteString(string(rs[pos:]))
 	return trunc(b.String(), max(w, 1))
 }
+
+// viewHidden draws the cursor and as many dots as there are characters, for a
+// secret: the text is never put on the screen.
+func (in *input) viewHidden(w int, focus bool) string {
+	hidden := input{v: []rune(strings.Repeat("•", len(in.v))), pos: in.pos}
+	return hidden.view(w, focus)
+}

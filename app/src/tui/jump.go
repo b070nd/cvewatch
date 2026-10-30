@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/b070nd/cvewatch/app/src/confdoc"
 )
 
 // jumpBox is the popup that takes the user to an issue or a project by name.
@@ -41,9 +43,6 @@ func (j *jumpBox) refit(m *app) {
 
 // suggestions are the issues and projects that match text.
 func (m *app) suggestions(text string) []jumpItem {
-	if m.data == nil {
-		return nil
-	}
 	q := strings.ToLower(strings.TrimSpace(text))
 	var ranked [2][]jumpItem // starts with the text, contains it
 	add := func(it jumpItem, names ...string) {
@@ -66,15 +65,24 @@ func (m *app) suggestions(text string) []jumpItem {
 	// projects come before issues at equal rank: there are fewer of them
 	var issues []jumpItem
 	var issueNames [][]string
-	for _, p := range m.data.Projects {
-		add(jumpItem{label: oneLine(p.Name), detail: "project", tgt: projectTarget(p.Name, "")}, p.Name)
-	}
-	for _, is := range m.data.Issues {
-		issues = append(issues, jumpItem{label: oneLine(is.ID), detail: sevWord(is.Severity) + " " + oneLine(is.Untrusted.Title), tgt: issueTarget(is.ID, true)})
-		issueNames = append(issueNames, append([]string{is.ID}, is.Aliases...))
+	if m.data != nil {
+		for _, p := range m.data.Projects {
+			add(jumpItem{label: oneLine(p.Name), detail: "project", tgt: projectTarget(p.Name, "")}, p.Name)
+		}
+		for _, is := range m.data.Issues {
+			issues = append(issues, jumpItem{label: oneLine(is.ID), detail: sevWord(is.Severity) + " " + oneLine(is.Untrusted.Title), tgt: issueTarget(is.ID, true)})
+			issueNames = append(issueNames, append([]string{is.ID}, is.Aliases...))
+		}
 	}
 	for i, it := range issues {
 		add(it, issueNames[i]...)
+	}
+	// settings come last: there are many of them, and they match on a word of a label
+	if m.set.ready() && q != "" {
+		for _, r := range m.set.mdl.candidates() {
+			path := confdoc.FormatPath(r.segs)
+			add(jumpItem{label: path, detail: "setting " + r.f.Section + " > " + oneLine(r.f.Label), tgt: settingTarget(path)}, path, r.f.Label, r.f.Section+" "+r.f.Label)
+		}
 	}
 	return append(ranked[0], ranked[1]...)
 }
@@ -109,7 +117,7 @@ func (m *app) jumpComplete() tea.Cmd {
 }
 
 func (j *jumpBox) view(w, th int) []string {
-	lines := []string{stBold.Render("Go to an issue or a project"), "> " + j.in.view(w-2, true)}
+	lines := []string{stBold.Render("Go to an issue or a project, or a setting"), "> " + j.in.view(w-2, true)}
 	start, end := j.vp.window(jumpRows(th))
 	for i := start; i < end; i++ {
 		it := j.items[i]

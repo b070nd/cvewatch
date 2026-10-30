@@ -16,6 +16,7 @@ const (
 	tgIssue               // an issue on the findings screen
 	tgProject             // a project on the projects screen, or one problem of its file
 	tgFindings            // the findings screen with a filter
+	tgSetting             // a setting on the settings screen
 )
 
 // target is a place in the interface. goTo is the one way to get there from
@@ -30,6 +31,7 @@ type target struct {
 	project string // tgProject
 	field   string // tgProject: the problem on this field of the project's file
 	filter  string // tgFindings
+	setting string // tgSetting: its path
 }
 
 func issueTarget(id string, open bool) target {
@@ -39,12 +41,14 @@ func projectTarget(name, field string) target {
 	return target{kind: tgProject, project: name, field: field}
 }
 func findingsTarget(filter string) target { return target{kind: tgFindings, filter: filter} }
+func settingTarget(path string) target    { return target{kind: tgSetting, setting: path} }
 
 // The levels a target can land on, which is where going back returns.
 const (
 	lvList    = "list"
 	lvDetail  = "detail"
 	lvProblem = "problem"
+	lvSetting = "setting"
 )
 
 // returnPoint is where the user came from, offered by back on the level the
@@ -54,6 +58,7 @@ type returnPoint struct {
 	dest   screen
 	level  string
 	filter string // the filter the jump set; it goes again with the way back
+	depth  int    // tgSetting: the levels open on the landing, which is where back returns
 }
 
 // retAt is whether back on this level returns to where the jump came from.
@@ -115,7 +120,7 @@ func (m *app) here() (target, bool) {
 // goTo takes the user to t. The place they leave is kept, so that back on the
 // level they land on returns.
 func (m *app) goTo(t target) tea.Cmd {
-	if m.data == nil {
+	if m.data == nil && t.kind != tgSetting {
 		return nil
 	}
 	from, hadFrom := m.here()
@@ -170,12 +175,16 @@ func (m *app) goTo(t target) tea.Cmd {
 				break
 			}
 		}
+	case tgSetting:
+		m.scr = scrSettings
+		m.focusSetting(t.setting)
+		level = lvSetting
 	default:
 		return nil
 	}
 	m.ret = nil
 	if hadFrom && from != t {
-		m.ret = &returnPoint{to: from, dest: m.scr, level: level, filter: t.filter}
+		m.ret = &returnPoint{to: from, dest: m.scr, level: level, filter: t.filter, depth: len(m.set.nav)}
 	}
 	return cmd
 }

@@ -23,41 +23,48 @@ func popTo(f func(m *app)) func(m *app) tea.Cmd {
 
 // crumbs is the path of levels the user is in, from the screen down.
 func (m *app) crumbs() []crumb {
-	cs := []crumb{{label: screenNames[m.scr]}}
-	switch m.scr {
-	case scrFindings:
-		d := m.fnd.det
-		if d == nil {
-			break
+	cs := []crumb{{label: screens[m.scr].name}}
+	if f := screens[m.scr].crumbs; f != nil {
+		cs = f(m, cs)
+	}
+	return cs
+}
+
+func findingsCrumbs(m *app, cs []crumb) []crumb {
+	d := m.fnd.det
+	if d == nil {
+		return cs
+	}
+	cs[0].back = popTo(func(m *app) { m.fnd.det = nil })
+	cs = append(cs, crumb{label: oneLine(d.id)})
+	if !d.loading && d.err == nil && d.sel.at() >= 0 && d.sel.at() < len(d.is.Targets) {
+		t := d.is.Targets[d.sel.at()]
+		cs = append(cs, crumb{label: oneLine(t.Project) + ":" + oneLine(string(t.Env))})
+	}
+	switch {
+	case d.doc != nil:
+		closeDoc := popTo(func(m *app) { m.fnd.det.doc = nil })
+		for i := 1; i < len(cs); i++ {
+			cs[i].back = closeDoc
 		}
-		cs[0].back = popTo(func(m *app) { m.fnd.det = nil })
-		cs = append(cs, crumb{label: oneLine(d.id)})
-		if !d.loading && d.err == nil && d.sel.at() >= 0 && d.sel.at() < len(d.is.Targets) {
-			t := d.is.Targets[d.sel.at()]
-			cs = append(cs, crumb{label: oneLine(t.Project) + ":" + oneLine(string(t.Env))})
+		cs = append(cs, crumb{label: d.doc.kind})
+	case d.link > 0 && d.link <= len(d.links()):
+		cs = append(cs, crumb{label: fmt.Sprintf("References %d/%d", d.link, len(d.links()))})
+	}
+	return cs
+}
+
+func projectsCrumbs(m *app, cs []crumb) []crumb {
+	switch {
+	case m.frm != nil:
+		cs[0].back = (*app).leaveForm
+		name := "add project"
+		if !m.frm.creating {
+			name = "edit " + oneLine(m.frm.existing)
 		}
-		switch {
-		case d.doc != nil:
-			closeDoc := popTo(func(m *app) { m.fnd.det.doc = nil })
-			for i := 1; i < len(cs); i++ {
-				cs[i].back = closeDoc
-			}
-			cs = append(cs, crumb{label: d.doc.kind})
-		case d.link > 0 && d.link <= len(d.links()):
-			cs = append(cs, crumb{label: fmt.Sprintf("References %d/%d", d.link, len(d.links()))})
-		}
-	case scrProjects:
-		switch {
-		case m.frm != nil:
-			cs[0].back = (*app).leaveForm
-			name := "add project"
-			if !m.frm.creating {
-				name = "edit " + oneLine(m.frm.existing)
-			}
-			cs = append(cs, crumb{label: name}, crumb{label: oneLine(m.frm.step.Title)})
-		case m.prj.deep || m.prj.fix != nil || m.prj.life != nil || m.prj.ed != nil:
-			cs = m.projectCrumbs(cs)
-		}
+		cs = append(cs, crumb{label: name}, crumb{label: oneLine(m.frm.step.Title)})
+	case m.prj.deep || m.prj.fix != nil || m.prj.life != nil || m.prj.ed != nil:
+		cs = m.projectCrumbs(cs)
 	}
 	return cs
 }

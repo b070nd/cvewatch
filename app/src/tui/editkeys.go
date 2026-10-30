@@ -65,7 +65,7 @@ func init() {
 		},
 	}
 	mo.picker = &mode{name: "picker", title: "Keys in a list to choose from",
-		move:      viewportOf(func(m *app) *viewport { return &m.prj.ed.pick.vp }),
+		move:      viewportOf(func(m *app) *viewport { return &m.pickerOf().vp }),
 		moveShort: "move",
 		click:     func(m *app, x, y int) tea.Cmd { return m.clickPicker(y) },
 		binds: []binding{

@@ -70,6 +70,9 @@ func (pk *picker) view(w, h int) []string {
 
 // pickerOf is the open picker, nil when there is none.
 func (m *app) pickerOf() *picker {
+	if m.scr == scrSettings {
+		return m.set.pick
+	}
 	if m.prj.ed == nil {
 		return nil
 	}
@@ -127,6 +130,10 @@ func (m *app) clickPicker(line int) tea.Cmd {
 }
 
 func (m *app) pickBack() tea.Cmd {
+	if m.scr == scrSettings {
+		m.set.pick = nil
+		return nil
+	}
 	m.prj.ed.pick = nil
 	return nil
 }

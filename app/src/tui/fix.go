@@ -294,16 +294,22 @@ func (m *app) openEditor() tea.Cmd {
 		m.fail("project " + p.Name + " has no file under config/projects")
 		return nil
 	}
+	return m.launchEditor(p.File, m.editorLine(p), "editing "+oneLine(p.Name)+"...", reList|reDetail)
+}
+
+// launchEditor runs $EDITOR on file, at line where the editor takes one; the
+// TUI reads again what after names when it returns.
+func (m *app) launchEditor(file string, line int, label string, after reloadSet) tea.Cmd {
 	editor := os.Getenv("EDITOR")
 	if len(strings.Fields(editor)) == 0 {
-		m.fail("$EDITOR is not set; the file is " + p.File)
+		m.fail("$EDITOR is not set; the file is " + file)
 		return nil
 	}
-	id, ok := m.begin("editing "+oneLine(p.Name)+"...", "editor", reList|reDetail, nil)
+	id, ok := m.begin(label, "editor", after, nil)
 	if !ok {
 		return nil
 	}
-	argv := editorArgv(editor, p.File, m.editorLine(p))
+	argv := editorArgv(editor, file, line)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	return tea.ExecProcess(cmd, func(err error) tea.Msg { return opMsg{id: id, msg: editedMsg{err: err}} })
 }

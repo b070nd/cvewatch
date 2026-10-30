@@ -340,3 +340,32 @@ func TestOpenSettingsEnforcesAccessEvenWhenConfigIsBroken(t *testing.T) {
 		}
 	}
 }
+
+func TestSettingsSessionSaysWhyItCannotWrite(t *testing.T) {
+	root := t.TempDir()
+	cfg := filepath.Join(root, "config", "config.yaml")
+	os.MkdirAll(filepath.Dir(cfg), 0o755)
+	body := "access:\n  root: {projects: ['*'], write: true}\n  carol: {projects: ['*']}\n"
+	os.WriteFile(cfg, []byte(body), 0o644)
+	for actor, writable := range map[string]bool{"root": true, "carol": false} {
+		ss, err := OpenSettings(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ss.Actor = actor
+		if err := ss.Writable(); (err == nil) != writable || err != nil && !errors.Is(err, ErrDenied) {
+			t.Errorf("%s: %v", actor, err)
+		}
+		if ss.RulesUnreadable() {
+			t.Errorf("%s: the rules are readable", actor)
+		}
+	}
+	os.WriteFile(cfg, []byte("access: [\n"), 0o644)
+	ss, err := OpenSettings(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ss.RulesUnreadable() || ss.Writable() == nil {
+		t.Fatal("unreadable rules refuse writes and say so")
+	}
+}

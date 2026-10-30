@@ -400,11 +400,27 @@ func (f *form) reviewRows(w, room int) []string {
 }
 
 func previewRows(p *ops.ProjectPreview, w int) []string {
+	body := diffRows(p.Diff, w)
+	for _, is := range p.Issues {
+		lvl := stMuted.Render(oneLine(is.Level))
+		if is.Level == "error" {
+			lvl = stErr.Render("error")
+		}
+		body = append(body, lvl+": "+trunc(oneLine(is.Field)+": "+oneLine(is.Message), w-8))
+	}
+	if p.Blocked() {
+		body = append(body, stErr.Render("this cannot be saved until the errors are fixed"))
+	}
+	return body
+}
+
+// diffRows draws a unified diff: additions, removals and hunk marks apart.
+func diffRows(diff string, w int) []string {
 	var body []string
-	if strings.TrimSpace(p.Diff) == "" {
+	if strings.TrimSpace(diff) == "" {
 		body = append(body, stMuted.Render("(no changes to the file)"))
 	}
-	for _, l := range strings.Split(p.Diff, "\n") {
+	for _, l := range strings.Split(diff, "\n") {
 		l = trunc(clean(l), w)
 		switch {
 		case strings.HasPrefix(l, "+"):
@@ -415,16 +431,6 @@ func previewRows(p *ops.ProjectPreview, w int) []string {
 			l = stMuted.Render(l)
 		}
 		body = append(body, l)
-	}
-	for _, is := range p.Issues {
-		lvl := stMuted.Render(oneLine(is.Level))
-		if is.Level == "error" {
-			lvl = stErr.Render("error")
-		}
-		body = append(body, lvl+": "+trunc(oneLine(is.Field)+": "+oneLine(is.Message), w-8))
-	}
-	if p.Blocked() {
-		body = append(body, stErr.Render("this cannot be saved until the errors are fixed"))
 	}
 	return body
 }

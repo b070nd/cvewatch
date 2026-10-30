@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/b070nd/cvewatch/app/src/confdoc"
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/ops"
 	"github.com/b070nd/cvewatch/app/src/projectfile"
@@ -24,11 +25,14 @@ const (
 	pkRename                      // the new name of a project
 	pkDuplicate                   // the name of the copy of a project
 	pkDelete                      // the name of the project to delete, typed to confirm
+	pkSetting                     // the value of a setting, or what a new item of a list needs
 )
 
 type field struct {
-	label string
-	in    input
+	label  string
+	in     input
+	secret bool   // what is typed is hidden
+	hint   string // what this field wants, shown instead of the prompt's hint while it has the focus
 }
 
 // prompt is a small inline form shown at the bottom of the screen: one or a
@@ -54,6 +58,9 @@ type prompt struct {
 	project string                                                                // pkEdit, pkRename, pkDuplicate, pkDelete: the project
 	known   []projectfile.Issue                                                   // pkEdit: the problems the file had before
 	build   func(vals []string) (label string, edits []projectfile.Op, err error) // pkEdit
+
+	crumb  string                                                              // pkSetting: the setting, for the breadcrumb
+	sbuild func(vals []string) (label string, edits []confdoc.Edit, err error) // pkSetting
 }
 
 func (p *prompt) view(w, h int) []string {
@@ -69,17 +76,40 @@ func (p *prompt) view(w, h int) []string {
 	for _, f := range p.fields {
 		lw = max(lw, width(f.label))
 	}
+	var rows []string
 	for i, f := range p.fields {
 		mark := "  "
 		if i == p.idx {
 			mark = "> "
 		}
-		lines = append(lines, mark+pad(f.label, lw)+": "+p.fields[i].in.view(w-lw-6, i == p.idx))
+		show := p.fields[i].in.view
+		if f.secret {
+			show = p.fields[i].in.viewHidden
+		}
+		rows = append(rows, mark+pad(f.label, lw)+": "+show(w-lw-6, i == p.idx))
 	}
-	if p.hint != "" {
-		lines = append(lines, stMuted.Render(trunc("  "+p.hint, w)))
+	hint := p.hint
+	if h := p.fields[p.idx].hint; h != "" {
+		hint = h
 	}
-	return append(lines, p.status(w)...)
+	var tail []string
+	if hint != "" {
+		tail = append(tail, stMuted.Render(trunc("  "+hint, w)))
+	}
+	tail = append(tail, p.status(w)...)
+	// a short terminal shows the fields around the focused one, and the last of
+	// the lines under them: the problem when there is one
+	if room := max(h-5, 2) - 1; len(rows)+len(tail) > room {
+		if room-len(tail) < 1 {
+			tail = tail[max(len(tail)-1, 0):]
+		}
+		n := max(room-len(tail), 1)
+		start := min(max(p.idx-n/2, 0), max(len(rows)-n, 0))
+		rows = rows[start:min(start+n, len(rows))]
+	}
+	lines = append(lines, rows...)
+	lines = append(lines, tail...)
+	return lines
 }
 
 // status is the line about the last submit: still running, or refused.
@@ -252,6 +282,17 @@ func (m *app) promptSubmit() tea.Cmd {
 			return nil
 		}
 		return m.previewEdit(p.project, p.known, label, edits, "", p)
+	case pkSetting:
+		vals := make([]string, len(p.fields))
+		for i := range vals {
+			vals[i] = val(i)
+		}
+		label, edits, err := p.sbuild(vals)
+		if err != nil {
+			p.problem = err.Error()
+			return nil
+		}
+		return m.previewSettings(label, p.crumb, edits, p)
 	case pkNew:
 		return m.submitNew(p, val(0), val(1))
 	case pkRename, pkDuplicate:

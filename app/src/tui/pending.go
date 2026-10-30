@@ -10,8 +10,9 @@ import (
 type reloadSet uint8
 
 const (
-	reList   reloadSet = 1 << iota // the snapshot: issues, status, project rows and their problems
-	reDetail                       // the open issue
+	reList     reloadSet = 1 << iota // the snapshot: issues, status, project rows and their problems
+	reDetail                         // the open issue
+	reSettings                       // the configuration documents
 )
 
 type pendingOp struct {
@@ -156,6 +157,10 @@ func (m *app) result(msg tea.Msg) outcome {
 		return m.fixSaved(msg)
 	case editCheckedMsg:
 		return m.editChecked(msg)
+	case setCheckedMsg:
+		return m.setChecked(msg)
+	case setSavedMsg:
+		return m.setSaved(msg)
 	case lifePreviewMsg:
 		return m.lifePreviewed(msg)
 	case lifeAppliedMsg:
@@ -171,6 +176,12 @@ func (m *app) result(msg tea.Msg) outcome {
 // refresh reads again what set names.
 func (m *app) refresh(set reloadSet) tea.Cmd {
 	var cmds []tea.Cmd
+	if set&reList != 0 && m.scr == scrSettings {
+		set |= reSettings
+	}
+	if set&reSettings != 0 {
+		cmds = append(cmds, m.loadSettings())
+	}
 	if set&reList != 0 {
 		m.loading = true
 		cmds = append(cmds, loadCmd(m.b))

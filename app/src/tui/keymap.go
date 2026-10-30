@@ -16,6 +16,7 @@ var mo struct {
 	prompt, promptBusy, folder, confirm, help, doc                             *mode
 	jump, notice, formPick                                                     *mode
 	fields, fieldSub, picker, life                                             *mode
+	settings, setFields, setFilter, setReview                                  *mode
 }
 
 var statusKeys = map[string]model.Status{
@@ -51,19 +52,30 @@ func bindBack(what string, f func(m *app) tea.Cmd) binding {
 
 // bindTabs switches the screen from a level inside one.
 func bindTabs() binding {
-	return binding{keys: ks("tab", "shift+tab", "1", "2", "3", "4"), disp: "tab, 1-4",
-		help: "switch screen: tab and shift+tab cycle, 1-4 jump", prio: 4, nav: true, do: func(m *app, k tea.KeyMsg) tea.Cmd {
+	keys := ks("tab", "shift+tab")
+	for _, sc := range screens {
+		keys = append(keys, sc.key)
+	}
+	return binding{keys: keys, disp: "tab, " + screenKeys(),
+		help: "switch screen: tab and shift+tab cycle, " + screenKeys() + " jump", prio: 4, nav: true, do: func(m *app, k tea.KeyMsg) tea.Cmd {
 			switch s := k.String(); s {
 			case "tab":
 				m.stepScreen(1)
 			case "shift+tab":
 				m.stepScreen(-1)
 			default:
-				m.scr = screen(s[0] - '1')
+				for i, sc := range screens {
+					if sc.key == s {
+						m.scr = screen(i)
+					}
+				}
 			}
 			return nil
 		}}
 }
+
+// screenKeys is the range of keys that jump to a screen, such as 1-5.
+func screenKeys() string { return screens[0].key + "-" + screens[numScreens-1].key }
 
 // bindScreens is left and right on the first level of a screen.
 func bindScreens() binding {
@@ -434,7 +446,8 @@ func formMode(f *form) *mode {
 func allModes() []*mode {
 	return []*mode{mo.noData, mo.overview, mo.status, mo.findings, mo.filter, mo.detail, mo.projects, mo.project, mo.fix,
 		mo.formBusy, mo.formText, mo.formChoice, mo.formMulti, mo.formConfirm, mo.formReview, mo.formPick, mo.prompt, mo.promptBusy, mo.folder, mo.confirm,
-		mo.jump, mo.notice, mo.help, mo.doc, mo.fields, mo.fieldSub, mo.picker, mo.life}
+		mo.jump, mo.notice, mo.help, mo.doc, mo.fields, mo.fieldSub, mo.picker, mo.life,
+		mo.settings, mo.setFields, mo.setFilter, mo.setReview}
 }
 
 func wheelStep(up bool) int {

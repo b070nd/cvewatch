@@ -215,8 +215,10 @@ func TestScreenSwitching(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
 	d.press("tab")
 	d.want("[2 Findings")
-	d.press("tab", "tab", "tab")
-	d.want("[1 Overview]")
+	d.press("tab", "tab", "tab", "tab")
+	d.want("[1 Overview]") // five screens now: Settings is the last
+	d.press("shift+tab")
+	d.want("[5 Settings]")
 	d.press("shift+tab")
 	d.want("[4 Status]")
 }

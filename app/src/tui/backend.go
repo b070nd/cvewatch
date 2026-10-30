@@ -14,6 +14,9 @@ import (
 type Backend interface {
 	Read(fn func(*ops.Session) error) error
 	Write(fn func(*ops.Session) error) error
+	// Settings opens the configuration documents without loading the
+	// configuration, so the Settings screen works while config.yaml is broken.
+	Settings(fn func(*ops.SettingsSession) error) error
 }
 
 type backend struct {
@@ -53,4 +56,13 @@ func (b *backend) Write(fn func(*ops.Session) error) error {
 	defer s.Close()
 	s.Actor = actor()
 	return fn(s)
+}
+
+func (b *backend) Settings(fn func(*ops.SettingsSession) error) error {
+	ss, err := ops.OpenSettings(b.root)
+	if err != nil {
+		return err
+	}
+	ss.Actor = actor()
+	return fn(ss)
 }

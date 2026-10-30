@@ -35,7 +35,7 @@ The built-in catalog lists open and closed source technologies: runtimes, framew
 
 ## Terminal UI
 
-`cvewatch tui` opens the full-screen interface. It has four screens, shown as tabs under the title: **1 Overview**, **2 Findings**, **3 Projects** and **4 Status**. Findings shows the number of open issues.
+`cvewatch tui` opens the full-screen interface. It has five screens, shown as tabs under the title: **1 Overview**, **2 Findings**, **3 Projects**, **4 Status** and **5 Settings**. Findings shows the number of open issues, and Settings shows `(!)` when a settings file has an error.
 
 The header also shows what is going on. `refreshing...` means the data is being read. While a change is written, the header shows what runs, such as `saving...`, with `+1` when more run. Otherwise it shows the health and the time of the last read. The data reloads by itself every 30 seconds. Press `r` to reload now.
 
@@ -43,7 +43,7 @@ The header also shows what is going on. `refreshing...` means the data is being 
 
 - **Levels.** Each screen has a root. Enter opens a level inside it: an issue, a project, a fix preview or a form. The breadcrumb line under the tabs shows the path, such as `Findings › CVE-2026-1234 › shop:prod`.
 - **Back.** Left, Esc or Backspace go back one level. `q` does the same inside a level or a popup.
-- **Screens.** On a root, Left and Right switch to the previous or next screen. Screens wrap around. Tab and Shift+Tab cycle through them, and 1 to 4 go to one. Tab and 1 to 4 also work inside an issue or a project.
+- **Screens.** On a root, Left and Right switch to the previous or next screen. Screens wrap around. Tab and Shift+Tab cycle through them, and 1 to 5 go to one. Tab and 1 to 5 also work inside an issue or a project.
 - **Quit.** `q` quits only from a root. Ctrl+C quits from anywhere.
 - **Help.** `?` shows the keys for where you are, and the rules that apply everywhere. In a text box `?` is a letter, so use F1 there.
 - **Jump box.** `:` or Ctrl+G opens it from any screen or level, except forms, the fix preview and text boxes. Type part of an issue id (such as `CVE-2026-1234`) or a project name. Matches appear as you type, and names that start with your text come first. Up and Down pick a match, Tab fills in the text with it, and Enter goes there. If nothing matches but the text looks like an issue id, Enter tries it as one. That also finds an issue that is already closed. Esc cancels.
@@ -73,7 +73,7 @@ The mouse is optional. Every action works from the keys.
 
 The footer at the bottom shows the keys for where you are. Keys in brackets also work, but the footer and the help leave them out.
 
-Everywhere except in forms, the fix preview and text boxes: `:` jump, `r` reload, `?` help, Tab and 1 to 4 switch screens.
+Everywhere except in forms, the fix preview and text boxes: `:` jump, `r` reload, `?` help, Tab and 1 to 5 switch screens.
 
 **Overview and Status**
 
@@ -135,6 +135,23 @@ Everywhere except in forms, the fix preview and text boxes: `:` jump, `r` reload
 | `E` | open the file in `$EDITOR` at the problem's line (see below) |
 | `a`, `d`, `i` | add a project, add from a folder, show this project's issues |
 | Left, Esc, Backspace, `q` | back to the list of projects, or to where a jump came from |
+
+**Settings** (screen 5)
+
+The section list shows how many values each section of `config.yaml`, `techs.yaml` and `sources/*.yaml` sets, and the problems of the files with their line numbers. Enter opens a section, then a field. Changes are previewed as a change to the file and saved on a yes; comments in the files are kept. The daemon picks them up from its next cycle. It works even when a settings file is broken, and the other screens then show the load error as usual.
+
+| Key | What it does |
+|---|---|
+| Up, Down, PgUp, PgDn, Home, End | move in the list; the mouse wheel and a click work too, a second click opens |
+| Enter, Right | open a section, a list or an item; change a value (a number, text, a duration, a name of an environment variable; a choice opens a list) |
+| Space | turn an on/off setting over |
+| `a`, `x` | add an item to a list or map (a feed, a technology, a policy rule, an access rule), or remove the selected one |
+| `u` | restore the default: the value is removed from the file |
+| `/` | find a setting by label, path or value. On the section list it searches every section |
+| `E` | open the file in `$EDITOR` at the line of the selected problem, then read it again |
+| Left, Esc, Backspace, `q` | back one level |
+
+In the preview, Enter or `y` saves and Esc cancels. Secrets (feed URLs and headers) are never shown: a field says `(set)` or `(not set)`, the prompt does not show or prefill the current value, and the preview says `(set, changed)`. Only an actor that may see all projects can open the screen, and only one with write access can change it; the access rules cannot be changed so that the actor loses write access.
 
 **Fix preview**
 

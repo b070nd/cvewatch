@@ -148,6 +148,13 @@ func (ss *SettingsSession) mayWrite() error {
 	return nil
 }
 
+// Writable says whether the actor may change the settings; the error says why not.
+func (ss *SettingsSession) Writable() error { return ss.mayWrite() }
+
+// RulesUnreadable says the access rules in config.yaml cannot be read, so the
+// documents can only be repaired in an editor.
+func (ss *SettingsSession) RulesUnreadable() bool { return ss.accessErr != nil }
+
 // View reads the documents and validates them as they are on disk.
 func (ss *SettingsSession) View() (SettingsView, error) {
 	var v SettingsView

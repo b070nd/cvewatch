@@ -35,13 +35,14 @@ var (
 // fake is a Backend over an in-memory store, so tests need no files for the
 // state. Like the real one it opens a fresh session per call.
 type fake struct {
-	mu     sync.Mutex
-	cfg    *config.Bundle
-	st     store.Storage
-	reads  int
-	writes int
-	active atomic.Int32 // backend calls started and not yet finished
-	disk   string       // when set, every session loads the configuration from this folder, like the real backend
+	mu       sync.Mutex
+	cfg      *config.Bundle
+	st       store.Storage
+	reads    int
+	writes   int
+	settings int          // settings sessions opened
+	active   atomic.Int32 // backend calls started and not yet finished
+	disk     string       // when set, every session loads the configuration from this folder, like the real backend
 }
 
 func (f *fake) busy() bool { return f.active.Load() > 0 }
@@ -80,6 +81,26 @@ func (f *fake) Read(fn func(*ops.Session) error) error {
 	}
 	defer s.Close()
 	return fn(s)
+}
+
+// Settings opens the documents of the configuration folder, as the real
+// backend does: without loading the configuration, so a broken one opens too.
+func (f *fake) Settings(fn func(*ops.SettingsSession) error) error {
+	f.active.Add(1)
+	defer f.active.Add(-1)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.settings++
+	root := f.disk
+	if root == "" {
+		root = f.cfg.Root
+	}
+	ss, err := ops.OpenSettings(root)
+	if err != nil {
+		return err
+	}
+	ss.Actor, ss.Now = actor(), func() time.Time { return tNow }
+	return fn(ss)
 }
 
 func (f *fake) Write(fn func(*ops.Session) error) error {

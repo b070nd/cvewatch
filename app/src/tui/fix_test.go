@@ -132,6 +132,9 @@ type failing struct{}
 
 func (failing) Read(func(*ops.Session) error) error  { return errors.New("no config here") }
 func (failing) Write(func(*ops.Session) error) error { return errors.New("no config here") }
+func (failing) Settings(func(*ops.SettingsSession) error) error {
+	return errors.New("no config here")
+}
 
 func TestLoadFailureStillOffersRetryAndQuit(t *testing.T) {
 	d := start(t, failing{}, Options{})
