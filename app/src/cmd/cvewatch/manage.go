@@ -192,33 +192,79 @@ func (l *listFlag) Set(v string) error { *l = append(*l, v); return nil }
 // -save it only shows the diff.
 func projectCmd(s *ops.Session, args []string) error {
 	if len(args) == 0 || args[0] == "list" {
-		names, err := s.ProjectNames()
-		if err != nil {
-			return err
-		}
-		for _, p := range s.Cfg.Projects {
-			if !contains(names, p.Name) {
-				continue
-			}
-			var techs []string
-			for _, t := range p.Techs {
-				techs = append(techs, strings.TrimSpace(t.Name+" "+t.Version))
-			}
-			fmt.Printf("%-18s %d lockfiles  %s\n", p.Name, len(p.Lockfiles), strings.Join(techs, ", "))
-		}
-		return nil
+		return listProjects(s)
 	}
-	fs := flag.NewFlagSet("project", flag.ContinueOnError)
-	var set, remove, lock, unlock listFlag
-	fs.Var(&set, "set", "declare tech=version (version may be empty), repeatable")
-	fs.Var(&remove, "remove", "stop declaring a tech, repeatable")
-	fs.Var(&lock, "lock", "add a lockfile as type:path, repeatable")
-	fs.Var(&unlock, "unlock", "remove a lockfile as type:path, repeatable")
-	envs := fs.String("envs", "", "comma-separated environments (empty argument value \"all\" means every one)")
-	save := fs.Bool("save", false, "write the change; without it only show the diff")
-	name, err := idAndFlags(fs, args)
+	e, err := parseProjectEdit(args)
 	if err != nil {
 		return err
+	}
+	return showProject(s, ops.ProjectChange{Project: e.name, Ops: e.ops, Save: e.save})
+}
+
+func listProjects(s *ops.Session) error {
+	names, err := s.ProjectNames()
+	if err != nil {
+		return err
+	}
+	for _, p := range s.Cfg.Projects {
+		if !contains(names, p.Name) {
+			continue
+		}
+		var techs []string
+		for _, t := range p.Techs {
+			techs = append(techs, strings.TrimSpace(t.Name+" "+t.Version))
+		}
+		fmt.Printf("%-18s %d lockfiles  %s\n", p.Name, len(p.Lockfiles), strings.Join(techs, ", "))
+	}
+	off, err := s.DisabledProjects()
+	if err != nil {
+		return err
+	}
+	for _, n := range off {
+		fmt.Printf("%-18s disabled\n", n)
+	}
+	return nil
+}
+
+// optFlag is a string flag that knows whether it was given, so -since "" can clear.
+type optFlag struct {
+	val string
+	set bool
+}
+
+func (o *optFlag) String() string     { return o.val }
+func (o *optFlag) Set(v string) error { o.val, o.set = v, true; return nil }
+
+type projectEdit struct {
+	name string
+	ops  []projectfile.Op
+	save bool
+}
+
+// parseProjectEdit turns "NAME -flag ..." into ops. The flags are the ones
+// projectfile.OpTable lists; its parity test runs every row through here.
+func parseProjectEdit(args []string) (projectEdit, error) {
+	fs := flag.NewFlagSet("project", flag.ContinueOnError)
+	var set, remove, lock, unlock, lockDev, lockNoDev, envSet, envUnset, image listFlag
+	var since optFlag
+	fs.Var(&set, "set", "declare tech=version (version may be empty), repeatable")
+	fs.Var(&remove, "remove", "stop declaring a tech, repeatable")
+	fs.Var(&lock, "lock", "add a lockfile as type:path[:env][:dev], repeatable")
+	fs.Var(&unlock, "unlock", "remove a lockfile as type:path[:env], repeatable")
+	fs.Var(&lockDev, "lock-dev", "count a lockfile's dev-only packages everywhere: type:path[:env], repeatable")
+	fs.Var(&lockNoDev, "lock-nodev", "stop counting a lockfile's dev-only packages outside dev and int: type:path[:env], repeatable")
+	fs.Var(&envSet, "env-set", "set the version deployed in one environment as env:tech=version, repeatable")
+	fs.Var(&envUnset, "env-unset", "drop a per-environment version as env:tech, repeatable")
+	fs.Var(&image, "image", "set the image of an environment as env=tag (empty tag clears), repeatable")
+	fs.Var(&since, "since", "date advisories count from, YYYY-MM-DD (empty clears)")
+	envs := fs.String("envs", "", "comma-separated environments (\"all\" means every one)")
+	save := fs.Bool("save", false, "write the change; without it only show the diff")
+	fs.Usage = func() {
+		fmt.Fprintf(fs.Output(), "usage: cvewatch project NAME [flags]\n\nEdit flags (diff only without -save):\n%s\nOther: -save writes the change.\n", projectfile.FlagHelp("  "))
+	}
+	name, err := idAndFlags(fs, args)
+	if err != nil {
+		return projectEdit{}, err
 	}
 	var changes []projectfile.Op
 	for _, v := range set {
@@ -228,19 +274,24 @@ func projectCmd(s *ops.Session, args []string) error {
 	for _, t := range remove {
 		changes = append(changes, projectfile.Op{Kind: "remove_tech", Tech: t})
 	}
-	for _, v := range lock {
-		l, err := parseLock(v)
-		if err != nil {
-			return err
+	lockOps := func(list listFlag, kind string, dev *bool) error {
+		for _, v := range list {
+			l, err := parseLock(v)
+			if err != nil {
+				return err
+			}
+			if dev != nil {
+				l.Dev = *dev
+			}
+			changes = append(changes, projectfile.Op{Kind: kind, Lockfile: l})
 		}
-		changes = append(changes, projectfile.Op{Kind: "add_lockfile", Lockfile: l})
+		return nil
 	}
-	for _, v := range unlock {
-		l, err := parseLock(v)
+	yes, no := true, false
+	for _, err := range []error{lockOps(lock, "add_lockfile", nil), lockOps(unlock, "remove_lockfile", nil)} {
 		if err != nil {
-			return err
+			return projectEdit{}, err
 		}
-		changes = append(changes, projectfile.Op{Kind: "remove_lockfile", Lockfile: l})
 	}
 	if *envs != "" {
 		op := projectfile.Op{Kind: "set_envs"}
@@ -251,10 +302,40 @@ func projectCmd(s *ops.Session, args []string) error {
 		}
 		changes = append(changes, op)
 	}
-	if len(changes) == 0 {
-		return errors.New("nothing to change: use -set, -remove, -lock, -unlock or -envs")
+	for _, err := range []error{lockOps(lockDev, "set_lockfile_dev", &yes), lockOps(lockNoDev, "set_lockfile_dev", &no)} {
+		if err != nil {
+			return projectEdit{}, err
+		}
 	}
-	return showProject(s, ops.ProjectChange{Project: name, Ops: changes, Save: *save})
+	if since.set {
+		changes = append(changes, projectfile.Op{Kind: "set_since", Since: since.val})
+	}
+	for _, v := range envSet {
+		env, rest, ok := strings.Cut(v, ":")
+		tech, ver, ok2 := strings.Cut(rest, "=")
+		if !ok || !ok2 || env == "" || tech == "" {
+			return projectEdit{}, fmt.Errorf("%q must look like env:tech=version, for example prod:php=8.3", v)
+		}
+		changes = append(changes, projectfile.Op{Kind: "set_env_tech", Env: model.Env(env), Tech: tech, Version: ver})
+	}
+	for _, v := range envUnset {
+		env, tech, ok := strings.Cut(v, ":")
+		if !ok || env == "" || tech == "" {
+			return projectEdit{}, fmt.Errorf("%q must look like env:tech, for example prod:php", v)
+		}
+		changes = append(changes, projectfile.Op{Kind: "remove_env_tech", Env: model.Env(env), Tech: tech})
+	}
+	for _, v := range image {
+		env, img, ok := strings.Cut(v, "=")
+		if !ok || env == "" {
+			return projectEdit{}, fmt.Errorf("%q must look like env=tag, for example prod=shop:1.4.2 (env= clears)", v)
+		}
+		changes = append(changes, projectfile.Op{Kind: "set_image", Env: model.Env(env), Image: img})
+	}
+	if len(changes) == 0 {
+		return projectEdit{}, errors.New("nothing to change: use -set, -remove, -env-set, -env-unset, -image, -lock, -unlock, -lock-dev, -lock-nodev, -since or -envs (cvewatch project NAME -h lists them)")
+	}
+	return projectEdit{name: name, ops: changes, save: *save}, nil
 }
 
 func showProject(s *ops.Session, c ops.ProjectChange) error {
@@ -276,12 +357,24 @@ func showProject(s *ops.Session, c ops.ProjectChange) error {
 	return nil
 }
 
+// parseLock reads type:path, with an optional :env and :dev after the path.
+// Only a trailing word that is exactly dev or an environment name counts, so a
+// path with colons (C:\repo\composer.lock) stays whole.
 func parseLock(v string) (model.Lockfile, error) {
-	typ, path, ok := strings.Cut(v, ":")
-	if !ok || typ == "" || path == "" {
-		return model.Lockfile{}, fmt.Errorf("%q must look like type:path, for example composer:../shop/composer.lock", v)
+	typ, rest, ok := strings.Cut(v, ":")
+	if !ok || typ == "" || rest == "" {
+		return model.Lockfile{}, fmt.Errorf("%q must look like type:path[:env][:dev], for example composer:../shop/composer.lock:prod", v)
 	}
-	return model.Lockfile{Type: typ, Path: path}, nil
+	l := model.Lockfile{Type: typ}
+	parts := strings.Split(rest, ":")
+	if n := len(parts); n > 1 && parts[n-1] == "dev" {
+		l.Dev, parts = true, parts[:n-1]
+	}
+	if n := len(parts); n > 1 && model.Env(parts[n-1]).Valid() {
+		l.Env, parts = model.Env(parts[n-1]), parts[:n-1]
+	}
+	l.Path = strings.Join(parts, ":")
+	return l, nil
 }
 
 func contains(list []string, s string) bool {

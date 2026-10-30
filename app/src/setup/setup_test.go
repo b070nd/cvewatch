@@ -1,8 +1,11 @@
 package setup
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -677,5 +680,38 @@ func TestRevisitWhenEditingReturnsToTheReviewNotTheMenu(t *testing.T) {
 	answer(t, f, "envs", "dev")
 	if f.Current().ID != "review" {
 		t.Fatalf("current = %q", f.Current().ID)
+	}
+}
+
+func TestOpKindsCoverTheOpTable(t *testing.T) {
+	for _, k := range projectfile.Kinds() {
+		in, pending := slices.Contains(OpKinds, k), slices.Contains(NotYet, k)
+		switch {
+		case in && pending:
+			t.Errorf("%s is in both OpKinds and NotYet: it can only be one", k)
+		case !in && !pending:
+			t.Errorf("%s is a project op kind that no front end declares: add it to OpKinds when the flow or the TUI emits it, else to NotYet", k)
+		}
+	}
+	for _, k := range append(slices.Clone(OpKinds), NotYet...) {
+		if _, ok := projectfile.SpecOf(k); !ok {
+			t.Errorf("%s is declared but is not an op kind", k)
+		}
+	}
+}
+
+func TestFlowEmitsOnlyDeclaredKinds(t *testing.T) {
+	src, err := os.ReadFile("setup.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := regexp.MustCompile(`projectfile\.Op\{Kind: "(\w+)"`).FindAllStringSubmatch(string(src), -1)
+	if len(found) == 0 {
+		t.Fatal("found no op kinds in setup.go: has Flow.Ops changed shape?")
+	}
+	for _, m := range found {
+		if !slices.Contains(OpKinds, m[1]) {
+			t.Errorf("Flow.Ops emits %s, which OpKinds does not declare", m[1])
+		}
 	}
 }
