@@ -89,8 +89,14 @@ func TestSetupFormBackAndCancel(t *testing.T) {
 	d.press("esc")
 	d.want("Project name", "> blog") // back, the answer is kept
 	d.press("esc")
+	d.want("Discard what you entered?", "y/enter yes", "n/esc no")
+	d.press("n") // keep editing
+	d.want("Project name", "> blog")
+	d.press("esc", "esc") // esc answers the question: no
+	d.want("Project name")
+	d.press("esc", "y")
 	d.want("ok: cancelled, nothing was saved", "PROJECT")
-	d.press("n", "esc")
+	d.press("n", "esc") // nothing entered: no question
 	d.want("cancelled")
 	if b.writes != 0 {
 		t.Fatal("cancelling wrote something")
@@ -183,8 +189,7 @@ func TestDiscoveryOnAFolderProposesAndSavesRelativePaths(t *testing.T) {
 	d.press("3", "d")
 	d.want("Scan a folder for a new project", "Folder")
 	d.press("enter") // nothing typed
-	d.want("error: no folder given")
-	d.press("d")
+	d.want("error: no folder given", "problem: no folder given", "Scan a folder for a new project")
 	d.typ(site)
 	d.press("enter")
 	d.want("New project", "Project name", "> site", "ok: scanned")

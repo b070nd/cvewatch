@@ -16,6 +16,7 @@ const (
 	pkStatus promptKind = iota // a note for a status change
 	pkAssign                   // owner, due date, ticket
 	pkPath                     // a folder to scan
+	pkBulk                     // a note for a status change of the selected issues
 )
 
 type field struct {
@@ -25,7 +26,8 @@ type field struct {
 
 // prompt is a small inline form shown at the bottom of the screen: one or a
 // few single-line fields. Whatever is typed goes to ops unchecked; ops
-// decides what is valid and says so in the status line.
+// decides what is valid. The prompt stays open while the write runs, and
+// comes back with its values and the reason when ops refuses.
 type prompt struct {
 	kind   promptKind
 	title  string
@@ -34,8 +36,12 @@ type prompt struct {
 	idx    int
 	box    *folderBox // pkPath
 
+	submitting bool   // the write is in flight; the prompt stays open until it ends
+	problem    string // why the last submit was refused
+
 	change ops.Change     // pkStatus
 	assign ops.Assignment // pkAssign
+	bulk   model.Status   // pkBulk
 }
 
 func (p *prompt) view(w, h int) []string {
@@ -44,6 +50,7 @@ func (p *prompt) view(w, h int) []string {
 		bl := p.box.view(w, h)
 		lines = append(lines, bl[:2]...)
 		lines = append(lines, stMuted.Render(trunc("  "+p.hint, w)))
+		lines = append(lines, p.status(w)...)
 		return append(lines, bl[2:]...)
 	}
 	lw := 0
@@ -60,7 +67,18 @@ func (p *prompt) view(w, h int) []string {
 	if p.hint != "" {
 		lines = append(lines, stMuted.Render(trunc("  "+p.hint, w)))
 	}
-	return lines
+	return append(lines, p.status(w)...)
+}
+
+// status is the line about the last submit: still running, or refused.
+func (p *prompt) status(w int) []string {
+	switch {
+	case p.submitting:
+		return []string{stMuted.Render("  working...")}
+	case p.problem != "":
+		return []string{stErr.Render("  problem: ") + trunc(p.problem, w-12)}
+	}
+	return nil
 }
 
 // startStatus asks for a note, then changes the status of the selected
@@ -73,7 +91,7 @@ func (m *app) startStatus(st model.Status, whole bool) {
 		m.fail("nothing selected: open an issue with an environment first")
 		return
 	}
-	t := d.is.Targets[clamp(d.sel, 0, len(d.is.Targets)-1)]
+	t := d.is.Targets[d.sel.at()]
 	c := ops.Change{ID: d.is.ID, Project: t.Project, Env: t.Env, Status: st}
 	if whole {
 		c.Env = ""
@@ -83,8 +101,50 @@ func (m *app) startStatus(st model.Status, whole bool) {
 		label = "Reason (required)"
 	}
 	title := fmt.Sprintf("%s: %s", changeWords[st], where(c.Project, c.Env))
-	m.prm = &prompt{kind: pkStatus, title: oneLine(c.ID + " " + title), change: c, fields: []field{{label: label}},
-		hint: "a link to the merge request or ticket makes a good note"}
+	m.prm = &prompt{kind: pkStatus, title: oneLine(c.ID + " " + title), change: c, fields: []field{{label: label}}, hint: noteHint(st)}
+}
+
+// noteHint is what the prompt says about the note: enter saves at once unless
+// the status is a human assertion that needs its reason.
+func noteHint(st model.Status) string {
+	if st == model.StatusNotAffected {
+		return "say why it does not apply here; enter saves, an empty reason is refused"
+	}
+	return "enter saves now; the note is optional (a merge request or ticket link is a good one)"
+}
+
+// bulkChanges are the changes that give every selected issue the status st:
+// on its open environments, or on the closed ones when reopening.
+func (m *app) bulkChanges(st model.Status, note string) []ops.Change {
+	var out []ops.Change
+	for _, is := range m.dataIssues() {
+		if !m.fnd.sel[is.ID] {
+			continue
+		}
+		for _, t := range is.Targets {
+			if (st == model.StatusOpen) == (t.Status == model.StatusOpen) {
+				continue
+			}
+			out = append(out, ops.Change{ID: is.ID, Project: t.Project, Env: t.Env, Status: st, Note: note})
+		}
+	}
+	return out
+}
+
+// startBulk asks for one note for the status change of every selected issue.
+func (m *app) startBulk(st model.Status) {
+	n := len(m.fnd.sel)
+	cs := m.bulkChanges(st, "")
+	if n == 0 || len(cs) == 0 {
+		m.fail("nothing to change in the selected issues")
+		return
+	}
+	label := "Note (optional)"
+	if st == model.StatusNotAffected {
+		label = "Reason (required)"
+	}
+	title := fmt.Sprintf("%s, %s: %s", plural(n, "issue", "issues"), plural(len(cs), "finding", "findings"), changeWords[st])
+	m.prm = &prompt{kind: pkBulk, bulk: st, title: title, fields: []field{{label: label}}, hint: noteHint(st)}
 }
 
 func (m *app) startAssign(whole bool) {
@@ -93,7 +153,7 @@ func (m *app) startAssign(whole bool) {
 		m.fail("nothing selected: open an issue with an environment first")
 		return
 	}
-	t := d.is.Targets[clamp(d.sel, 0, len(d.is.Targets)-1)]
+	t := d.is.Targets[d.sel.at()]
 	a := ops.Assignment{ID: d.is.ID, Project: t.Project, Env: t.Env}
 	if whole {
 		a.Env = ""
@@ -118,62 +178,47 @@ func (m *app) startPath() {
 		box: newFolderBox()}
 }
 
-func (m *app) promptKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+// promptEnter moves to the next field, or submits from the last one.
+func (m *app) promptEnter() tea.Cmd {
 	p := m.prm
-	switch k.String() {
-	case "esc":
-		m.prm = nil
-		return m, nil
+	if p.box == nil && p.idx < len(p.fields)-1 {
+		p.idx++
+		return nil
 	}
-	if p.box != nil {
-		if k.String() == "enter" {
-			return m.promptSubmit()
-		}
-		p.box.key(k)
-		return m, nil
-	}
-	switch k.String() {
-	case "tab", "down":
-		p.idx = min(p.idx+1, len(p.fields)-1)
-		return m, nil
-	case "shift+tab", "up":
-		p.idx = max(p.idx-1, 0)
-		return m, nil
-	case "enter":
-		if p.idx < len(p.fields)-1 {
-			p.idx++
-			return m, nil
-		}
-		return m.promptSubmit()
-	}
-	p.fields[p.idx].in.key(k)
-	return m, nil
+	return m.promptSubmit()
 }
 
-func (m *app) promptSubmit() (tea.Model, tea.Cmd) {
+func (m *app) promptSubmit() tea.Cmd {
 	p := m.prm
-	m.prm = nil
+	if p.submitting {
+		return nil
+	}
 	val := func(i int) string { return strings.TrimSpace(p.fields[i].in.String()) }
 	switch p.kind {
 	case pkStatus:
 		c := p.change
 		c.Note = val(0)
-		m.busy = "saving..."
-		return m, resolveCmd(m.b, c)
+		return m.start("saving...", "status "+c.ID+" "+where(c.Project, c.Env), reList|reDetail, p, resolveCmd(m.b, c))
+	case pkBulk:
+		cs := m.bulkChanges(p.bulk, val(0))
+		if len(cs) == 0 {
+			p.problem = "nothing left to change in the selected issues"
+			return nil
+		}
+		return m.start("saving...", "bulk", reList|reDetail, p, bulkCmd(m.b, cs))
 	case pkAssign:
 		a := p.assign
 		a.Owner, a.Due, a.Ticket = val(0), val(1), val(2)
-		m.busy = "saving..."
-		return m, assignCmd(m.b, a)
+		return m.start("saving...", "assign "+a.ID+" "+where(a.Project, a.Env), reList|reDetail, p, assignCmd(m.b, a))
 	}
 	path := p.box.chosen()
 	if path == "" {
-		m.fail("no folder given")
-		return m, nil
+		p.problem = "no folder given"
+		m.fail(p.problem)
+		return nil
 	}
-	m.busy = "scanning..."
 	if m.frm != nil {
-		return m, scanCmd(m.b, path)
+		return m.start("scanning...", "scan", 0, p, scanCmd(m.b, path))
 	}
-	return m, startFlowCmd(m.b, "", path)
+	return m.start("scanning...", "flow", 0, p, startFlowCmd(m.b, "", path))
 }

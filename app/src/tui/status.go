@@ -9,9 +9,19 @@ import (
 
 // renderStatus lists the health of the tool itself: the daemon, each feed and
 // channel, and the recent cycles.
-func renderStatus(rep status.Report, now time.Time, w int) []string {
+func renderStatus(rep status.Report, now time.Time, w int, projects []string) *textPage {
 	var out []string
+	var rows []pageRow
 	add := func(l ...string) { out = append(out, l...) }
+	// failing is a row that can be selected: Enter goes to the project the
+	// error names, or shows the error in full.
+	failing := func(key, title, errText string, lines int) {
+		r := pageRow{at: len(out) - lines, n: lines, key: key, title: title, info: errText}
+		if p := projectIn(errText, projects); p != "" {
+			r.tgt = projectTarget(p, "")
+		}
+		rows = append(rows, r)
+	}
 
 	add(section("Overall")+"  "+levelText(rep.Level), "")
 	add("  daemon  " + levelText(rep.Daemon.Level) + "  " + orDash(oneLine(rep.Daemon.Mode)))
@@ -40,7 +50,9 @@ func renderStatus(rep status.Report, now time.Time, w int) []string {
 			pad(agoText(s.LastSuccess), 20) + " " + pad(fmt.Sprint(s.Failures), 5) + " " + fmt.Sprint(s.Items)
 		add(line)
 		if s.LastError != "" {
-			add(indentWrap("      error: ", oneLine(s.LastError), w)...)
+			ls := indentWrap("      error: ", oneLine(s.LastError), w)
+			add(ls...)
+			failing("feed "+s.ID, "Feed "+oneLine(s.ID)+": error", s.LastError, 1+len(ls))
 		}
 	}
 	add("")
@@ -59,7 +71,9 @@ func renderStatus(rep status.Report, now time.Time, w int) []string {
 	for _, c := range rep.Channels {
 		add("  " + pad(oneLine(c.Name), nameW) + " " + levelCell(c.Level, 9) + " " + pad(agoText(c.LastSuccess), 20) + " " + fmt.Sprint(c.Failures))
 		if c.LastError != "" {
-			add(indentWrap("      error: ", oneLine(c.LastError), w)...)
+			ls := indentWrap("      error: ", oneLine(c.LastError), w)
+			add(ls...)
+			failing("channel "+c.Name, "Channel "+oneLine(c.Name)+": error", c.LastError, 1+len(ls))
 		}
 	}
 	add("")
@@ -78,7 +92,9 @@ func renderStatus(rep status.Report, now time.Time, w int) []string {
 		add("  " + pad(c.Started.UTC().Format("2006-01-02 15:04"), 17) + " " + pad(took, 6) + " " + pad(fmt.Sprint(c.Items), 5) + " " +
 			pad(fmt.Sprint(c.New), 4) + " " + pad(fmt.Sprint(c.Findings), 8) + " " + pad(fmt.Sprint(c.Alerted), 7) + " " + fmt.Sprint(c.Failed))
 		if c.Err != "" {
-			add(indentWrap("      error: ", oneLine(c.Err), w)...)
+			ls := indentWrap("      error: ", oneLine(c.Err), w)
+			add(ls...)
+			failing("cycle "+c.Started.UTC().Format("2006-01-02T15:04:05"), "Cycle of "+c.Started.UTC().Format("2006-01-02 15:04")+": error", c.Err, 1+len(ls))
 		}
 	}
 
@@ -88,7 +104,7 @@ func renderStatus(rep status.Report, now time.Time, w int) []string {
 			add(indentWrap("  ! ", oneLine(wn), w)...)
 		}
 	}
-	return out
+	return &textPage{lines: out, rows: rows}
 }
 
 // levelCell is a level word padded to w cells, styled after padding.

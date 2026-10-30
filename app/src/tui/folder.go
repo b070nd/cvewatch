@@ -15,7 +15,7 @@ const pathSep = string(filepath.Separator)
 
 type folderBox struct {
 	in      input
-	sel     int // highlighted row, -1 for none
+	vp      viewport // over entries; the cursor is -1 for none
 	parent  string
 	entries []discovery.Entry
 	err     error
@@ -23,12 +23,15 @@ type folderBox struct {
 }
 
 func newFolderBox() *folderBox {
-	b := &folderBox{}
+	b := &folderBox{vp: viewport{lo: -1}}
 	b.refresh()
 	return b
 }
 
 func (b *folderBox) text() string { return b.in.String() }
+
+// sel is the highlighted entry, -1 for none.
+func (b *folderBox) sel() int { return b.vp.at() }
 
 func (b *folderBox) setText(s string) {
 	b.in.set(s)
@@ -38,7 +41,7 @@ func (b *folderBox) setText(s string) {
 func (b *folderBox) refresh() {
 	t := b.text()
 	b.parent, b.entries, b.err = discovery.Suggest(t)
-	b.sel = -1
+	b.vp.reset(len(b.entries))
 	b.own = typedStatus(t)
 	if b.own == "no such folder" && len(b.entries) > 0 {
 		b.own = plural(len(b.entries), "folder matches", "folders match") // still typing a name
@@ -51,10 +54,8 @@ func (b *folderBox) key(k tea.KeyMsg) {
 		b.tab()
 	case "shift+tab":
 		b.setText(parentText(b.text()))
-	case "up":
-		b.sel = max(b.sel-1, -1)
-	case "down":
-		b.sel = min(b.sel+1, len(b.entries)-1)
+	case "up", "down", "pgup", "pgdown": // home, end and letters belong to the text
+		b.vp.handle(k.String())
 	default:
 		if b.in.key(k) {
 			b.refresh()
@@ -64,8 +65,8 @@ func (b *folderBox) key(k tea.KeyMsg) {
 
 func (b *folderBox) tab() {
 	t := b.text()
-	if b.sel >= 0 && b.sel < len(b.entries) {
-		b.setText(folderOf(t) + b.entries[b.sel].Name + pathSep)
+	if b.sel() >= 0 && b.sel() < len(b.entries) {
+		b.setText(folderOf(t) + b.entries[b.sel()].Name + pathSep)
 		return
 	}
 	if c := discovery.Complete(t, b.entries); c != t {
@@ -74,15 +75,15 @@ func (b *folderBox) tab() {
 }
 
 func (b *folderBox) chosen() string {
-	if b.sel >= 0 && b.sel < len(b.entries) {
-		return b.entries[b.sel].Path
+	if b.sel() >= 0 && b.sel() < len(b.entries) {
+		return b.entries[b.sel()].Path
 	}
 	return strings.TrimSpace(b.text())
 }
 
 func (b *folderBox) status() string {
-	if b.sel >= 0 && b.sel < len(b.entries) {
-		return marksLine(b.entries[b.sel].Marks)
+	if b.sel() >= 0 && b.sel() < len(b.entries) {
+		return marksLine(b.entries[b.sel()].Marks)
 	}
 	return b.own
 }
@@ -150,9 +151,19 @@ func marksLine(marks []string) string {
 	return "looks like a project: " + oneLine(strings.Join(marks, ", "))
 }
 
+// folderRows is how many suggestions the box shows on a terminal h rows high:
+// up to ten while the page keeps three lines of its own, else the three that
+// still fit (the prompt around them takes five lines).
+func folderRows(h int) int {
+	if rows := min(h-13, 10); rows >= 3 {
+		return rows
+	}
+	return clamp(h-10, 0, 3)
+}
+
 func (b *folderBox) view(w, h int) []string {
 	lines := []string{"> Folder: " + b.in.view(w-10, true), stMuted.Render(trunc("  "+b.status(), w))}
-	rows := clamp(h-15, 0, 10)
+	rows := folderRows(h)
 	if rows == 0 {
 		return lines
 	}
@@ -164,8 +175,7 @@ func (b *folderBox) view(w, h int) []string {
 		head = "  " + plural(len(b.entries), "folder", "folders") + " in " + oneLine(b.parent)
 	}
 	lines = append(lines, stMuted.Render(trunc(head, w)))
-	start := clamp(b.sel-rows+1, 0, max(len(b.entries)-rows, 0))
-	end := min(start+rows, len(b.entries))
+	start, end := b.vp.window(rows)
 	nameW, marksW := 4, 0
 	for _, e := range b.entries[start:end] {
 		nameW = max(nameW, min(width(oneLine(e.Name)), w/3))
@@ -176,7 +186,7 @@ func (b *folderBox) view(w, h int) []string {
 		e := b.entries[i]
 		name := pad(oneLine(e.Name), nameW)
 		marks := pad(oneLine(strings.Join(e.Marks, ", ")), marksW)
-		if i == b.sel {
+		if i == b.sel() {
 			tag := ""
 			if e.Project {
 				tag = "  project"

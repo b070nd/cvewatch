@@ -10,64 +10,97 @@ import (
 )
 
 type projectsState struct {
-	cursor int
-	issue  int // the selected problem of the selected project
-	fix    *fixState
+	proj viewport // the project rows, followed by name
+	prob viewport // the problems of the selected project, followed by field and message
+	fix  *fixState
+	deep bool // inside the selected project: up/down move between its problems
+
+	fixOf string // the problem whose fix was chosen (see chosenFix)
+	fixAt int
 }
 
-func (m *app) projectsKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
-	n := 0
-	if m.data != nil {
-		n = len(m.data.Projects)
+// problemRoom is how many problems the project panel shows at once.
+const problemRoom = 5
+
+// deepRoom is how many problems fit when the project has the whole body.
+func deepRoom(h int) int { return clamp(h-6, 1, 40) }
+
+func problemID(i projectfile.Issue) string { return i.Field + "\x00" + i.Message }
+
+// refitProjects takes the rows of a new snapshot, or a move to another project:
+// the problem cursor starts over when the project under the cursor changed.
+func (m *app) refitProjects(before string) {
+	rows := m.data.Projects
+	m.prj.proj.refit(len(rows), func(i int) string { return rows[i].Name })
+	var probs []projectfile.Issue
+	p, ok := m.selectedProject()
+	if ok {
+		probs = p.Problems
 	}
-	if m.data == nil {
-		return m, nil // nothing loaded yet; r retries, q quits
+	if m.prj.proj.id() != before {
+		m.prj.prob.reset(len(probs))
+		m.prj.deep = false
 	}
-	before := m.prj.cursor
-	defer func() {
-		if m.prj.cursor != before {
-			m.prj.issue = 0
-		}
-	}()
-	switch k.String() {
-	case "up", "k":
-		m.prj.cursor = clamp(m.prj.cursor-1, 0, n-1)
-	case "down", "j":
-		m.prj.cursor = clamp(m.prj.cursor+1, 0, n-1)
-	case "home", "g":
-		m.prj.cursor = 0
-	case "end", "G":
-		m.prj.cursor = max(n-1, 0)
-	case "p", "P":
-		if p, ok := m.selectedProject(); ok && len(p.Problems) > 0 {
-			d := 1
-			if k.String() == "P" {
-				d = len(p.Problems) - 1
-			}
-			m.prj.issue = (clamp(m.prj.issue, 0, len(p.Problems)-1) + d) % len(p.Problems)
-		}
-	case "f":
-		return m, m.startFix()
-	case "o":
-		return m, m.openEditor()
-	case "e", "enter":
-		if n == 0 {
-			return m, nil
-		}
-		p := m.data.Projects[clamp(m.prj.cursor, 0, n-1)]
-		if p.Broken != "" {
-			m.fail("the file of " + p.Name + " does not load; press o to edit it")
-			return m, nil
-		}
-		m.busy = "opening " + oneLine(p.Name) + "..."
-		return m, startFlowCmd(m.b, p.Name, "")
-	case "n":
-		m.busy = "opening..."
-		return m, startFlowCmd(m.b, "", "")
-	case "d":
-		m.startPath()
+	if !ok {
+		m.prj.deep = false
 	}
-	return m, nil
+	m.prj.prob.refit(len(probs), func(i int) string { return problemID(probs[i]) })
+}
+
+// stepProblem is the p/P alias: it steps the problem cursor from the project list.
+func (m *app) stepProblem(k tea.KeyMsg) tea.Cmd {
+	if p, ok := m.selectedProject(); ok && len(p.Problems) > 0 {
+		d := 1
+		if k.String() == "P" {
+			d = len(p.Problems) - 1
+		}
+		m.prj.prob.to((m.prj.prob.at() + d) % len(p.Problems))
+	}
+	return nil
+}
+
+func (m *app) enterProject() tea.Cmd {
+	if _, ok := m.selectedProject(); ok {
+		m.prj.deep = true
+	}
+	return nil
+}
+
+func (m *app) editProject() tea.Cmd {
+	p, ok := m.selectedProject()
+	if !ok {
+		return nil
+	}
+	if p.Broken != "" {
+		m.fail("the file of " + p.Name + " does not load; press E to edit it")
+		return nil
+	}
+	return m.start("opening "+oneLine(p.Name)+"...", "flow", 0, nil, startFlowCmd(m.b, p.Name, ""))
+}
+
+func (m *app) addProject() tea.Cmd {
+	return m.start("opening...", "flow", 0, nil, startFlowCmd(m.b, "", ""))
+}
+
+func (m *app) scanFolder() tea.Cmd {
+	m.startPath()
+	return nil
+}
+
+// clickProject selects the project drawn on the given body row; a click on
+// the selected one opens it.
+func (m *app) clickProject(line int) tea.Cmd {
+	i := rowAt(&m.prj.proj, line)
+	switch {
+	case i < 0:
+		return nil
+	case i == m.prj.proj.at():
+		return m.enterProject()
+	}
+	before := m.prj.proj.id()
+	m.prj.proj.to(i)
+	m.refitProjects(before)
+	return nil
 }
 
 // techList is "php 8.2, nginx", as much as fits.
@@ -82,9 +115,23 @@ func techList(p projectRow) string {
 	return strings.Join(parts, ", ")
 }
 
+// projectsPanel lays the selected project out under the list and says how
+// many project rows that leaves room for.
+func projectsPanel(rows []projectRow, st *projectsState, w, h int) (detail []string, room int) {
+	if len(rows) == 0 {
+		return nil, 1
+	}
+	detail = projectDetail(rows[st.proj.at()], st, w, problemRoom, false)
+	detailH := 0
+	if h > 14 {
+		detailH = len(detail) + 1
+	}
+	return detail, max(h-1-detailH, 1)
+}
+
 // renderProjects lists the projects with their declared technologies and the
 // number of lockfiles, and below the list the selected project in full.
-func renderProjects(rows []projectRow, cursor, issue, w, h int) []string {
+func renderProjects(rows []projectRow, st *projectsState, w, h int) []string {
 	if len(rows) == 0 {
 		return []string{stMuted.Render("No projects yet."), "", "Press n to create one, or d to scan a folder and propose one."}
 	}
@@ -96,15 +143,8 @@ func renderProjects(rows []projectRow, cursor, issue, w, h int) []string {
 	techW := max(w-2-nameW-1-envW-1-lockW-1-probW-1, 10)
 	lines := []string{stHead.Render(trunc("  "+pad("PROJECT", nameW)+" "+pad("ENVIRONMENTS", envW)+" "+pad("LOCKFILES", lockW)+" "+pad("PROBLEMS", probW)+" TECHNOLOGIES", w))}
 
-	detailH := 0
-	sel := rows[clamp(cursor, 0, len(rows)-1)]
-	detail := projectDetail(sel, issue, w)
-	if h > 14 {
-		detailH = len(detail) + 1
-	}
-	room := max(h-len(lines)-detailH, 1)
-	start := clamp(cursor-room/2, 0, len(rows)-room)
-	end := min(start+room, len(rows))
+	detail, room := projectsPanel(rows, st, w, h)
+	start, end := st.proj.window(room)
 	for i := start; i < end; i++ {
 		p := rows[i]
 		envs := "all"
@@ -116,13 +156,13 @@ func renderProjects(rows []projectRow, cursor, issue, w, h int) []string {
 			envs, techs = "-", oneLine(p.Broken)
 		}
 		cells := pad(oneLine(p.Name), nameW) + " " + pad(envs, envW) + " " + pad(fmt.Sprint(len(p.Lockfiles)), lockW) + " " + pad(problemBadge(p), probW) + " " + trunc(techs, techW)
-		if i == cursor {
+		if i == st.proj.at() {
 			lines = append(lines, stSel.Render(pad("> "+cells, w)))
 		} else {
 			lines = append(lines, "  "+cells)
 		}
 	}
-	if detailH > 0 {
+	if h > 14 {
 		lines = append(lines, "")
 		lines = append(lines, detail...)
 	}
@@ -145,7 +185,7 @@ func problemBadge(p projectRow) string {
 	return fmt.Sprintf("%d err %d warn", errs, warns)
 }
 
-func projectDetail(p projectRow, issue, w int) []string {
+func projectDetail(p projectRow, st *projectsState, w, room int, deep bool) []string {
 	out := []string{section(oneLine(p.Name))}
 	if !p.HasFile {
 		out[0] += stMuted.Render("  defined in the main config, not editable here")
@@ -156,7 +196,7 @@ func projectDetail(p projectRow, issue, w int) []string {
 	} else {
 		out = append(out, indentWrap("  technologies: ", techList(p), w)...)
 	}
-	out = append(out, problemLines(p.Problems, issue, w)...)
+	out = append(out, problemLines(p.Problems, st, w, room, deep)...)
 	if p.Broken != "" {
 		return out
 	}
@@ -178,16 +218,18 @@ func projectDetail(p projectRow, issue, w int) []string {
 }
 
 // problemLines lists the problems, the selected one marked, with the label of
-// its fix underneath. At most five are shown, around the selected one.
-func problemLines(issues []projectfile.Issue, sel, w int) []string {
+// its fix underneath. At most room are shown, the selected one among them.
+func problemLines(issues []projectfile.Issue, st *projectsState, w, room int, deep bool) []string {
 	if len(issues) == 0 {
 		return nil
 	}
-	sel = clamp(sel, 0, len(issues)-1)
-	const room = 5
-	start := clamp(sel-room/2, 0, len(issues)-room)
-	end := min(start+room, len(issues))
-	out := []string{stMuted.Render("  problems (p next, f fix):")}
+	sel := st.prob.at()
+	start, end := st.prob.window(room)
+	hint := "problems (enter to select them, x to fix):"
+	if deep {
+		hint = "problems (up/down move, enter or x fix):"
+	}
+	out := []string{stMuted.Render("  " + hint)}
 	for i := start; i < end; i++ {
 		is := issues[i]
 		mark := "    "
@@ -195,12 +237,34 @@ func problemLines(issues []projectfile.Issue, sel, w int) []string {
 			mark = "  > "
 		}
 		out = append(out, trunc(mark+pad(oneLine(is.Level), 7)+" "+oneLine(is.Field)+": "+oneLine(is.Message), w))
-		if i == sel && len(is.Fixes) > 0 {
-			out = append(out, stMuted.Render(trunc("        fix: "+oneLine(is.Fixes[0].Label), w)))
+		if i == sel {
+			out = append(out, fixLines(is, st.chosenFix(is), w)...)
 		}
 	}
 	if start > 0 || end < len(issues) {
 		out = append(out, stMuted.Render(fmt.Sprintf("    (%d of %d)", sel+1, len(issues))))
 	}
 	return out
+}
+
+// fixLines lists the fixes of a problem under it: one on a line of its own, or
+// several numbered with the chosen one marked.
+func fixLines(is projectfile.Issue, chosen, w int) []string {
+	const shown = 3
+	var out []string
+	switch len(is.Fixes) {
+	case 0:
+		return nil
+	case 1:
+		return []string{stMuted.Render(trunc("        fix: "+oneLine(is.Fixes[0].Label), w))}
+	}
+	from := clamp(chosen-shown+1, 0, len(is.Fixes)-shown)
+	for j := from; j < min(from+shown, len(is.Fixes)); j++ {
+		mark := "  "
+		if j == chosen {
+			mark = "> "
+		}
+		out = append(out, stMuted.Render(trunc(fmt.Sprintf("      %sfix %d: %s", mark, j+1, oneLine(is.Fixes[j].Label)), w)))
+	}
+	return append(out, stMuted.Render(trunc(fmt.Sprintf("        (fix %d of %d: [ and ] choose another)", chosen+1, len(is.Fixes)), w)))
 }

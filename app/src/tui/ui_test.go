@@ -178,7 +178,7 @@ func TestNotAffectedNeedsAReason(t *testing.T) {
 			}
 		}
 	})
-	d.press("n")
+	d.want("Reason (required)", "problem: a not-affected statement needs a reason") // the prompt stays open
 	d.typ("not exposed, internal only")
 	d.press("enter")
 	d.want("ok: CVE-2026-1 marked not affected in mw/prod")
@@ -204,15 +204,13 @@ func TestAssignAsksOwnerDueTicket(t *testing.T) {
 	d.press("enter")
 	d.typ("OPS-7")
 	d.press("enter")
-	d.want("error: due must look like 2026-11-30")
+	d.want("error: due must look like 2026-11-30", "problem: due must look like 2026-11-30")
+	d.want("bob", "tomorrow", "OPS-7") // the prompt is still open with what was typed
 
-	d.press("a")
-	d.typ("bob")
-	d.press("tab")
+	d.press("shift+tab") // to Due
+	d.press("ctrl+u")
 	d.typ("2026-11-30")
-	d.press("tab")
-	d.typ("OPS-7")
-	d.press("enter")
+	d.press("enter", "enter")
 	d.want("ok: CVE-2026-1 assigned in shop/prod")
 	d.want("owner bob", "2026-11-30", "ticket OPS-7")
 }

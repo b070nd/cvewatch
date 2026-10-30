@@ -581,3 +581,101 @@ func TestChoiceAndConfirmDefaults(t *testing.T) {
 		t.Errorf("current = %q", f.Current().ID)
 	}
 }
+
+func TestRevisitChangesOneSectionAndReturnsToTheReview(t *testing.T) {
+	f := NewFlow(testCatalog(), nil)
+	f.UseDiscovery(repoDir, scan())
+	answer(t, f, "name", "shop")
+	answer(t, f, "techs", "php,nginx")
+	answer(t, f, "add-techs", "")
+	answer(t, f, "lockfiles", "0")
+	if err := f.Revisit("techs"); err == nil {
+		t.Fatal("only the review can go back to a section")
+	}
+	answer(t, f, "envs", "dev,prod")
+	if f.Current().ID != "review" {
+		t.Fatalf("current = %q", f.Current().ID)
+	}
+
+	var ids []string
+	for _, s := range f.Sections() {
+		ids = append(ids, s.ID)
+	}
+	if got := strings.Join(ids, ","); got != "name,techs,add-techs,versions,lockfiles,envs" {
+		t.Fatalf("sections = %s", got)
+	}
+	if err := f.Revisit("nope"); err == nil {
+		t.Error("an unknown section must be refused")
+	}
+
+	if err := f.Revisit("envs"); err != nil {
+		t.Fatal(err)
+	}
+	answer(t, f, "envs", "dev,staging,prod")
+	if st := f.Current(); st.ID != "review" || !strings.Contains(st.Help, "staging") {
+		t.Fatalf("one answer must lead back to the review: %+v", st)
+	}
+	if got := f.Draft().Project.Envs; len(got) != 3 {
+		t.Errorf("envs = %v", got)
+	}
+
+	// a section with several steps: techs asks for the technologies by name and the versions of new ones
+	if err := f.Revisit("techs"); err != nil {
+		t.Fatal(err)
+	}
+	answer(t, f, "techs", "php,nginx")
+	answer(t, f, "add-techs", "redis")
+	answer(t, f, "add-techs", "")
+	answer(t, f, "version:redis", "7")
+	if st := f.Current(); st.ID != "review" {
+		t.Fatalf("after the versions: %q", st.ID)
+	}
+
+	// all versions
+	if err := f.Revisit("versions"); err != nil {
+		t.Fatal(err)
+	}
+	answer(t, f, "version:php", "8.3")
+	answer(t, f, "version:nginx", "1.25")
+	answer(t, f, "version:redis", "7")
+	if f.Current().ID != "review" {
+		t.Fatalf("after the last version: %q", f.Current().ID)
+	}
+	if f.Draft().Project.Techs[0].Version != "8.3" {
+		t.Errorf("techs = %+v", f.Draft().Project.Techs)
+	}
+
+	// Back from a revisited step is the review, and a later answer goes on as usual
+	if err := f.Revisit("lockfiles"); err != nil {
+		t.Fatal(err)
+	}
+	f.Back()
+	if f.Current().ID != "review" {
+		t.Fatalf("back from a revisited step: %q", f.Current().ID)
+	}
+	answer(t, f, "review", "no")
+	if f.Current().ID != "techs" {
+		t.Fatalf("no at the review still goes to the start of the path: %q", f.Current().ID)
+	}
+	answer(t, f, "techs", "php")
+	if f.Current().ID != "add-techs" {
+		t.Fatalf("a normal pass after a revisit runs the whole path: %q", f.Current().ID)
+	}
+}
+
+func TestRevisitWhenEditingReturnsToTheReviewNotTheMenu(t *testing.T) {
+	f := NewFlow(testCatalog(), &model.Project{Name: "shop", Techs: []model.ProjectTech{{Name: "php", Version: "8.2"}}})
+	answer(t, f, "menu", "review")
+	for _, s := range f.Sections() {
+		if s.ID == "name" {
+			t.Error("a project cannot be renamed here")
+		}
+	}
+	if err := f.Revisit("envs"); err != nil {
+		t.Fatal(err)
+	}
+	answer(t, f, "envs", "dev")
+	if f.Current().ID != "review" {
+		t.Fatalf("current = %q", f.Current().ID)
+	}
+}

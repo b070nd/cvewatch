@@ -196,11 +196,19 @@ func TestQuit(t *testing.T) {
 func TestHelpToggle(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
 	d.press("2", "?")
-	d.want("Keys on the findings screen", "not-affected needs a reason", "NO_COLOR")
+	d.want("Keys on the findings screen", "open the selected issue", "Everywhere", "NO_COLOR")
 	d.press("?")
 	d.want("3 of 3 open issues")
 	d.press("?", "esc")
 	d.want("3 of 3 open issues")
+	d.press("enter", "?")
+	d.want("Keys in an issue", "not-affected needs a reason", "NO_COLOR")
+	d.press("q") // q closes a popup, it does not quit
+	if d.quit {
+		t.Fatal("q in the help quit the program")
+	}
+	d.wantNot("Keys in an issue")
+	d.want("Environments")
 }
 
 func TestScreenSwitching(t *testing.T) {

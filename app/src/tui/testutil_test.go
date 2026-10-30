@@ -143,10 +143,11 @@ func newFake(t *testing.T, st store.Storage) *fake {
 // driver feeds messages to the model and runs the commands it returns by
 // hand, feeding their results back, as the Bubble Tea runtime would.
 type driver struct {
-	t    *testing.T
-	m    tea.Model
-	quit bool
-	b    Backend
+	t      *testing.T
+	m      tea.Model
+	quit   bool
+	b      Backend
+	timers []tea.Msg // what the model asked a timer to deliver; tests send them by hand
 }
 
 func start(t *testing.T, b Backend, o Options) *driver {
@@ -155,6 +156,7 @@ func start(t *testing.T, b Backend, o Options) *driver {
 		o.Refresh = time.Hour
 	}
 	d := &driver{t: t, m: New(b, o), b: b}
+	d.m.(*app).after = func(_ time.Duration, msg tea.Msg) tea.Cmd { d.timers = append(d.timers, msg); return nil }
 	d.send(tea.WindowSizeMsg{Width: 120, Height: 40})
 	d.run(loadCmd(b)) // what Init does, minus the timer that would only wait
 	return d
@@ -213,8 +215,26 @@ func key(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyUp}
 	case "down":
 		return tea.KeyMsg{Type: tea.KeyDown}
+	case "pgup":
+		return tea.KeyMsg{Type: tea.KeyPgUp}
+	case "pgdown":
+		return tea.KeyMsg{Type: tea.KeyPgDown}
+	case "home":
+		return tea.KeyMsg{Type: tea.KeyHome}
+	case "end":
+		return tea.KeyMsg{Type: tea.KeyEnd}
 	case "tab":
 		return tea.KeyMsg{Type: tea.KeyTab}
+	case "shift+tab":
+		return tea.KeyMsg{Type: tea.KeyShiftTab}
+	case "left":
+		return tea.KeyMsg{Type: tea.KeyLeft}
+	case "right":
+		return tea.KeyMsg{Type: tea.KeyRight}
+	case "f1":
+		return tea.KeyMsg{Type: tea.KeyF1}
+	case "ctrl+d":
+		return tea.KeyMsg{Type: tea.KeyCtrlD}
 	case "ctrl+u":
 		return tea.KeyMsg{Type: tea.KeyCtrlU}
 	case "ctrl+c":
@@ -262,6 +282,20 @@ func (d *driver) wantNot(parts ...string) {
 			d.t.Errorf("screen has %q:\n%s", p, v)
 		}
 	}
+}
+
+// click presses the left mouse button at a screen cell.
+func (d *driver) click(x, y int) {
+	d.send(tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+}
+
+// wheel turns the mouse wheel once at a screen cell.
+func (d *driver) wheel(up bool, x, y int) {
+	b := tea.MouseButtonWheelDown
+	if up {
+		b = tea.MouseButtonWheelUp
+	}
+	d.send(tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionPress, Button: b})
 }
 
 func tea_window(w, h int) tea.WindowSizeMsg { return tea.WindowSizeMsg{Width: w, Height: h} }

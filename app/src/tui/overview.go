@@ -10,10 +10,11 @@ import (
 
 // renderOverview is the first screen: is the tool healthy, how much is open,
 // where, and what broke a policy. Wording follows the HTML dashboard.
-func renderOverview(sn *snapshot, w int) []string {
+func renderOverview(sn *snapshot, w int) *textPage {
 	c := countsOf(sn.Issues)
 	rep := sn.Status
 	var out []string
+	var rows []pageRow
 	add := func(l ...string) { out = append(out, l...) }
 
 	add(section("Status") + "  " + levelText(rep.Level))
@@ -67,11 +68,14 @@ func renderOverview(sn *snapshot, w int) []string {
 		add("  none")
 	}
 	for i, v := range sn.Violations {
-		if i == 5 {
-			add(fmt.Sprintf("  ... and %d more (see the dashboard or `cvewatch report`)", len(sn.Violations)-5))
+		if i == maxViolations {
+			add(fmt.Sprintf("  ... and %d more (see the dashboard or `cvewatch report`)", len(sn.Violations)-maxViolations))
 			break
 		}
-		add(violationLines(v, w)...)
+		ls := violationLines(v, w)
+		rows = append(rows, pageRow{at: len(out), n: len(ls), key: violationKey(v), tgt: violationTarget(v),
+			title: "Policy violation " + oneLine(v.Rule), info: violationText(v)})
+		add(ls...)
 	}
 	add("")
 
@@ -84,14 +88,37 @@ func renderOverview(sn *snapshot, w int) []string {
 			add(indentWrap("  ! ", oneLine(wn), w)...)
 		}
 	}
-	return out
+	return &textPage{lines: out, rows: rows}
 }
 
-func violationLines(v priority.Violation, w int) []string {
+// maxViolations is how many violations the overview lists; each can be selected.
+const maxViolations = 20
+
+func violationText(v priority.Violation) string {
 	s := v.Subject
 	text := fmt.Sprintf("%s: %s %s/%s %s", oneLine(v.Rule), oneLine(s.VulnID), oneLine(s.Project), s.Env, oneLine(v.Reason))
 	if v.Late >= time.Hour {
 		text += fmt.Sprintf(" (%dh late)", int(v.Late.Hours()))
 	}
-	return indentWrap("  - ", text, w)
+	return text
+}
+
+func violationLines(v priority.Violation, w int) []string {
+	return indentWrap("  - ", violationText(v), w)
+}
+
+func violationKey(v priority.Violation) string {
+	s := v.Subject
+	return v.Rule + "\x00" + s.VulnID + "\x00" + s.Project + "\x00" + string(s.Env)
+}
+
+// violationTarget is the issue a violation is about.
+func violationTarget(v priority.Violation) target {
+	switch s := v.Subject; {
+	case s.VulnID != "":
+		return issueTarget(s.VulnID, true)
+	case s.Project != "":
+		return projectTarget(s.Project, "")
+	}
+	return target{}
 }

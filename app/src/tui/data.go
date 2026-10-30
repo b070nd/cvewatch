@@ -163,6 +163,12 @@ type (
 		warn error // the change landed but a follow-up step failed
 		err  error
 	}
+	bulkMsg struct {
+		info string
+		warn error
+		err  error
+		done []string // the issues all of whose changes landed
+	}
 	flowMsg struct {
 		flow     *setup.Flow
 		creating bool
@@ -251,6 +257,45 @@ func resolveCmd(b Backend, c ops.Change) tea.Cmd {
 			return actionMsg{err: err}
 		}
 		return actionMsg{info: fmt.Sprintf("%s %s in %s (%s)", c.ID, changeWords[c.Status], where(c.Project, c.Env), plural(n, "finding", "findings")), warn: late}
+	}
+}
+
+// bulkCmd applies the changes one after the other in one write session, so
+// they share the actor and the audit trail. It stops at the first refusal;
+// what landed before it stays.
+func bulkCmd(b Backend, cs []ops.Change) tea.Cmd {
+	return func() tea.Msg {
+		left := map[string]int{}
+		for _, c := range cs {
+			left[c.ID]++
+		}
+		var findings, applied int
+		var late error
+		var done []string
+		err := b.Write(func(s *ops.Session) error {
+			for _, c := range cs {
+				n, e := s.Resolve(c)
+				if n == 0 && e != nil {
+					return e
+				}
+				if e != nil {
+					late = e // saved, but the report file failed
+				}
+				findings += n
+				applied++
+				if left[c.ID]--; left[c.ID] == 0 {
+					done = append(done, c.ID)
+				}
+			}
+			return nil
+		})
+		if err != nil && applied > 0 {
+			err = fmt.Errorf("%d of %d changes written, then: %w", applied, len(cs), err)
+		}
+		if err != nil {
+			return bulkMsg{err: err, done: done}
+		}
+		return bulkMsg{info: fmt.Sprintf("%s: %s in %s", changeWords[cs[0].Status], plural(findings, "finding", "findings"), plural(len(done), "issue", "issues")), warn: late, done: done}
 	}
 }
 

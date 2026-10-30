@@ -30,7 +30,7 @@ func TestProjectsShowProblemBadgeAndIssueList(t *testing.T) {
 	writeProjectFile(t, b.cfg.Root, "shop", shopWithProblems)
 	d := start(t, b, Options{})
 	d.press("3")
-	d.want("PROBLEMS", "1 err 1 warn", "problems (p next, f fix)",
+	d.want("PROBLEMS", "1 err 1 warn", "problems (enter to select them, x to fix)",
 		"> error", "lockfiles[0].path: lockfile gone/composer.lock does not exist", "fix: remove lockfile gone/composer.lock",
 		"warning", "techs[0]")
 	d.press("p")
@@ -38,7 +38,7 @@ func TestProjectsShowProblemBadgeAndIssueList(t *testing.T) {
 	d.press("p")
 	d.want("> error")
 	d.press("down")
-	d.wantNot("problems (p next")
+	d.wantNot("problems (enter")
 	if b.reads > 1 {
 		t.Fatalf("problems must be computed on load, not per key: %d reads", b.reads)
 	}
@@ -69,7 +69,7 @@ func TestProblemFixShowsTheChangeAndAppliesIt(t *testing.T) {
 
 	d.press("f", "y") // the misspelled technology
 	d.want("ok: fixed shop")
-	d.wantNot("1 warn", "problems (p next")
+	d.wantNot("1 warn", "problems (enter")
 	data, _ = os.ReadFile(path)
 	if !strings.Contains(string(data), "php") || strings.Contains(string(data), "pph") {
 		t.Fatalf("technology not renamed:\n%s", data)
@@ -86,7 +86,7 @@ func TestProblemWithoutFixPointsToTheEditor(t *testing.T) {
 	d.want("1 warn", "does not look like a version number")
 	d.wantNot("fix:")
 	d.press("f")
-	d.want("error: no automatic fix for this problem; press o to edit the file")
+	d.want("error: no automatic fix for this problem; press E to edit the file")
 	if d.m.(*app).prj.fix != nil {
 		t.Fatal("no fix to preview")
 	}
@@ -108,8 +108,8 @@ func TestBrokenProjectFileDoesNotBlockTheTUI(t *testing.T) {
 		t.Fatalf("broken row %+v", row)
 	}
 	d.press("e")
-	d.want("error: the file of bad does not load; press o to edit it")
-	d.press("o")
+	d.want("error: the file of bad does not load; press E to edit it")
+	d.press("E")
 	if f := d.m.(*app).flash; !strings.Contains(f, "$EDITOR is not set; the file is "+bad) {
 		t.Fatalf("flash %q", f)
 	}
@@ -121,7 +121,7 @@ func TestBrokenProjectFileDoesNotBlockTheTUI(t *testing.T) {
 
 	// the editor returns with a repaired file
 	os.WriteFile(bad, []byte("name: bad\ntechs:\n  - {name: php}\n"), 0o600)
-	d.send(editedMsg{})
+	d.send(opMsg{id: d.m.(*app).pend.ops[0].id, msg: editedMsg{}})
 	d.wantNot("BROKEN")
 	d.want("bad", "good")
 	d.press("e")

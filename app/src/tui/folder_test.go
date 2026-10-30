@@ -138,7 +138,9 @@ func TestFolderBoxMissingFolderStillGoesThroughToTheError(t *testing.T) {
 	d.typ("nope")
 	d.want("no such folder")
 	d.press("enter")
-	d.want("error: no such folder")
+	d.want("error: no such folder", "problem: no such folder")
+	d.want("Folder: nope") // the prompt stays with what was typed
+	d.press("esc")
 	d.wantNot("Scan a folder")
 }
 
@@ -175,23 +177,23 @@ func TestFolderBoxErrorReplacesTheList(t *testing.T) {
 func TestFolderBoxPure(t *testing.T) {
 	root := folderTree(t)
 	b := newFolderBox()
-	if len(b.entries) != 4 || b.sel != -1 || b.chosen() != "" {
-		t.Fatalf("start: %d entries, sel %d, chosen %q", len(b.entries), b.sel, b.chosen())
+	if len(b.entries) != 4 || b.sel() != -1 || b.chosen() != "" {
+		t.Fatalf("start: %d entries, sel %d, chosen %q", len(b.entries), b.sel(), b.chosen())
 	}
 	b.key(key("down"))
 	b.key(key("down"))
-	if b.sel != 1 {
-		t.Fatalf("sel = %d", b.sel)
+	if b.sel() != 1 {
+		t.Fatalf("sel = %d", b.sel())
 	}
 	for range 10 {
 		b.key(key("down"))
 	}
-	if b.sel != 3 {
-		t.Fatalf("sel must stop at the last row, got %d", b.sel)
+	if b.sel() != 3 {
+		t.Fatalf("sel must stop at the last row, got %d", b.sel())
 	}
 	b.key(key("x"))
-	if b.sel != -1 || b.text() != "x" {
-		t.Fatalf("typing resets the highlight: sel %d text %q", b.sel, b.text())
+	if b.sel() != -1 || b.text() != "x" {
+		t.Fatalf("typing resets the highlight: sel %d text %q", b.sel(), b.text())
 	}
 	b.setText("shop")
 	if got := b.chosen(); got != "shop" {

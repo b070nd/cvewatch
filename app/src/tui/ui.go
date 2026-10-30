@@ -31,7 +31,7 @@ func (o Options) refresh() time.Duration {
 // Run shows the TUI full screen until the user quits or ctx ends. A cancelled
 // context is a normal way out and returns nil.
 func Run(ctx context.Context, b Backend, o Options) error {
-	p := tea.NewProgram(New(b, o), tea.WithAltScreen(), tea.WithContext(ctx))
+	p := tea.NewProgram(New(b, o), tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
 	_, err := p.Run()
 	if err != nil && ctx.Err() != nil {
 		return nil
@@ -41,7 +41,10 @@ func Run(ctx context.Context, b Backend, o Options) error {
 
 // New returns the program's model; it is exported so tests can drive it.
 func New(b Backend, o Options) tea.Model {
-	m := &app{b: b, o: o, loading: true}
+	m := &app{b: b, o: o, loading: true, helpVP: scrolling(), after: afterCmd}
+	for i := range m.txt {
+		m.txt[i] = scrolling()
+	}
 	if o.Dir != "" {
 		m.scr = scrProjects
 	}
@@ -67,19 +70,30 @@ type app struct {
 	w, h    int
 	scr     screen
 	help    bool
-	scroll  [numScreens]int // for the screens that are plain text
+	helpFor *mode // the mode the open help describes
+	helpVP  viewport
+	txt     [numScreens]viewport // the screens that are plain text
+	pageSel [numScreens]viewport // and the row selected on each, when it has rows
+	cache   [numScreens]textCache
 	data    *snapshot
 	loadErr error
 	loading bool
-	busy    string // a write in progress
+	pend    pending // the writes and scans in flight
 
 	flash    string
 	flashErr bool
+	flashSeq int  // which note is on screen, so that an old timer leaves a newer one alone
+	flashDue bool // a note was set and its timer is not started yet
+	after    func(d time.Duration, msg tea.Msg) tea.Cmd
 
 	fnd findingsState
 	prj projectsState
 	frm *form
 	prm *prompt
+	cfm *confirm
+	jmp *jumpBox
+	nt  *notice
+	ret *returnPoint // where the last jump came from
 }
 
 // ---- tea.Model ----
@@ -87,8 +101,7 @@ type app struct {
 func (m *app) Init() tea.Cmd {
 	cmds := []tea.Cmd{loadCmd(m.b), tickCmd(m.o.refresh())}
 	if m.o.Dir != "" {
-		m.busy = "scanning " + clean(m.o.Dir) + "..."
-		cmds = append(cmds, startFlowCmd(m.b, "", m.o.Dir))
+		cmds = append(cmds, m.start("scanning "+clean(m.o.Dir)+"...", "flow", 0, nil, startFlowCmd(m.b, "", m.o.Dir)))
 	}
 	return tea.Batch(cmds...)
 }
@@ -110,49 +123,78 @@ func (m *app) bodyH() int {
 	return h - 4
 }
 
-func (m *app) say(s string)  { m.flash, m.flashErr = oneLine(s), false }
-func (m *app) fail(s string) { m.flash, m.flashErr = oneLine(s), true }
+// flashTTL is how long a success note stays; an error stays until the next
+// action that is not just moving around (see key).
+const flashTTL = 4 * time.Second
 
-func (m *app) reload() tea.Cmd {
-	m.loading = true
-	return loadCmd(m.b)
+// flashExpiredMsg ends the note numbered seq, if it is still the one shown.
+type flashExpiredMsg struct{ seq int }
+
+func afterCmd(d time.Duration, msg tea.Msg) tea.Cmd {
+	return tea.Tick(d, func(time.Time) tea.Msg { return msg })
+}
+
+func (m *app) say(s string) {
+	m.flash, m.flashErr = oneLine(s), false
+	m.flashSeq++
+	m.flashDue = true
+}
+
+func (m *app) fail(s string) {
+	m.flash, m.flashErr = oneLine(s), true
+	m.flashSeq++
+	m.flashDue = false
 }
 
 func (m *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := m.update(msg)
+	if m.ret != nil && m.ret.dest != m.scr {
+		m.ret = nil
+	}
+	m.layout()
+	if m.flashDue && m.after != nil {
+		cmd = tea.Batch(cmd, m.after(flashTTL, flashExpiredMsg{seq: m.flashSeq}))
+	}
+	m.flashDue = false
+	return model, cmd
+}
+
+func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
 		return m, nil
 	case tea.KeyMsg:
 		return m.key(msg)
+	case tea.MouseMsg:
+		return m, m.mouse(msg)
 	case tickMsg:
 		next := tickCmd(m.o.refresh())
 		if m.loading {
 			return m, next
 		}
-		return m, tea.Batch(next, m.reload())
+		return m, tea.Batch(next, m.refresh(reList|reDetail))
+	case flashExpiredMsg:
+		if msg.seq == m.flashSeq && !m.flashErr {
+			m.flash = ""
+		}
+		return m, nil
 	case dataMsg:
 		m.loading = false
 		if msg.err != nil {
 			m.loadErr = msg.err
 			return m, nil
 		}
+		before := m.prj.proj.id()
 		m.loadErr, m.data = nil, msg.snap
 		m.fnd.refit(m.data.Issues)
-		m.prj.cursor = clamp(m.prj.cursor, 0, len(m.data.Projects)-1)
-		if p, ok := m.selectedProject(); ok {
-			m.prj.issue = clamp(m.prj.issue, 0, len(p.Problems)-1)
-		}
+		m.refitProjects(before)
 		return m, nil
 	case detailMsg:
 		m.detailLoaded(msg)
 		return m, nil
-	case actionMsg:
-		return m.actionDone(msg)
-	case flowMsg:
-		return m.flowStarted(msg)
-	case scanMsg:
-		return m.scanned(msg)
+	case opMsg:
+		return m, m.opDone(msg)
 	case previewMsg:
 		if msg.f == m.frm && msg.seq == msg.f.seq {
 			msg.f.prev, msg.f.prevErr = nil, ""
@@ -165,79 +207,45 @@ func (m *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
-	case savedMsg:
-		return m.saved(msg)
 	case fixPreviewMsg:
 		m.fixPreviewed(msg)
 		return m, nil
-	case fixSavedMsg:
-		return m.fixSaved(msg)
-	case editedMsg:
-		if msg.err != nil {
-			m.fail("editor: " + msg.err.Error())
-		}
-		return m, m.reload()
 	}
 	return m, nil
 }
 
-func (m *app) actionDone(msg actionMsg) (tea.Model, tea.Cmd) {
-	m.busy = ""
-	switch {
-	case msg.err != nil:
-		m.fail(msg.err.Error())
-	case msg.warn != nil:
-		m.fail(msg.info + ", but: " + msg.warn.Error())
-	default:
-		m.say(msg.info)
-	}
-	cmds := []tea.Cmd{m.reload()}
-	if d := m.fnd.det; d != nil {
-		cmds = append(cmds, detailCmd(m.b, d.id))
-	}
-	return m, tea.Batch(cmds...)
-}
-
-func (m *app) flowStarted(msg flowMsg) (tea.Model, tea.Cmd) {
-	m.busy = ""
+func (m *app) flowStarted(msg flowMsg) outcome {
 	if msg.err != nil {
-		m.fail(msg.err.Error())
-		return m, nil
+		return outcome{err: msg.err}
 	}
 	m.scr = scrProjects
 	m.frm = newForm(msg.flow, msg.creating, msg.name)
-	if msg.note != "" {
-		m.say(msg.note)
-	}
-	return m, m.frm.enter(m)
+	return outcome{note: msg.note, then: m.frm.enter(m)}
 }
 
-func (m *app) scanned(msg scanMsg) (tea.Model, tea.Cmd) {
-	m.busy = ""
+func (m *app) scanned(msg scanMsg) outcome {
 	if msg.err != nil {
-		m.fail(msg.err.Error())
-		return m, nil
+		return outcome{err: msg.err}
 	}
 	if m.frm == nil || m.frm.waiting() || m.frm.saving {
-		return m, nil // a preview or save is reading the flow right now
+		return outcome{} // a preview or save is reading the flow right now
 	}
 	m.frm.flow.UseDiscovery(msg.res.Root, msg.res)
+	m.frm.touched = true
 	m.frm.load()
-	m.say(scanNote(msg.res))
-	return m, m.frm.enter(m)
+	return outcome{note: scanNote(msg.res), then: m.frm.enter(m)}
 }
 
-func (m *app) saved(msg savedMsg) (tea.Model, tea.Cmd) {
+func (m *app) saved(msg savedMsg) outcome {
 	if msg.f != m.frm {
-		return m, nil
+		return outcome{err: msg.err}
 	}
 	f := m.frm
 	f.saving = false
 	if msg.err != nil {
 		f.flow.Back() // un-finish the review so the user can fix or leave
 		f.step = f.flow.Current()
-		m.fail(msg.err.Error())
-		return m, nil
+		return outcome{err: msg.err}
 	}
 	m.frm = nil
 	if msg.prev.Saved {
@@ -245,11 +253,9 @@ func (m *app) saved(msg savedMsg) (tea.Model, tea.Cmd) {
 		if msg.prev.Created {
 			verb = "created"
 		}
-		m.say(fmt.Sprintf("%s project %s", verb, msg.prev.Project))
-	} else {
-		m.say("no changes to save in " + msg.prev.Project)
+		return outcome{note: fmt.Sprintf("%s project %s", verb, msg.prev.Project)}
 	}
-	return m, m.reload()
+	return outcome{note: "no changes to save in " + msg.prev.Project}
 }
 
 // ---- keys ----
@@ -258,86 +264,96 @@ func (m *app) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if k.String() == "ctrl+c" {
 		return m, tea.Quit
 	}
-	m.flash = ""
-	switch {
-	case m.prm != nil:
-		return m.promptKey(k)
-	case m.frm != nil:
-		return m.formKey(k)
-	case m.prj.fix != nil:
-		return m.fixKey(k)
-	case m.scr == scrFindings && m.fnd.filtering:
-		return m.filterKey(k)
+	seq := m.flashSeq
+	cmd, moved := m.dispatch(k)
+	if !moved && m.flashSeq == seq { // moving around keeps what is on screen, an action ends it
+		m.flash = ""
 	}
-	if m.help {
-		switch k.String() {
-		case "?", "esc":
-			m.help = false
-		case "q":
-			return m, tea.Quit
-		}
-		return m, nil
-	}
-	switch s := k.String(); s {
-	case "q":
-		return m, tea.Quit
-	case "?":
-		m.help = true
-		return m, nil
-	case "r":
-		return m, m.reload()
-	case "1", "2", "3", "4":
-		m.scr = screen(s[0] - '1')
-		return m, nil
-	case "tab":
-		m.scr = (m.scr + 1) % numScreens
-		return m, nil
-	case "shift+tab":
-		m.scr = (m.scr + numScreens - 1) % numScreens
-		return m, nil
-	}
-	switch m.scr {
-	case scrFindings:
-		return m.findingsKey(k)
-	case scrProjects:
-		return m.projectsKey(k)
-	}
-	m.scrollKey(k)
-	return m, nil
+	return m, cmd
 }
 
-// scrollKey scrolls the plain-text screens.
-func (m *app) scrollKey(k tea.KeyMsg) {
-	d := 0
-	switch k.String() {
-	case "up", "k":
-		d = -1
-	case "down", "j":
-		d = 1
-	case "pgup":
-		d = -m.bodyH()
-	case "pgdown":
-		d = m.bodyH()
-	case "home", "g":
-		d = -1 << 20
+func (m *app) stepScreen(d int) { m.scr = (m.scr + numScreens + screen(d)) % numScreens }
+
+// textCache is a plain-text screen rendered for one width and snapshot.
+type textCache struct {
+	w    int
+	snap *snapshot
+	page *textPage
+}
+
+// body is the area between the header and the footer, and the prompt that
+// takes its bottom part.
+func (m *app) body() (w, h int, prompt []string) {
+	w, th := m.size()
+	h = th - 4
+	switch {
+	case m.cfm != nil:
+		prompt = m.cfm.view(w)
+	case m.nt != nil:
+		prompt = m.nt.view(w)
+	case m.jmp != nil:
+		prompt = m.jmp.view(w, th)
+	case m.prm != nil:
+		prompt = m.prm.view(w, th)
 	}
-	m.scroll[m.scr] = max(0, m.scroll[m.scr]+d)
+	h = max(h-len(prompt), 1)
+	return w, h, prompt
+}
+
+// layout runs after every message: it tells the lists and texts how many rows
+// the current screen gives them, so that drawing can leave them alone.
+func (m *app) layout() {
+	w, h, _ := m.body()
+	switch {
+	case m.help:
+		m.helpVP.refit(len(m.helpText(w)), nil)
+		m.helpVP.fit(h)
+	case m.frm != nil:
+		m.frm.layout(w, h)
+	case m.data == nil:
+	case m.scr == scrFindings && m.fnd.det != nil:
+		d := m.fnd.det
+		d.lay = d.layout(w)
+		d.body.refit(len(d.lay.lines), nil)
+		d.body.fit(h)
+	case m.scr == scrFindings:
+		m.fnd.vp.fit(findingsRoom(h))
+	case m.scr == scrProjects && m.prj.fix != nil:
+		m.prj.fix.layout(w, h)
+	case m.scr == scrProjects && m.prj.deep:
+		m.prj.prob.fit(deepRoom(h))
+	case m.scr == scrProjects:
+		_, room := projectsPanel(m.data.Projects, &m.prj, w, h)
+		m.prj.proj.fit(room)
+		m.prj.prob.fit(problemRoom)
+	default:
+		pg := m.page(m.scr, w)
+		m.cache[m.scr] = textCache{w: w, snap: m.data, page: pg}
+		m.txt[m.scr].refit(len(pg.lines), nil)
+		m.txt[m.scr].fit(h)
+		m.pageSel[m.scr].refit(len(pg.rows), func(i int) string { return pg.rows[i].key })
+		m.pageSel[m.scr].fit(h)
+	}
+	if m.jmp != nil {
+		_, th := m.size()
+		m.jmp.vp.fit(jumpRows(th))
+	}
+	if m.prm != nil && m.prm.box != nil {
+		_, th := m.size()
+		m.prm.box.vp.fit(folderRows(th))
+	}
 }
 
 // ---- view ----
 
 func (m *app) View() string {
-	w, h := m.size()
-	bodyH := h - 4
-	var prompt []string
-	if m.prm != nil {
-		prompt = m.prm.view(w, h)
-		bodyH = max(bodyH-len(prompt), 1)
-	}
+	w, bodyH, prompt := m.body()
 	var body []string
 	switch {
 	case m.help:
-		body = helpView(m.scr, m.frm != nil)
+		lines := m.helpText(w)
+		start, end := m.helpVP.window(bodyH)
+		body = lines[min(start, len(lines)):min(end, len(lines))]
 	case m.frm != nil:
 		body = m.frm.view(w, bodyH)
 	default:
@@ -348,7 +364,8 @@ func (m *app) View() string {
 		body = append(body, "")
 	}
 	body = append(body, prompt...)
-	lines := []string{m.header(w), stMuted.Render(strings.Repeat("─", w))}
+	crumbs, _ := m.crumbLine(w)
+	lines := []string{m.header(w), crumbs}
 	lines = append(lines, body...)
 	lines = append(lines, m.flashLine(w), m.footer(w))
 	for i, l := range lines {
@@ -373,21 +390,18 @@ func (m *app) screenBody(w, h int) []string {
 		if m.prj.fix != nil {
 			return m.prj.fix.view(w, h)
 		}
-		return renderProjects(m.data.Projects, m.prj.cursor, m.prj.issue, w, h)
-	case scrStatus:
-		return m.scrolled(renderStatus(m.data.Status, m.data.At, w), h)
+		if p, ok := m.selectedProject(); ok && m.prj.deep {
+			return projectDetail(p, &m.prj, w, deepRoom(h), true)
+		}
+		return renderProjects(m.data.Projects, &m.prj, w, h)
 	}
-	return m.scrolled(renderOverview(m.data, w), h)
+	start, end := m.txt[m.scr].window(h)
+	return m.page(m.scr, w).view(start, end, m.pageSel[m.scr].at())
 }
 
-func (m *app) scrolled(lines []string, h int) []string {
-	off := clamp(m.scroll[m.scr], 0, len(lines)-h)
-	m.scroll[m.scr] = off
-	return lines[off:]
-}
-
-func (m *app) header(w int) string {
-	var tabs []string
+// tabs are the screen tabs as drawn, and the cells each one covers.
+func (m *app) tabs() (tabs []string, spans [numScreens][2]int) {
+	x := width("cvewatch") + 2
 	for i := screen(0); i < numScreens; i++ {
 		label := fmt.Sprintf("%d %s", i+1, screenNames[i])
 		if i == scrFindings && m.data != nil {
@@ -398,12 +412,19 @@ func (m *app) header(w int) string {
 		} else {
 			tabs = append(tabs, stTab.Render(" "+label+" "))
 		}
+		spans[i] = [2]int{x, x + width(tabs[i])}
+		x += width(tabs[i]) + 1
 	}
+	return tabs, spans
+}
+
+func (m *app) header(w int) string {
+	tabs, _ := m.tabs()
 	left := stBold.Render("cvewatch") + "  " + strings.Join(tabs, " ")
 	right := ""
 	switch {
-	case m.busy != "":
-		right = m.busy
+	case m.pend.count() > 0:
+		right = m.pend.status()
 	case m.loading:
 		right = "refreshing..."
 	case m.data != nil:
@@ -428,31 +449,4 @@ func (m *app) flashLine(w int) string {
 	return ""
 }
 
-func (m *app) footer(w int) string {
-	var hint string
-	switch {
-	case m.prm != nil && m.prm.box != nil:
-		hint = "tab complete or open  shift+tab up  up/down pick  enter use  esc cancel"
-	case m.prm != nil:
-		hint = "enter confirm  tab next field  esc cancel"
-	case m.frm != nil:
-		hint = m.frm.hint()
-	case m.help:
-		hint = "? or esc close help  q quit"
-	case m.data == nil && m.loadErr != nil:
-		hint = "r try again  q quit"
-	case m.prj.fix != nil:
-		hint = "y apply the fix  up/down scroll  n or esc cancel"
-	case m.scr == scrFindings && m.fnd.filtering:
-		hint = "type to filter  enter keep  esc clear"
-	case m.scr == scrFindings && m.fnd.det != nil:
-		hint = "up/down environment  f fixed  i ignore  n not-affected  o reopen  a assign  F/I/N/O whole project  esc back"
-	case m.scr == scrFindings:
-		hint = "up/down move  enter open  s min severity  / filter  r refresh  ? help  q quit"
-	case m.scr == scrProjects:
-		hint = "up/down move  e edit  n new  d folder  p problem  f fix  o editor  ? help  q quit"
-	default:
-		hint = "1-4 screens  up/down scroll  r refresh  ? help  q quit"
-	}
-	return stMuted.Render(trunc(hint, w))
-}
+func (m *app) footer(w int) string { return stMuted.Render(m.top().footerLine(m, w)) }

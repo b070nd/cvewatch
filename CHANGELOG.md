@@ -11,11 +11,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - TUI Projects screen shows a problems column and the problems of the selected project. `f` previews and applies a fix, `o` opens the file in `$EDITOR`. A project file that cannot be read is shown as broken instead of stopping the TUI.
 - `check_projects` MCP tool: read-only report of problems in project files, with the fixes it knows.
 - Validation warns when a lockfile's `env` is not in the project's `envs`, since such a lockfile is never read.
+- TUI breadcrumb under the screen tabs. Left, Esc and Backspace go back one level.
+- TUI jump box (`:` or Ctrl+G) to an issue by ID or a project by name. Overview, Status, issue and project rows link to their targets, and Esc returns to where you came from.
+- TUI triage: `]` and `[` for the next and previous issue, Space and Ctrl+A to mark issues, and one status change for all marked issues.
+- TUI mouse support: wheel, click to select, clickable tabs and breadcrumb.
+- TUI `E` opens the project file at the problem's line in vim, nano, emacs, VS Code, Sublime Text and more.
+- TUI fix preview lists every fix of a problem; `[` and `]` choose one.
+- TUI project form: `e` on the review changes one step and returns to the review.
+
+### Changed
+- TUI: Enter on a project opens it, with its problems and fixes. `e` edits the project.
+- TUI: `a` adds a project (`n` still works). `x` previews a fix (`f` still works). `E` opens the editor (`o` still works on Projects).
+- TUI: Esc cancels a fix preview. `n` no longer cancels it.
+- TUI: `q` quits only from the root of a screen. Inside a level or a popup it goes back.
 
 ### Fixed
 - `edit_project` and `preview_project_change` accept a `lockfile` object, so fixes from `check_projects` can be passed on as they are.
 - `cvewatch init` saved lockfile paths as absolute paths with the default `-root .`; they stay relative to the root now.
 - `cvewatch init -force` now edits an existing project file in place: its comments stay, and the old file is backed up.
+- TUI prompts keep what was typed when a write is refused, and show the reason.
+- TUI Projects cursor stays on its project when the list changes.
+- TUI open issue reloads after a status, assign, bulk or editor change.
+- TUI refuses a second submit of a change that is still being saved, so it is not written twice.
 
 ## [1.2.0] - 2026-10-29
 
