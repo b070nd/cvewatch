@@ -429,7 +429,7 @@ func coerceDuration(f Field, v any) (any, error) {
 		if err := inRange(f, 0, "must be"); err != nil {
 			return nil, errors.New("must be longer than zero")
 		}
-		return int64(0), nil
+		return "0s", nil // the loader reads a duration from text only
 	}
 	d, err := time.ParseDuration(s)
 	if err != nil {

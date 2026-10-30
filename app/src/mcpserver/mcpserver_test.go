@@ -171,6 +171,11 @@ func TestSetupToolsReadOnlyAndWrite(t *testing.T) {
 	if _, out := call(t, ro, "discover_stack", map[string]any{"dir": repo}); !strings.Contains(out, `"tech":"php"`) || !strings.Contains(out, `"version":"8.2.1"`) {
 		t.Fatalf("discover: %s", out)
 	}
+	dockerfile := filepath.Join(repo, "Dockerfile")
+	os.WriteFile(dockerfile, []byte("FROM php:8.3-fpm\n"), 0o644)
+	if _, out := call(t, ro, "discover_stack", map[string]any{"dir": dockerfile}); !strings.Contains(out, `"tech":"docker"`) || !strings.Contains(out, `"infra":true`) || !strings.Contains(out, `"file":`) {
+		t.Fatalf("discover a file: %s", out)
+	}
 	if res, _ := call(t, ro, "discover_stack", map[string]any{"dir": "relative/path"}); !res.IsError {
 		t.Fatal("a relative dir must be rejected")
 	}

@@ -115,6 +115,12 @@ func fields() []Field {
 	add(f)
 	add(core("dashboard.enabled", "Dashboard", TypeBool, "Rewrite a static status page after every cycle."))
 	add(core("dashboard.file", "Dashboard file", TypeString, "Default: dashboard.html inside the alerts directory."))
+	f = core("tui.refresh", "TUI refresh", TypeDuration, "How often the full-screen interface re-reads the state. At least 1s.")
+	f.Min = num(1)
+	add(f)
+	f = core("tui.fetch", "TUI fetch", TypeDuration, "How often the full-screen interface fetches the feeds itself; 0 only on request. A running daemon already fetches every interval.")
+	f.Min = num(0)
+	add(f)
 
 	add(httpF("user_agent", "User agent", TypeString, "Sent with every request."))
 	add(httpF("timeout", "Timeout", TypeDuration, "Per request."))

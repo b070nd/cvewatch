@@ -30,20 +30,9 @@ type Opened struct {
 }
 
 func ResolveFolder(typed string) (string, error) {
-	p := strings.TrimSpace(typed)
-	if p == "" {
-		return "", errors.New("no folder given")
-	}
-	if p == "~" || strings.HasPrefix(p, "~/") || strings.HasPrefix(p, "~"+string(filepath.Separator)) {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("cannot find the home folder for %s", p)
-		}
-		p = filepath.Join(home, p[1:])
-	}
-	abs, err := filepath.Abs(p)
+	abs, err := typedPath(typed, "folder")
 	if err != nil {
-		return "", fmt.Errorf("cannot use %s as a folder", p)
+		return "", err
 	}
 	fi, err := os.Stat(abs)
 	switch {
@@ -67,11 +56,11 @@ func Open(s *ops.Session, req Request) (Opened, error) {
 
 	var res *discovery.Result
 	if strings.TrimSpace(req.Folder) != "" {
-		dir, err := ResolveFolder(req.Folder)
+		src, err := ResolveSource(req.Folder)
 		if err != nil {
 			return out, err
 		}
-		r, err := discovery.Scan(dir, cat, discovery.Options{})
+		r, err := ScanSource(src, cat)
 		if err != nil {
 			return out, err
 		}
@@ -96,7 +85,7 @@ func Open(s *ops.Session, req Request) (Opened, error) {
 		if !slices.Contains(files, req.Project) {
 			return out, fmt.Errorf("project %q has no file under config/projects, so it cannot be edited here", req.Project)
 		}
-		path, err := projectfile.Path(projectsDir(s), req.Project)
+		path, err := s.ProjectFile(req.Project)
 		if err != nil {
 			return out, err
 		}
@@ -155,7 +144,7 @@ func storedPath(root string, stored []model.Lockfile, p string) string {
 }
 
 func storedLockfiles(s *ops.Session, name string) []model.Lockfile {
-	path, err := projectfile.Path(projectsDir(s), name)
+	path, err := s.ProjectFile(name)
 	if err != nil {
 		return nil
 	}
@@ -169,8 +158,6 @@ func storedLockfiles(s *ops.Session, name string) []model.Lockfile {
 	}
 	return file.Project().Lockfiles
 }
-
-func projectsDir(s *ops.Session) string { return filepath.Join(s.Cfg.Root, "config", "projects") }
 
 // absolute makes a project file path absolute: relative ones follow the config root.
 func absolute(root, p string) string {
@@ -222,7 +209,22 @@ func realPath(p string) string {
 }
 
 func scanNote(res discovery.Result) string {
-	s := fmt.Sprintf("scanned %s: %s, %s", plain(res.Root), count(len(res.Techs), "technology", "technologies"), count(len(res.Lockfiles), "lockfile", "lockfiles"))
+	where := res.Root
+	if res.File != "" {
+		where = res.File
+	}
+	s := fmt.Sprintf("scanned %s: %s, %s", plain(where), count(len(res.Techs), "technology", "technologies"), count(len(res.Lockfiles), "lockfile", "lockfiles"))
+	if res.File != "" {
+		infra := 0
+		for _, t := range res.Techs {
+			if t.Infra {
+				infra++
+			}
+		}
+		if infra > 0 {
+			s += fmt.Sprintf(" (%d infrastructure)", infra)
+		}
+	}
 	if res.Truncated {
 		s += " (scan stopped early)"
 	}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -93,17 +94,108 @@ func (s *Session) mayRead(project string) error {
 	return fmt.Errorf("%w: %s has no access to project %q", ErrDenied, s.Actor, project)
 }
 
-// ProjectNames lists the project files the actor may see.
+// ProjectNames lists the projects the actor may see that have a file. A
+// project is named by the `name:` in its file, whatever the file is called.
 func (s *Session) ProjectNames() ([]string, error) {
-	names, err := projectfile.List(s.projectsDir())
+	files, err := s.projectFiles()
 	if err != nil {
 		return nil, err
 	}
+	names := slices.Sorted(maps.Keys(files))
 	projects, _, open := s.Cfg.Allowed(baseActor(s.Actor))
 	if open {
 		return names, nil
 	}
 	return slices.DeleteFunc(names, func(n string) bool { return !slices.Contains(projects, n) }), nil
+}
+
+// projectFiles maps the name of every project file in the projects folder to
+// its path. The loaded configuration says which file declared which name; a
+// file it has not seen (written since) is read for its name, and a file that
+// cannot be read goes by its file name.
+func (s *Session) projectFiles() (map[string]string, error) {
+	dir := s.projectsDir()
+	stems, err := projectfile.List(dir)
+	if err != nil {
+		return nil, err
+	}
+	known := map[string]string{}
+	for name, path := range s.Cfg.ProjectFiles() {
+		known[absPath(path)] = name
+	}
+	out := map[string]string{}
+	for _, stem := range stems {
+		path := filepath.Join(dir, stem+".yaml")
+		name, ok := known[absPath(path)]
+		if !ok {
+			name = declaredName(path, stem)
+		}
+		if _, dup := out[name]; !dup {
+			out[name] = path
+		}
+	}
+	return out, nil
+}
+
+// ProjectFile is the file of a project. A name no file declares is a project
+// to be created, and its file is <name>.yaml; it is an error when that file
+// belongs to another project.
+func (s *Session) ProjectFile(name string) (string, error) {
+	files, err := s.projectFiles()
+	if err != nil {
+		return "", err
+	}
+	if path, ok := files[name]; ok {
+		return path, nil
+	}
+	path, err := projectfile.Path(s.projectsDir(), name)
+	if err != nil {
+		return "", err
+	}
+	for owner, p := range files {
+		if p == path {
+			return "", fmt.Errorf("%s is the file of project %q, not %q", filepath.Base(path), owner, name)
+		}
+	}
+	return path, nil
+}
+
+// disabledFiles maps the name of every switched-off project to its file.
+func (s *Session) disabledFiles() (map[string]string, error) {
+	dir := s.projectsDir()
+	stems, err := projectfile.ListDisabled(dir)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for _, stem := range stems {
+		path := filepath.Join(dir, stem+".yaml.disabled")
+		if name := declaredName(path, stem); out[name] == "" {
+			out[name] = path
+		}
+	}
+	return out, nil
+}
+
+// declaredName is the name a project file declares, or the fallback when the
+// file cannot be read or has none.
+func declaredName(path, fallback string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fallback
+	}
+	f, err := projectfile.Parse(data)
+	if err != nil || f.Project().Name == "" {
+		return fallback
+	}
+	return f.Project().Name
+}
+
+func absPath(p string) string {
+	if abs, err := filepath.Abs(p); err == nil {
+		return abs
+	}
+	return filepath.Clean(p)
 }
 
 // EditProject previews a change and, with Save, validates and writes it. The
@@ -112,7 +204,7 @@ func (s *Session) ProjectNames() ([]string, error) {
 // project needs access to every project.
 func (s *Session) EditProject(c ProjectChange) (ProjectPreview, error) {
 	name := strings.TrimSpace(c.Project)
-	path, err := projectfile.Path(s.projectsDir(), name)
+	path, err := s.ProjectFile(name)
 	if err != nil {
 		return ProjectPreview{}, err
 	}

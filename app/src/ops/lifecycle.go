@@ -118,7 +118,18 @@ func (s *Session) DisabledProjects() ([]string, error) {
 	if _, _, open := s.Cfg.Allowed(baseActor(s.Actor)); !open {
 		return []string{}, nil
 	}
-	return projectfile.ListDisabled(s.projectsDir())
+	files, err := s.disabledFiles()
+	if err != nil {
+		return nil, err
+	}
+	return slices.Sorted(maps.Keys(files)), nil
+}
+
+// DisabledFile is the switched-off file of a project, if there is one.
+func (s *Session) DisabledFile(name string) (string, bool) {
+	files, err := s.disabledFiles()
+	path, ok := files[name]
+	return path, ok && err == nil
 }
 
 type lifecyclePlan struct {
@@ -150,10 +161,9 @@ func (s *Session) planLifecycle(r LifecycleRequest) (*lifecyclePlan, error) {
 	}
 	dir := s.projectsDir()
 	var err error
-	if pl.livePath, err = projectfile.Path(dir, pl.name); err != nil {
+	if err := pl.resolveFiles(s); err != nil {
 		return pl, err
 	}
-	pl.offPath = pl.livePath + ".disabled"
 	if err := pl.locate(s); err != nil {
 		return pl, err
 	}
@@ -165,8 +175,12 @@ func (s *Session) planLifecycle(r LifecycleRequest) (*lifecyclePlan, error) {
 	parsed, perr := projectfile.Parse(pl.oldData)
 	if perr == nil {
 		f = parsed
-		if got := f.Project().Name; got != pl.name {
-			return pl, fmt.Errorf("%s declares the name %q, not %q; make them match before changing the project as a whole", filepath.Base(pl.srcPath), got, pl.name)
+		if got := f.Project().Name; got != pl.name && got != "" {
+			// only a file that did not load can get here: the ledger follows the name the file declares
+			if r.Verb == VerbRename {
+				return pl, fmt.Errorf("%s declares the name %q, not %q; make them match before renaming the project", filepath.Base(pl.srcPath), got, pl.name)
+			}
+			pl.warn("%s declares the name %q, not %q", filepath.Base(pl.srcPath), got, pl.name)
 		}
 	}
 	needsFile := r.Verb == VerbRename || r.Verb == VerbDuplicate || r.Verb == VerbEnable
@@ -225,6 +239,39 @@ func (pl *lifecyclePlan) warn(format string, a ...any) {
 	pl.preview.Warnings = append(pl.preview.Warnings, fmt.Sprintf(format, a...))
 }
 
+// resolveFiles finds where the project's live and disabled files are. They need
+// not be called after the project: a disabled file is enabled under its own
+// name, and a project nobody has a file for gets <name>.yaml.
+func (pl *lifecyclePlan) resolveFiles(s *Session) error {
+	live, err := s.projectFiles()
+	if err != nil {
+		return err
+	}
+	off, err := s.disabledFiles()
+	if err != nil {
+		return err
+	}
+	livePath, isLive := live[pl.name]
+	offPath, isOff := off[pl.name]
+	switch {
+	case isOff && pl.req.Verb == VerbEnable: // back under the disabled file's own name; a live file of the project is a conflict to report
+		pl.livePath = strings.TrimSuffix(offPath, ".disabled")
+	case isLive:
+		pl.livePath = livePath
+	case isOff:
+		pl.livePath = strings.TrimSuffix(offPath, ".disabled")
+	default:
+		if pl.livePath, err = s.ProjectFile(pl.name); err != nil {
+			return err
+		}
+	}
+	pl.offPath = pl.livePath + ".disabled"
+	if isOff {
+		pl.offPath = offPath
+	}
+	return nil
+}
+
 // locate finds the file the verb starts from: the live one, or for enable and
 // delete the disabled one.
 func (pl *lifecyclePlan) locate(s *Session) error {
@@ -278,7 +325,11 @@ func (s *Session) nameTaken(name, livePath string) bool {
 			return true
 		}
 	}
-	return false
+	live, _ := s.projectFiles()
+	off, _ := s.disabledFiles()
+	_, inLive := live[name]
+	_, inOff := off[name]
+	return inLive || inOff
 }
 
 func (s *Session) countFindings(pl *lifecyclePlan) {

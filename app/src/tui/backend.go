@@ -1,10 +1,14 @@
 package tui
 
 import (
+	"context"
 	"log/slog"
 
 	"github.com/b070nd/cvewatch/app/src/audit"
+	"github.com/b070nd/cvewatch/app/src/config"
 	"github.com/b070nd/cvewatch/app/src/ops"
+	"github.com/b070nd/cvewatch/app/src/pipeline"
+	"github.com/b070nd/cvewatch/app/src/store"
 )
 
 // Backend is everything the TUI needs from the monitor. Read hands the
@@ -17,7 +21,18 @@ type Backend interface {
 	// Settings opens the configuration documents without loading the
 	// configuration, so the Settings screen works while config.yaml is broken.
 	Settings(fn func(*ops.SettingsSession) error) error
+	// Fetch fetches the feeds once, like a daemon cycle, under a write
+	// session. progress may be nil and is called from several goroutines, one
+	// at a time. It returns store.ErrBusy when another process, such as the
+	// daemon in a cycle, holds the data; the caller retries later.
+	Fetch(ctx context.Context, progress func(ops.RefreshProgress)) (pipeline.Result, error)
+	// TUISettings reads the tui section of config.yaml afresh. It never fails:
+	// a broken or missing file gives the defaults.
+	TUISettings() config.TUI
 }
+
+// ErrBusy is what Fetch returns while another process holds the data.
+var ErrBusy = store.ErrBusy
 
 type backend struct {
 	root string
@@ -66,3 +81,15 @@ func (b *backend) Settings(fn func(*ops.SettingsSession) error) error {
 	ss.Actor = actor()
 	return fn(ss)
 }
+
+func (b *backend) Fetch(ctx context.Context, progress func(ops.RefreshProgress)) (pipeline.Result, error) {
+	s, err := ops.OpenRepair(b.root, b.log)
+	if err != nil {
+		return pipeline.Result{}, err
+	}
+	defer s.Close()
+	s.Actor = actor()
+	return s.RefreshWith(ctx, progress)
+}
+
+func (b *backend) TUISettings() config.TUI { return config.LoadTUI(b.root) }

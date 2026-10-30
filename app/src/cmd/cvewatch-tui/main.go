@@ -24,7 +24,9 @@ func main() {
 	defer stop()
 	// The screen is the interface, so only errors go to stderr.
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	if err := tui.Run(ctx, tui.NewBackend(*root, log), tui.Options{Dir: *dir}); err != nil {
+	b := tui.NewBackend(*root, log)
+	set := b.TUISettings()
+	if err := tui.Run(ctx, b, tui.Options{Dir: *dir, Refresh: set.Refresh, Fetch: set.Fetch}); err != nil {
 		fmt.Fprintln(os.Stderr, "cvewatch-tui:", err)
 		os.Exit(1)
 	}

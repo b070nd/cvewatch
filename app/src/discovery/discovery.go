@@ -53,6 +53,12 @@ type TechProposal struct {
 	Version    string     `json:"version"` // empty means unknown
 	Confidence Confidence `json:"confidence"`
 	Evidence   []Evidence `json:"evidence"`
+	// Infra is true when the technology only appears in container or
+	// orchestration files (base images, compose services, Kubernetes images,
+	// packages installed in a Dockerfile); Category is then its catalog
+	// category, so a UI can group infrastructure.
+	Infra    bool   `json:"infra,omitempty"`
+	Category string `json:"category,omitempty"`
 }
 
 // LockProposal is a file cvewatch can read as an inventory source.
@@ -64,7 +70,8 @@ type LockProposal struct {
 
 // Result is everything a scan found.
 type Result struct {
-	Root      string         `json:"root"` // absolute
+	Root      string         `json:"root"`           // absolute; the parent folder when a single file was scanned
+	File      string         `json:"file,omitempty"` // absolute, set when a single file was scanned
 	Techs     []TechProposal `json:"techs"`
 	Lockfiles []LockProposal `json:"lockfiles"`
 	Notes     []string       `json:"notes"`
@@ -100,6 +107,7 @@ type hit struct {
 	detail  string
 	claim   string // what the file says, for notes: "says 8.2" or "requires >=8.1"
 	quiet   bool   // never worth a disagreement note (a dependency range)
+	infra   bool   // came from a container or orchestration file
 }
 
 type hint struct {
@@ -116,6 +124,7 @@ type scanner struct {
 	notes map[string]bool
 	big   bool
 	trunc bool
+	one   bool // a single file is scanned, so unresolved variables are worth a note
 }
 
 // file is one regular file being looked at; its content is read at most once.
@@ -308,7 +317,7 @@ func (s *scanner) lockfile(f *file) {
 // marker (11): file names that give a technology away.
 func (s *scanner) marker(f *file) {
 	for _, t := range s.cat.ForFile(f.base) {
-		s.add(f, t, "", Low, "marker file "+f.base)
+		s.add(f, t, "", Low, "marker file "+f.base).infra = isDockerfile(f.low) || isComposeFile(f.low)
 	}
 }
 
@@ -498,7 +507,13 @@ func tagVersion(ref string) string {
 // image handles one image reference from any detector (7 to 10).
 func (s *scanner) image(f *file, ref string) {
 	ref = strings.TrimSpace(ref)
-	if ref == "" || ref == "scratch" || strings.Contains(ref, "$") {
+	if ref == "" || ref == "scratch" {
+		return
+	}
+	if strings.Contains(ref, "$") {
+		if s.one {
+			s.note("%s: image %s uses a variable with no default", f.rel, ref)
+		}
 		return
 	}
 	t, ok := s.cat.ForImage(ref)
@@ -507,33 +522,12 @@ func (s *scanner) image(f *file, ref string) {
 	}
 	v, c := tagVersion(ref), Medium
 	if v == "" {
+		v = codenameVersion(t.Name, ref)
+	}
+	if v == "" {
 		c = Low
 	}
-	s.add(f, t, v, c, "image "+ref)
-}
-
-// dockerfile (7): FROM lines, skipping scratch, earlier stages and variables.
-func (s *scanner) dockerfile(f *file) {
-	if !strings.HasPrefix(f.low, "dockerfile") && !strings.HasSuffix(f.low, ".dockerfile") && f.low != "containerfile" {
-		return
-	}
-	stages := map[string]bool{}
-	for _, line := range strings.Split(string(f.bytes()), "\n") {
-		parts := strings.Fields(line)
-		if len(parts) < 2 || !strings.EqualFold(parts[0], "FROM") {
-			continue
-		}
-		args := slices.DeleteFunc(parts[1:], func(a string) bool { return strings.HasPrefix(a, "--") })
-		if len(args) == 0 {
-			continue
-		}
-		if !stages[strings.ToLower(args[0])] {
-			s.image(f, args[0])
-		}
-		if len(args) >= 3 && strings.EqualFold(args[1], "AS") {
-			stages[strings.ToLower(args[2])] = true
-		}
-	}
+	s.add(f, t, v, c, "image "+ref).infra = true
 }
 
 // yamlFile (8, 9): compose files and Kubernetes manifests.

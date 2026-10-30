@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -87,9 +86,8 @@ func loadSnapshot(s *ops.Session) (*snapshot, error) {
 	for _, i := range problems {
 		byProject[i.Project] = append(byProject[i.Project], i)
 	}
-	dir := filepath.Join(s.Cfg.Root, "config", "projects")
 	fileOf := func(name string) string {
-		path, _ := projectfile.Path(dir, name)
+		path, _ := s.ProjectFile(name)
 		return path
 	}
 	allowed, _, open := s.Cfg.Allowed(audit.Actor())
@@ -124,7 +122,8 @@ func loadSnapshot(s *ops.Session) (*snapshot, error) {
 		if slices.ContainsFunc(sn.Projects, func(p projectRow) bool { return p.Name == name }) {
 			continue // a live file of the same name wins; the disabled one is a leftover
 		}
-		sn.Projects = append(sn.Projects, projectRow{ProjectView: ops.ProjectView{Name: name}, HasFile: true, File: fileOf(name) + ".disabled", Disabled: true})
+		file, _ := s.DisabledFile(name)
+		sn.Projects = append(sn.Projects, projectRow{ProjectView: ops.ProjectView{Name: name}, HasFile: true, File: file, Disabled: true})
 	}
 	return sn, nil
 }

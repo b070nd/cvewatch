@@ -42,6 +42,9 @@ func TestLoadRejectsMistakes(t *testing.T) {
 		"http source": {"sources/s.yaml", "sources: [{id: x, type: rss, url: 'http://a.test/f'}]\n"},
 		"creds":       {"sources/s.yaml", "sources: [{id: x, type: rss, url: 'https://u:p@a.test/f'}]\n"},
 		"retention":   {"config/config.yaml", "lookback: 100h\nretention: 120h\n"},
+		"tui refresh": {"config/config.yaml", "tui:\n  refresh: 500ms\n"},
+		"tui zero":    {"config/config.yaml", "tui:\n  refresh: 0s\n"},
+		"tui fetch":   {"config/config.yaml", "tui:\n  fetch: -1m\n"},
 		"bad since":   {"config/projects/a.yaml", "name: a\nsince: soon\n"},
 	}
 	for name, c := range cases {
@@ -175,7 +178,7 @@ func TestShippedExamplesLoadWhenUncommented(t *testing.T) {
 	put(t, root, "config/techs.yaml", uncomment(t, shipped.UserTechs(), "techs"))
 	put(t, root, "sources/custom.yaml", uncomment(t, shipped.UserSources(), "sources"))
 	put(t, root, "config/projects/shop.yaml", "name: shop\n")
-	put(t, root, "config/config.yaml", uncomment(t, shipped.Settings(), "access")+uncomment(t, shipped.Settings(), "dashboard"))
+	put(t, root, "config/config.yaml", uncomment(t, shipped.Settings(), "access")+uncomment(t, shipped.Settings(), "dashboard")+uncomment(t, shipped.Settings(), "tui"))
 	b, err := Load(root)
 	if err != nil {
 		t.Fatal(err)
@@ -225,5 +228,87 @@ func TestCheckUsesTheOverlayAndAttributesIssues(t *testing.T) {
 	b, issues = Check(root, Overlay{filepath.Join(root, "sources", "new.yaml"): []byte("sources: [{id: x, type: rss, url: 'http://a.test/f'}]\n"), filepath.Join(root, "config", "projects", "shop.yaml"): nil})
 	if b == nil || len(b.Projects) != 0 || len(issues) != 1 || issues[0].Field != "sources.[id=x].url" || !strings.HasSuffix(issues[0].File, "new.yaml") {
 		t.Fatalf("%+v %+v", b, issues)
+	}
+}
+
+func TestTUISettingsDefaultsAndOverrides(t *testing.T) {
+	if d := Defaults().TUI; d.Refresh != 30*time.Second || d.Fetch != 0 {
+		t.Fatalf("defaults %+v", d)
+	}
+	root := t.TempDir()
+	b, err := Load(root)
+	if err != nil || b.TUI != Defaults().TUI {
+		t.Fatalf("no config.yaml: %+v %v", b.TUI, err)
+	}
+	put(t, root, "config/config.yaml", "tui:\n  fetch: 15m\n")
+	b, err = Load(root)
+	if err != nil || b.TUI.Refresh != 30*time.Second || b.TUI.Fetch != 15*time.Minute {
+		t.Fatalf("a missing key keeps its default: %+v %v", b.TUI, err)
+	}
+	put(t, root, "config/config.yaml", "tui:\n  refresh: 1s\n  fetch: 0s\n")
+	if b, err = Load(root); err != nil || b.TUI.Refresh != time.Second || b.TUI.Fetch != 0 {
+		t.Fatalf("the minimum and zero are allowed: %+v %v", b.TUI, err)
+	}
+}
+
+func TestCheckAttributesTUIIssuesToTheirKeys(t *testing.T) {
+	root := t.TempDir()
+	_, issues := Check(root, Overlay{SettingsPath(root): []byte("tui:\n  refresh: 200ms\n  fetch: -1s\n")})
+	got := map[string]bool{}
+	for _, is := range issues {
+		got[is.Field] = true
+	}
+	if !got["tui.refresh"] || !got["tui.fetch"] {
+		t.Fatalf("issues %+v", issues)
+	}
+}
+
+func TestLoadTUIFallsBackPerValue(t *testing.T) {
+	root := t.TempDir()
+	if got := LoadTUI(root); got != Defaults().TUI {
+		t.Fatalf("no file: %+v", got)
+	}
+	for text, want := range map[string]TUI{
+		"tui:\n  refresh: 2m\n  fetch: 1h\n":    {Refresh: 2 * time.Minute, Fetch: time.Hour},
+		"tui:\n  refresh: 10ms\n  fetch: -1h\n": Defaults().TUI,
+		"tui: [broken\n":                        Defaults().TUI,
+		"interval: nope\ntui:\n  refresh: 9s\n": {Refresh: 9 * time.Second},
+		"tui:\n  refresh: soon\n":               Defaults().TUI,
+	} {
+		put(t, root, "config/config.yaml", text)
+		if got := LoadTUI(root); got != want {
+			t.Errorf("%q: got %+v, want %+v", text, got, want)
+		}
+	}
+}
+
+func TestProjectFilesAreKeyedByTheNameInTheFile(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, "config/techs.yaml", "techs: [{name: php}]\n")
+	put(t, root, "config/projects/magento2-shop.yaml", "name: shop\ntechs: [{name: php}]\n")
+	put(t, root, "config/projects/shop-copy.yaml", "name: shop\n") // second claim on a name: broken, the first file keeps it
+	put(t, root, "config/projects/bad.yaml", "name: [\n")
+	b, err := LoadLenient(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := ProjectsDir(root)
+	got := b.ProjectFiles()
+	want := map[string]string{
+		"shop":      filepath.Join(dir, "magento2-shop.yaml"),
+		"shop-copy": filepath.Join(dir, "shop-copy.yaml"),
+		"bad":       filepath.Join(dir, "bad.yaml"),
+	}
+	for name, file := range want {
+		if abs, _ := filepath.Abs(got[name]); abs != file && got[name] != file {
+			t.Errorf("%s: file %q, want %q (all: %v)", name, got[name], file, got)
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("files = %v", got)
+	}
+	got["shop"] = "changed"
+	if b.ProjectFiles()["shop"] == "changed" {
+		t.Error("ProjectFiles must hand out a copy")
 	}
 }

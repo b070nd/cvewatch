@@ -24,7 +24,7 @@ func (s *scanner) compose(f *file, data []byte) {
 	slices.Sort(names) // a stable order keeps ties deterministic
 	for _, n := range names {
 		if img, ok := asMap(services[n])["image"].(string); ok {
-			s.image(f, img)
+			s.image(f, expandVars(img, nil))
 		}
 	}
 }
@@ -159,6 +159,9 @@ func (s *scanner) result(root string) Result {
 			}
 		}
 		p := TechProposal{Tech: name, Title: hits[0].tech.Title, Confidence: Low}
+		if p.Infra = !slices.ContainsFunc(hits, func(h hit) bool { return !h.infra }); p.Infra {
+			p.Category = hits[0].tech.Category
+		}
 		if p.Title == "" {
 			p.Title = name
 		}

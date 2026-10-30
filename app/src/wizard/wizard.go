@@ -114,7 +114,7 @@ func Menu(io IO, sess *ops.Session) error {
 
 func (w *wiz) newProject(sess *ops.Session) error {
 	dir, err := w.pick(setup.Step{Title: "Folder to scan", Kind: setup.KindText,
-		Help: "Path of a repository or project folder. Empty starts from scratch."}, false)
+		Help: "Path of a repository or project folder, or of a Dockerfile or compose file. Empty starts from scratch."}, false)
 	if err != nil {
 		return err
 	}

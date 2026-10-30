@@ -535,6 +535,15 @@ func (s *Session) Rescan(apply bool) (Rescan, error) {
 // Refresh fetches every source, records findings and alerts. It touches all
 // projects, so it needs write access to all of them.
 func (s *Session) Refresh(ctx context.Context) (pipeline.Result, error) {
+	return s.RefreshWith(ctx, nil)
+}
+
+// RefreshProgress is one step of a running refresh; see pipeline.Progress.
+type RefreshProgress = pipeline.Progress
+
+// RefreshWith is Refresh that reports its steps. progress may be nil and is
+// called from several goroutines, one at a time.
+func (s *Session) RefreshWith(ctx context.Context, progress func(RefreshProgress)) (pipeline.Result, error) {
 	if err := s.mayWrite(""); err != nil {
 		return pipeline.Result{}, err
 	}
@@ -542,6 +551,7 @@ func (s *Session) Refresh(ctx context.Context) (pipeline.Result, error) {
 	if err != nil {
 		return pipeline.Result{}, err
 	}
+	runner.Progress = progress
 	return runner.Run(ctx)
 }
 

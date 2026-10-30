@@ -437,3 +437,30 @@ func TestStaleListIsReloadedAfterAnExternalChange(t *testing.T) {
 	d.press("esc", "r")
 	d.want("shop", "disabled")
 }
+
+func TestProjectRowOfAFileNamedDifferentlyHasItsFileAndCanBeDeleted(t *testing.T) {
+	b, root := diskFake(t, nil)
+	dir := filepath.Join(root, "config", "projects")
+	if err := os.Rename(filepath.Join(dir, "shop.yaml"), filepath.Join(dir, "magento2-shop.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	d := start(t, b, Options{})
+	d.press("3")
+	if selectedName(t, d) != "shop" {
+		d.press("down")
+	}
+	row, ok := d.m.(*app).selectedProject()
+	if !ok || row.Name != "shop" || !row.HasFile || filepath.Base(row.File) != "magento2-shop.yaml" {
+		t.Fatalf("row %+v", row)
+	}
+	d.press("X", "enter")
+	d.typ("shop")
+	d.press("enter")
+	d.want("ok: deleted shop")
+	if d.exists(root, "config/projects/magento2-shop.yaml") {
+		t.Fatal("the file is still there")
+	}
+	if got := strings.Join(rowNames(d), ","); got != "mw" {
+		t.Fatalf("rows %s", got)
+	}
+}

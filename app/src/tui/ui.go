@@ -18,6 +18,7 @@ import (
 // Options configure the program.
 type Options struct {
 	Refresh time.Duration // how often to re-read the state; default 30s
+	Fetch   time.Duration // how often to fetch the feeds; 0 only on request
 	Dir     string        // when set, start the setup flow for a new project on this folder
 }
 
