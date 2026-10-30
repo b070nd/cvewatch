@@ -27,7 +27,14 @@ type form struct {
 	prevErr string
 	seq     int // identifies the preview request, so a stale answer is dropped
 	saving  bool
-	touched bool // an answer was given, so leaving loses something
+	touched bool         // an answer was given, so leaving loses something
+	pick    *sectionPick // the review is choosing a step to go back to
+}
+
+// sectionPick is the list of steps the review can go back to.
+type sectionPick struct {
+	items []setup.Section
+	vp    viewport
 }
 
 func newForm(fl *setup.Flow, creating bool, name string) *form {
@@ -125,6 +132,59 @@ func (m *app) toggleAll() tea.Cmd {
 		f.sel[o.Value] = all
 	}
 	return nil
+}
+
+func (m *app) openPick() tea.Cmd {
+	f := m.frm
+	secs := f.flow.Sections()
+	if len(secs) == 0 {
+		return nil
+	}
+	f.pick = &sectionPick{items: secs}
+	f.pick.vp.reset(len(secs))
+	return nil
+}
+
+// pickEnter goes to the chosen step; once it is answered the flow is at the review again.
+func (m *app) pickEnter() tea.Cmd {
+	f := m.frm
+	id := f.pick.items[f.pick.vp.at()].ID
+	f.pick = nil
+	if err := f.flow.Revisit(id); err != nil {
+		m.fail(err.Error())
+		return nil
+	}
+	f.load()
+	return f.enter(m)
+}
+
+// clickPick selects the step drawn on the given body line; a second click goes there.
+func (m *app) clickPick(line int) tea.Cmd {
+	f := m.frm
+	w, _ := m.size()
+	head, _, _ := f.frame(w, m.bodyH())
+	i := rowAt(&f.pick.vp, line-len(head)-1)
+	switch {
+	case i < 0:
+		return nil
+	case i == f.pick.vp.at():
+		return m.pickEnter()
+	}
+	f.pick.vp.to(i)
+	return nil
+}
+
+func (f *form) pickRows(w, room int) []string {
+	out := []string{stMuted.Render(trunc("Go back to which step? The review comes back after it.", w))}
+	start, end := f.pick.vp.window(max(room-1, 1))
+	for i := start; i < end; i++ {
+		line := "  " + oneLine(f.pick.items[i].Title)
+		if i == f.pick.vp.at() {
+			line = stSel.Render(pad("> "+oneLine(f.pick.items[i].Title), w))
+		}
+		out = append(out, line)
+	}
+	return out
 }
 
 // clickOption selects the option drawn on the given body line; a second
@@ -233,6 +293,9 @@ func (f *form) frame(w, h int) (head, tail []string, room int) {
 // layout gives the step's list or diff its room; it runs from Update.
 func (f *form) layout(w, h int) {
 	_, _, room := f.frame(w, h)
+	if f.pick != nil {
+		f.pick.vp.fit(max(room-1, 1))
+	}
 	switch f.step.Kind {
 	case setup.KindChoice, setup.KindMulti:
 		f.vp.fit(room)
@@ -249,6 +312,9 @@ func (f *form) layout(w, h int) {
 func (f *form) view(w, h int) []string {
 	out, tail, room := f.frame(w, h)
 	st := f.step
+	if f.pick != nil {
+		return append(append(out, f.pickRows(w, room)...), tail...)
+	}
 	switch st.Kind {
 	case setup.KindText:
 		out = append(out, "> "+f.in.view(w-2, true))

@@ -20,6 +20,7 @@ type findingsState struct {
 	filtering bool
 	in        input
 	det       *detail
+	sel       map[string]bool // issues marked for a change of many; always among vis
 }
 
 // minCycle is the order `s` steps through; unknown means no minimum.
@@ -74,6 +75,77 @@ func targetWords(is query.Issue) []string {
 func (f *findingsState) refit(all []query.Issue) {
 	f.vis = filterIssues(all, f.min, f.text)
 	f.vp.refit(len(f.vis), func(i int) string { return f.vis[i].ID })
+	for id := range f.sel {
+		if !slices.ContainsFunc(f.vis, func(is query.Issue) bool { return is.ID == id }) {
+			delete(f.sel, id)
+		}
+	}
+	if d := f.det; d != nil {
+		if i := slices.IndexFunc(f.vis, func(is query.Issue) bool { return is.ID == d.id }); i >= 0 {
+			d.pos = i
+		}
+	}
+}
+
+func (m *app) toggleSelect() tea.Cmd {
+	f := &m.fnd
+	if len(f.vis) == 0 {
+		return nil
+	}
+	id := f.vis[f.vp.at()].ID
+	if f.sel == nil {
+		f.sel = map[string]bool{}
+	}
+	if f.sel[id] {
+		delete(f.sel, id)
+	} else {
+		f.sel[id] = true
+	}
+	f.vp.move(1)
+	return nil
+}
+
+// selectAll marks every issue in the list, or none when all are marked.
+func (m *app) selectAll() tea.Cmd {
+	f := &m.fnd
+	all := len(f.sel) < len(f.vis)
+	f.sel = map[string]bool{}
+	if all {
+		for _, is := range f.vis {
+			f.sel[is.ID] = true
+		}
+	}
+	return nil
+}
+
+func (m *app) clearSelection() tea.Cmd {
+	m.fnd.sel = nil
+	return nil
+}
+
+// stepIssue opens the next or previous issue of the list, keeping the page
+// open. An issue that left the list (it was just closed) leaves its place to
+// the one that slid into it, which is the next.
+func (m *app) stepIssue(dir int) tea.Cmd {
+	d := m.fnd.det
+	i := m.visibleIssue(d.id)
+	to := i + dir
+	if i < 0 {
+		to = d.pos
+		if dir < 0 {
+			to--
+		}
+	}
+	if to < 0 || to >= len(m.fnd.vis) {
+		if dir > 0 {
+			m.say("this is the last issue of the list")
+		} else {
+			m.say("this is the first issue of the list")
+		}
+		return nil
+	}
+	m.fnd.vp.to(to)
+	return m.openIssueID(m.fnd.vis[to].ID)
 }
 
 func (m *app) cycleSeverity() tea.Cmd {
@@ -105,9 +177,13 @@ func (m *app) openIssue() tea.Cmd {
 	if len(m.fnd.vis) == 0 {
 		return nil
 	}
-	is := m.fnd.vis[m.fnd.vp.at()]
-	m.fnd.det = &detail{id: is.ID, loading: true, body: scrolling()}
-	return detailCmd(m.b, is.ID)
+	return m.openIssueID(m.fnd.vis[m.fnd.vp.at()].ID)
+}
+
+// openIssueID shows the page of an issue and reads it in the background.
+func (m *app) openIssueID(id string) tea.Cmd {
+	m.fnd.det = &detail{id: id, loading: true, body: scrolling(), pos: m.visibleIssue(id)}
+	return m.start("loading "+oneLine(id)+"...", "show "+id, 0, nil, detailCmd(m.b, id))
 }
 
 // clickIssue selects the issue drawn on the given body row; a click on the
@@ -187,6 +263,9 @@ func findingsRoom(h int) int { return max(h-2, 1) }
 func renderFindings(total int, st *findingsState, w, h int) []string {
 	rows := st.vis
 	info := fmt.Sprintf("%d of %d open issues   min severity: %s", len(rows), total, minLabel(st.min))
+	if n := len(st.sel); n > 0 {
+		info += fmt.Sprintf("   %d selected", n)
+	}
 	switch {
 	case st.filtering:
 		info += "   filter: " + st.in.view(30, true)
@@ -209,7 +288,7 @@ func renderFindings(total int, st *findingsState, w, h int) []string {
 	const sevW, ageW, ownW = 8, 7, 10
 	projW := 22
 	showOwn, showProj := w >= 100, w >= 80
-	fixed := 2 + sevW + 1 + idW + 1 + ageW + 1
+	fixed := 3 + sevW + 1 + idW + 1 + ageW + 1
 	if showProj {
 		fixed += projW + 1
 	}
@@ -227,7 +306,7 @@ func renderFindings(total int, st *findingsState, w, h int) []string {
 		head = append(head, pad("OWNER", ownW))
 	}
 	head = append(head, "TITLE")
-	lines = append(lines, stHead.Render(trunc("  "+row(head...), w)))
+	lines = append(lines, stHead.Render(trunc("   "+row(head...), w)))
 
 	start, end := st.vp.window(findingsRoom(h))
 	for i := start; i < end; i++ {
@@ -250,10 +329,14 @@ func renderFindings(total int, st *findingsState, w, h int) []string {
 			}
 			return append(c, trunc(title, titleW))
 		}
+		mark := " " // the first column marks the issues picked for a change of many
+		if st.sel[is.ID] {
+			mark = "*"
+		}
 		if i == st.vp.at() {
-			lines = append(lines, stSel.Render(pad("> "+row(cells(pad(sevWord(is.Severity), sevW))...), w)))
+			lines = append(lines, stSel.Render(pad(mark+"> "+row(cells(pad(sevWord(is.Severity), sevW))...), w)))
 		} else {
-			lines = append(lines, "  "+row(cells(sevText(is.Severity, sevW))...))
+			lines = append(lines, mark+"  "+row(cells(sevText(is.Severity, sevW))...))
 		}
 	}
 	return lines
@@ -271,6 +354,7 @@ type detail struct {
 	sel     viewport // the environment rows, followed by project and env
 	body    viewport // the scrolling page
 	lay     *detailLayout
+	pos     int // where the issue is, or was, in the list
 }
 
 func targetID(t query.Target) string { return t.Project + "/" + string(t.Env) }

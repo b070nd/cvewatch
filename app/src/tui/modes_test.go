@@ -22,6 +22,7 @@ func TestEveryModeIsConsistent(t *testing.T) {
 	a := start(t, newFake(t, nil), Options{}).m.(*app)
 	for _, md := range allModes() {
 		seen := map[string]bool{}
+		always := map[string]bool{}
 		for _, b := range md.binds {
 			if b.help == "" {
 				t.Errorf("%s: binding %q has no help label", md.name, b.shown())
@@ -33,10 +34,11 @@ func TestEveryModeIsConsistent(t *testing.T) {
 				t.Errorf("%s: alias %q is in the footer", md.name, b.shown())
 			}
 			for _, k := range b.keys {
-				if seen[k] {
+				if always[k] { // the same key may serve different states, but only until one that is always on
 					t.Errorf("%s: key %q is bound twice", md.name, k)
 				}
 				seen[k] = true
+				always[k] = b.when == nil
 				if md.typed != nil && utf8.RuneCountInString(k) == 1 && k != "\x00" {
 					t.Errorf("%s: %q is typed into the field, it cannot be a binding", md.name, k)
 				}

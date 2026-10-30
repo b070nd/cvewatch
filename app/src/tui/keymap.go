@@ -13,6 +13,7 @@ var mo struct {
 	noData, overview, status, findings, detail, filter, projects, project, fix *mode
 	formText, formChoice, formMulti, formConfirm, formReview, formBusy         *mode
 	prompt, promptBusy, folder, confirm, help                                  *mode
+	jump, notice, formPick                                                     *mode
 }
 
 var statusKeys = map[string]model.Status{
@@ -75,8 +76,20 @@ func bindScreens() binding {
 		}}
 }
 
+// bindJump opens the jump box. It is in every mode that is not a text input.
+func bindJump() binding {
+	return binding{keys: ks(":", "ctrl+g"), disp: ":", help: "jump to an issue by id or a project by name; matches are listed as you type",
+		short: "jump", prio: 3, nav: true, do: plain((*app).openJump)}
+}
+
+// bindReturn goes back to where the last jump came from, on the level it landed on.
+func bindReturn(level string) binding {
+	return binding{keys: ks("esc", "backspace"), disp: "esc", help: "return to where the jump came from (backspace does the same)", short: "back", prio: 1,
+		when: func(m *app) bool { return m.retAt(level) }, do: plain((*app).goBack)}
+}
+
 func rootBinds(own ...binding) []binding {
-	return append(append(own, bindScreens(), bindTabs(), bindRefresh(), bindHelp()), bindQuit())
+	return append(append(own, bindScreens(), bindTabs(), bindJump(), bindRefresh(), bindHelp()), bindQuit())
 }
 
 func viewportOf(get func(m *app) *viewport) func(m *app, key string) bool {
@@ -92,11 +105,15 @@ func rowAt(vp *viewport, y int) int {
 	return -1
 }
 
-func textScreen(scr screen, name, title string) *mode {
-	return &mode{name: name, title: title, level: true,
-		move:  viewportOf(func(m *app) *viewport { return &m.txt[scr] }),
-		binds: rootBinds(),
-		notes: []string{"This screen is text: it scrolls, it has nothing to select."},
+// pageScreen is Overview or Status: text with rows that can be selected.
+func pageScreen(scr screen, name, title, enterShort, enterHelp, moveHelp string) *mode {
+	return &mode{name: name, title: title, level: true, move: (*app).pageMove, moveShort: "select", moveHelp: moveHelp,
+		wheel: func(m *app, up bool) { m.txt[scr].move(wheelStep(up)) },
+		click: func(m *app, x, y int) tea.Cmd { return m.clickPage(y) },
+		binds: rootBinds(
+			binding{keys: ks("enter"), help: enterHelp, short: enterShort, prio: 1,
+				when: func(m *app) bool { _, ok := m.selectedRow(); return ok }, do: plain((*app).pageEnter)},
+		),
 	}
 }
 
@@ -106,8 +123,10 @@ func init() {
 			{keys: ks("r"), help: "try to load the state again", short: "try again", do: plain(func(m *app) tea.Cmd { return m.refresh(reList | reDetail) })},
 			bindQuit(), bindHelp(), bindScreens(), bindTabs(),
 		}}
-	mo.overview = textScreen(scrOverview, "overview", "Keys on the overview screen")
-	mo.status = textScreen(scrStatus, "status", "Keys on the status screen")
+	mo.overview = pageScreen(scrOverview, "overview", "Keys on the overview screen", "open",
+		"open the issue of the selected policy violation", "up/down select a policy violation; pgup/pgdn, home/end scroll the page")
+	mo.status = pageScreen(scrStatus, "status", "Keys on the status screen", "details",
+		"go to the project the selected error names, else show the error in full", "up/down select an error; pgup/pgdn, home/end scroll the page")
 
 	// ---- findings ----
 	mo.findings = &mode{name: "findings", title: "Keys on the findings screen", level: true,
@@ -117,8 +136,14 @@ func init() {
 			binding{keys: ks("enter"), help: "open the selected issue: its environments and what to do", short: "open", prio: 1, do: plain((*app).openIssue)},
 			binding{keys: ks("/"), help: "filter by words or fields such as severity:high", short: "filter", prio: 1, do: plain((*app).startFilter)},
 			binding{keys: ks("s"), help: "cycle the minimum severity: all, low+, medium+, high+, critical+", short: "severity", prio: 2, do: plain((*app).cycleSeverity)},
+			binding{keys: ks(" "), disp: "space", help: "mark or unmark the issue for a change of many; the cursor moves on", short: "select", prio: 2, do: plain((*app).toggleSelect)},
+			binding{keys: ks("ctrl+a"), help: "select every issue in the list, or none when all of them are selected", short: "all", prio: 3, do: plain((*app).selectAll)},
+			binding{keys: ks("f", "i", "n", "o"), disp: "f/i/n/o", help: "mark every selected issue fixed, ignored, not affected or reopened (its open environments); one note for all",
+				short: "mark selected", prio: 1, when: hasSelection, do: m2(func(m *app, s string) { m.startBulk(statusKeys[s]) })},
+			binding{keys: ks("esc"), help: "clear the selection", short: "clear selection", prio: 1, when: hasSelection, do: plain((*app).clearSelection)},
+			bindReturn(lvList),
 			binding{keys: ks("esc"), help: "clear the filter", short: "clear filter", prio: 2,
-				when: func(m *app) bool { return m.fnd.text != "" }, do: plain((*app).clearFilter)},
+				when: func(m *app) bool { return m.fnd.text != "" && !m.retAt(lvList) }, do: plain((*app).clearFilter)},
 		),
 		notes: []string{"Enter opens an issue; inside it f i n o mark the selected environment."},
 	}
@@ -141,8 +166,17 @@ func init() {
 				short: "project", prio: 2, do: m2(func(m *app, s string) { m.startStatus(statusKeys[s], true) })},
 			{keys: ks("a", "A"), disp: "a/A", help: "assign owner, due date and ticket to the selected environment / to the project",
 				short: "assign", prio: 2, do: m2(func(m *app, s string) { m.startAssign(s == "A") })},
-			bindBack("back to the list of issues", func(m *app) tea.Cmd { m.fnd.det = nil; return nil }),
-			bindRefresh(), bindTabs(), bindHelp(),
+			{keys: ks("]", "J"), disp: "]", help: "open the next issue of the list (J does the same)", short: "next", prio: 1, do: func(m *app, k tea.KeyMsg) tea.Cmd { return m.stepIssue(1) }},
+			{keys: ks("[", "K"), disp: "[", help: "open the previous issue of the list (K does the same)", short: "prev", prio: 1, do: func(m *app, k tea.KeyMsg) tea.Cmd { return m.stepIssue(-1) }},
+			{keys: ks("p"), help: "go to the project of the selected environment", short: "to project", prio: 2, do: plain((*app).goProject)},
+			bindBack("back to the list of issues", func(m *app) tea.Cmd {
+				if m.retAt(lvDetail) {
+					return m.goBack()
+				}
+				m.fnd.det = nil
+				return nil
+			}),
+			bindJump(), bindRefresh(), bindTabs(), bindHelp(),
 		}}
 
 	// ---- projects ----
@@ -164,6 +198,8 @@ func init() {
 			binding{keys: ks("x", "f"), disp: "x", help: "fix the selected problem: shows the change to the file, enter or y applies it", short: "fix", prio: 2, do: plain((*app).startFix)},
 			binding{keys: ks("E", "o"), disp: "E", help: "open the project's file in $EDITOR (also when it is broken), then reload", short: "editor", prio: 3, do: plain((*app).openEditor)},
 			binding{keys: ks("p", "P"), alias: true, help: "next or previous problem of the project", do: (*app).stepProblem},
+			binding{keys: ks("i", "F"), disp: "i", help: "the issues of this project: the findings screen filtered by it", short: "issues", prio: 2, do: plain((*app).goFindings)},
+			bindReturn(lvList),
 		),
 	}
 	mo.project = &mode{name: "project", title: "Keys in a project", level: true,
@@ -175,15 +211,29 @@ func init() {
 			{keys: ks("E", "o"), disp: "E", help: "open the project's file in $EDITOR (also when it is broken), then reload", short: "editor", prio: 2, do: plain((*app).openEditor)},
 			{keys: ks("a", "n"), disp: "a", help: "add a project", prio: 4, do: plain((*app).addProject)},
 			{keys: ks("d"), help: "add a project from a folder", prio: 4, do: plain((*app).scanFolder)},
-			bindBack("back to the list of projects", func(m *app) tea.Cmd { m.prj.deep = false; return nil }),
-			bindRefresh(), bindTabs(), bindHelp(),
+			{keys: ks("i", "F"), disp: "i", help: "the issues of this project: the findings screen filtered by it", short: "issues", prio: 3, do: plain((*app).goFindings)},
+			{keys: ks("[", "]"), disp: "[/]", help: "choose another fix of the problem when it has several", short: "fix", prio: 2,
+				when: severalFixes, do: func(m *app, k tea.KeyMsg) tea.Cmd { m.chooseFix(k.String() == "]"); return nil }},
+			bindBack("back to the list of projects", func(m *app) tea.Cmd {
+				if m.retAt(lvProblem) {
+					return m.goBack()
+				}
+				m.prj.deep = false
+				return nil
+			}),
+			bindJump(), bindRefresh(), bindTabs(), bindHelp(),
 		}}
 	mo.fix = &mode{name: "fix", title: "Keys in the fix preview", move: viewportOf(func(m *app) *viewport { return &m.prj.fix.vp }), moveShort: "scroll",
 		binds: []binding{
 			{keys: ks("enter", "y", "Y"), disp: "enter/y", help: "apply the fix to the project file", short: "apply",
 				when: notSaving, do: plain((*app).applyFix)},
-			{keys: ks("esc", "left", "h", "backspace", "q"), disp: "esc", help: "cancel; nothing is saved (backspace and q do the same)", short: "cancel",
+			{keys: ks("[", "]", "left", "right", "h", "l"), disp: "[/]", help: "choose another fix of the problem: left and right work too", short: "fix", prio: 1,
+				when: fixChoice, do: func(m *app, k tea.KeyMsg) tea.Cmd {
+					return m.stepFix(k.String() == "]" || k.String() == "right" || k.String() == "l")
+				}},
+			{keys: ks("esc", "backspace", "q"), disp: "esc", help: "cancel; nothing is saved (backspace and q do the same)", short: "cancel",
 				when: notSaving, do: plain((*app).cancelFix)},
+			{keys: ks("left", "h"), alias: true, help: "cancel", when: func(m *app) bool { return notSaving(m) && !fixChoice(m) }, do: plain((*app).cancelFix)},
 			bindHelp(),
 		}}
 
@@ -247,7 +297,15 @@ func init() {
 		binds: []binding{
 			{keys: ks("enter", "y", "Y"), disp: "enter/y", help: "save the project file", short: "save", do: plain(func(m *app) tea.Cmd { return m.formAnswer("yes") })},
 			{keys: ks("n", "N"), alias: true, help: "do not save: back to the step before the review", do: plain(func(m *app) tea.Cmd { return m.formAnswer("no") })},
+			{keys: ks("e"), help: "change one step: pick it from a list; the review comes back after it", short: "edit step", prio: 1, do: plain((*app).openPick)},
 			formBack(false), formScan("d", "ctrl+d"), bindHelp(),
+		}}
+	mo.formPick = &mode{name: "form pick", title: "Keys in the list of steps", move: viewportOf(func(m *app) *viewport { return &m.frm.pick.vp }), moveShort: "pick",
+		click: func(m *app, x, y int) tea.Cmd { return m.clickPick(y) },
+		binds: []binding{
+			{keys: ks("enter", "right", "l"), disp: "enter", help: "go to the highlighted step; once it is answered the review comes back", short: "go", prio: 0, do: plain((*app).pickEnter)},
+			{keys: ks("esc", "left", "h", "backspace", "q"), disp: "esc", help: "back to the review (backspace and q do the same)", short: "back", do: plain(func(m *app) tea.Cmd { m.frm.pick = nil; return nil })},
+			bindHelp(),
 		}}
 
 	// ---- popups ----
@@ -287,6 +345,22 @@ func init() {
 			{keys: ks("y", "Y", "enter"), disp: "y/enter", help: "yes", short: "yes", do: plain(func(m *app) tea.Cmd { c := m.cfm; m.cfm = nil; return c.yes(m) })},
 			{keys: ks("n", "N", "esc", "q"), disp: "n/esc", help: "no, carry on (q does the same)", short: "no", do: plain(func(m *app) tea.Cmd { m.cfm = nil; return nil })},
 		}}
+	mo.jump = &mode{name: "jump", title: "Keys in the jump box", modal: true,
+		typed: func(m *app, k tea.KeyMsg) bool { used := m.jmp.in.key(k); m.jmp.refit(m); return used },
+		binds: []binding{
+			{short: "type an id or a name", help: "type part of an issue id or a project name; matches are listed as you type, ids and names that start with it first"},
+			{keys: ks("enter"), help: "go to the highlighted match; text that looks like an issue id is tried as one", short: "go", do: plain((*app).jumpEnter)},
+			{keys: ks("up", "down", "pgup", "pgdown"), disp: "up/down", help: "pick a match (pgup/pgdn page)", short: "pick", prio: 1,
+				do: func(m *app, k tea.KeyMsg) tea.Cmd { m.jmp.vp.handle(k.String()); return nil }},
+			{keys: ks("tab"), help: "complete the text with the highlighted match", short: "complete", prio: 2, do: plain((*app).jumpComplete)},
+			{keys: ks("esc"), help: "cancel", short: "cancel", do: plain(func(m *app) tea.Cmd { m.jmp = nil; return nil })},
+			bindHelpTyped(),
+		}}
+	mo.notice = &mode{name: "notice", title: "Keys in a message", modal: true,
+		binds: []binding{
+			{keys: ks("enter", "esc", "q", "left", "h", "backspace"), disp: "enter/esc", help: "close the message", short: "close", do: plain(func(m *app) tea.Cmd { m.nt = nil; return nil })},
+			bindHelp(),
+		}}
 	mo.help = &mode{name: "help", title: "Keys in the help", modal: true, move: viewportOf(func(m *app) *viewport { return &m.helpVP }), moveShort: "scroll",
 		binds: []binding{
 			{keys: ks("?", "f1", "esc", "left", "h", "backspace", "q"), disp: "? or esc", help: "close the help", short: "close help", nav: true, do: plain(func(m *app) tea.Cmd { m.closeHelp(); return nil })},
@@ -303,6 +377,8 @@ func formMode(f *form) *mode {
 	switch {
 	case f.saving || f.waiting():
 		return mo.formBusy
+	case f.pick != nil:
+		return mo.formPick
 	case f.step.Kind == setup.KindText:
 		return mo.formText
 	case f.step.Kind == setup.KindChoice:
@@ -318,7 +394,8 @@ func formMode(f *form) *mode {
 // allModes lists every mode, for the tests.
 func allModes() []*mode {
 	return []*mode{mo.noData, mo.overview, mo.status, mo.findings, mo.filter, mo.detail, mo.projects, mo.project, mo.fix,
-		mo.formBusy, mo.formText, mo.formChoice, mo.formMulti, mo.formConfirm, mo.formReview, mo.prompt, mo.promptBusy, mo.folder, mo.confirm, mo.help}
+		mo.formBusy, mo.formText, mo.formChoice, mo.formMulti, mo.formConfirm, mo.formReview, mo.formPick, mo.prompt, mo.promptBusy, mo.folder, mo.confirm,
+		mo.jump, mo.notice, mo.help}
 }
 
 func wheelStep(up bool) int {
@@ -329,5 +406,7 @@ func wheelStep(up bool) int {
 }
 
 func notSaving(m *app) bool { return m.prj.fix == nil || !m.prj.fix.saving }
+
+func hasSelection(m *app) bool { return len(m.fnd.sel) > 0 }
 
 func multiField(m *app) bool { return m.prm != nil && len(m.prm.fields) > 1 }

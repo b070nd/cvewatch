@@ -14,6 +14,9 @@ type projectsState struct {
 	prob viewport // the problems of the selected project, followed by field and message
 	fix  *fixState
 	deep bool // inside the selected project: up/down move between its problems
+
+	fixOf string // the problem whose fix was chosen (see chosenFix)
+	fixAt int
 }
 
 // problemRoom is how many problems the project panel shows at once.
@@ -118,7 +121,7 @@ func projectsPanel(rows []projectRow, st *projectsState, w, h int) (detail []str
 	if len(rows) == 0 {
 		return nil, 1
 	}
-	detail = projectDetail(rows[st.proj.at()], &st.prob, w, problemRoom, false)
+	detail = projectDetail(rows[st.proj.at()], st, w, problemRoom, false)
 	detailH := 0
 	if h > 14 {
 		detailH = len(detail) + 1
@@ -182,7 +185,7 @@ func problemBadge(p projectRow) string {
 	return fmt.Sprintf("%d err %d warn", errs, warns)
 }
 
-func projectDetail(p projectRow, prob *viewport, w, room int, deep bool) []string {
+func projectDetail(p projectRow, st *projectsState, w, room int, deep bool) []string {
 	out := []string{section(oneLine(p.Name))}
 	if !p.HasFile {
 		out[0] += stMuted.Render("  defined in the main config, not editable here")
@@ -193,7 +196,7 @@ func projectDetail(p projectRow, prob *viewport, w, room int, deep bool) []strin
 	} else {
 		out = append(out, indentWrap("  technologies: ", techList(p), w)...)
 	}
-	out = append(out, problemLines(p.Problems, prob, w, room, deep)...)
+	out = append(out, problemLines(p.Problems, st, w, room, deep)...)
 	if p.Broken != "" {
 		return out
 	}
@@ -216,12 +219,12 @@ func projectDetail(p projectRow, prob *viewport, w, room int, deep bool) []strin
 
 // problemLines lists the problems, the selected one marked, with the label of
 // its fix underneath. At most room are shown, the selected one among them.
-func problemLines(issues []projectfile.Issue, prob *viewport, w, room int, deep bool) []string {
+func problemLines(issues []projectfile.Issue, st *projectsState, w, room int, deep bool) []string {
 	if len(issues) == 0 {
 		return nil
 	}
-	sel := prob.at()
-	start, end := prob.window(room)
+	sel := st.prob.at()
+	start, end := st.prob.window(room)
 	hint := "problems (enter to select them, x to fix):"
 	if deep {
 		hint = "problems (up/down move, enter or x fix):"
@@ -234,12 +237,34 @@ func problemLines(issues []projectfile.Issue, prob *viewport, w, room int, deep 
 			mark = "  > "
 		}
 		out = append(out, trunc(mark+pad(oneLine(is.Level), 7)+" "+oneLine(is.Field)+": "+oneLine(is.Message), w))
-		if i == sel && len(is.Fixes) > 0 {
-			out = append(out, stMuted.Render(trunc("        fix: "+oneLine(is.Fixes[0].Label), w)))
+		if i == sel {
+			out = append(out, fixLines(is, st.chosenFix(is), w)...)
 		}
 	}
 	if start > 0 || end < len(issues) {
 		out = append(out, stMuted.Render(fmt.Sprintf("    (%d of %d)", sel+1, len(issues))))
 	}
 	return out
+}
+
+// fixLines lists the fixes of a problem under it: one on a line of its own, or
+// several numbered with the chosen one marked.
+func fixLines(is projectfile.Issue, chosen, w int) []string {
+	const shown = 3
+	var out []string
+	switch len(is.Fixes) {
+	case 0:
+		return nil
+	case 1:
+		return []string{stMuted.Render(trunc("        fix: "+oneLine(is.Fixes[0].Label), w))}
+	}
+	from := clamp(chosen-shown+1, 0, len(is.Fixes)-shown)
+	for j := from; j < min(from+shown, len(is.Fixes)); j++ {
+		mark := "  "
+		if j == chosen {
+			mark = "> "
+		}
+		out = append(out, stMuted.Render(trunc(fmt.Sprintf("      %sfix %d: %s", mark, j+1, oneLine(is.Fixes[j].Label)), w)))
+	}
+	return append(out, stMuted.Render(trunc(fmt.Sprintf("        (fix %d of %d: [ and ] choose another)", chosen+1, len(is.Fixes)), w)))
 }

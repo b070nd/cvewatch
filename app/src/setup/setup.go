@@ -84,6 +84,7 @@ type Flow struct {
 	done       bool
 	asked      map[string]bool // versions asked in this pass, by lowercase tech
 	versionAll bool            // ask every tech, not only those without a version
+	revisit    string          // the section being changed from the review; the flow returns to the review after it
 	added      []string        // techs added by name, for the help text
 }
 
@@ -198,9 +199,16 @@ func (f *Flow) Answer(value string) error {
 		return err
 	}
 	f.problem = ""
-	if next := def.next(f, arg, v); next == "" {
+	next := def.next(f, arg, v)
+	switch {
+	case next == "":
 		f.done = true
-	} else {
+	case f.revisit != "":
+		if !f.inSection(next) {
+			next, f.revisit = "review", ""
+		}
+		f.hist = append(f.hist, next) // a plain path: Back retraces it
+	default:
 		f.goTo(next)
 	}
 	return nil
@@ -216,6 +224,59 @@ func (f *Flow) Back() {
 	if len(f.hist) > 1 {
 		f.hist = f.hist[:len(f.hist)-1]
 	}
+	if f.hist[len(f.hist)-1] == "review" {
+		f.revisit = ""
+	}
+}
+
+// Section is a part of the project the review can send the user back to.
+type Section struct{ ID, Title string }
+
+// Sections lists what Revisit accepts now.
+func (f *Flow) Sections() []Section {
+	var out []Section
+	if !f.editing() {
+		out = append(out, Section{"name", "Project name"})
+	}
+	out = append(out, Section{"techs", "Technologies"}, Section{"add-techs", "Add technologies by name"})
+	if len(f.draft.Techs) > 0 {
+		out = append(out, Section{"versions", "Versions"})
+	}
+	if len(f.lockCands()) > 0 {
+		out = append(out, Section{"lockfiles", "Lockfiles"})
+	}
+	return append(out, Section{"envs", "Environments"})
+}
+
+// Revisit goes from the review to one of its sections. Once that section is
+// answered the flow is at the review again, not at the steps after it.
+func (f *Flow) Revisit(id string) error {
+	if f.done || f.hist[len(f.hist)-1] != "review" {
+		return errors.New("only the review can go back to a section")
+	}
+	if !slices.ContainsFunc(f.Sections(), func(s Section) bool { return s.ID == id }) {
+		return fmt.Errorf("no section %q to go back to", id)
+	}
+	to := id
+	if id == "versions" {
+		f.startVersions(true)
+		to = f.nextVersionID()
+	}
+	f.problem, f.revisit = "", id
+	f.hist = append(f.hist, to)
+	return nil
+}
+
+// inSection says whether step id still belongs to the section being revisited.
+func (f *Flow) inSection(id string) bool {
+	base, _, _ := strings.Cut(id, ":")
+	switch f.revisit {
+	case "techs", "add-techs":
+		return base == "add-techs" || base == "version"
+	case "versions":
+		return base == "version"
+	}
+	return false
 }
 
 // Done reports whether the review was confirmed.

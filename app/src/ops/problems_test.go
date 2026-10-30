@@ -52,9 +52,18 @@ func TestProjectProblemsShowFixesAndTheFixesWork(t *testing.T) {
 		if !ok || i.Level != c.level {
 			t.Fatalf("missing %s %s (%s): %+v", c.project, c.field, c.level, issues)
 		}
+		if c.project == "shop" && i.Line == 0 {
+			t.Errorf("%s %s: no line", c.project, c.field)
+		}
 		if c.fix == "" && len(i.Fixes) != 0 || c.fix != "" && (len(i.Fixes) != 1 || i.Fixes[0].Label != c.fix) {
 			t.Errorf("%s %s: fixes = %+v, want %q", c.project, c.field, i.Fixes, c.fix)
 		}
+	}
+	if i, _ := findIssue(issues, "shop", "lockfiles[0].path", ""); i.Line != 4 { // a file check, located by ops
+		t.Errorf("lockfiles[0].path is on line 4, got %d", i.Line)
+	}
+	if i, _ := findIssue(issues, "broken", "file", ""); i.Line != 0 {
+		t.Errorf("a file that does not parse has no line: %d", i.Line)
 	}
 	if _, ok := findIssue(issues, "mw", "", ""); ok {
 		t.Errorf("clean project reported: %+v", issues)

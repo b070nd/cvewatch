@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/b070nd/cvewatch/app/src/catalog"
 	"github.com/b070nd/cvewatch/app/src/matrix"
@@ -17,6 +20,7 @@ type Issue struct {
 	Field   string
 	Message string
 	Project string `json:",omitempty"`
+	Line    int    `json:",omitempty"` // line of the field in the file, 0 when unknown
 	Fixes   []Fix  `json:"fixes,omitempty"`
 }
 
@@ -148,5 +152,69 @@ func (f *File) validate(known func(tech string) bool, suggest func(name string) 
 			checkTech(field+".techs."+n, n, p.Environments[e].Techs[n], func(to string) []Fix { return renameEnvTech(p, e, n, to) })
 		}
 	}
+	f.Locate(issues)
 	return issues
+}
+
+// Locate fills in the line of every issue whose field can be found in the
+// file, e.g. "techs[0].name" or "environments.prod". Others keep their Line.
+func (f *File) Locate(issues []Issue) {
+	for i := range issues {
+		if issues[i].Line == 0 && issues[i].Field != "" {
+			issues[i].Line = f.LineOf(issues[i].Field)
+		}
+	}
+}
+
+// LineOf is the line of a field as validation names it, or 0 when the file
+// has no such key or item.
+func (f *File) LineOf(field string) int {
+	if f.doc == nil || len(f.doc.Content) == 0 {
+		return 0
+	}
+	return lineOf(f.doc.Content[0], field, 0)
+}
+
+func lineOf(n *yaml.Node, path string, line int) int {
+	if path == "" {
+		return line
+	}
+	switch n.Kind {
+	case yaml.AliasNode:
+		if n.Alias != nil {
+			return lineOf(n.Alias, path, line)
+		}
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k := n.Content[i]
+			rest, ok := strings.CutPrefix(path, k.Value)
+			if !ok || k.Value == "" {
+				continue
+			}
+			switch {
+			case rest == "":
+				return k.Line
+			case rest[0] == '.':
+				if l := lineOf(n.Content[i+1], rest[1:], k.Line); l != 0 { // a key may hold a dot: try the next one then
+					return l
+				}
+			case rest[0] == '[':
+				if l := lineOf(n.Content[i+1], rest, k.Line); l != 0 {
+					return l
+				}
+			}
+		}
+	case yaml.SequenceNode:
+		end := strings.IndexByte(path, ']')
+		if path[0] != '[' || end < 0 {
+			return 0
+		}
+		i, err := strconv.Atoi(path[1:end])
+		if err != nil || i < 0 || i >= len(n.Content) {
+			return 0
+		}
+		item := n.Content[i]
+		return lineOf(item, strings.TrimPrefix(path[end+1:], "."), item.Line)
+	}
+	return 0
 }

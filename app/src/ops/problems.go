@@ -106,5 +106,6 @@ func (s *Session) fileProblems(name string, problems []inventory.Problem) ([]pro
 		}
 		issues = append(issues, issue)
 	}
+	f.Locate(issues)
 	return issues, nil
 }

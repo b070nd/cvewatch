@@ -73,6 +73,7 @@ type app struct {
 	helpFor *mode // the mode the open help describes
 	helpVP  viewport
 	txt     [numScreens]viewport // the screens that are plain text
+	pageSel [numScreens]viewport // and the row selected on each, when it has rows
 	cache   [numScreens]textCache
 	data    *snapshot
 	loadErr error
@@ -90,6 +91,9 @@ type app struct {
 	frm *form
 	prm *prompt
 	cfm *confirm
+	jmp *jumpBox
+	nt  *notice
+	ret *returnPoint // where the last jump came from
 }
 
 // ---- tea.Model ----
@@ -144,6 +148,9 @@ func (m *app) fail(s string) {
 
 func (m *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	model, cmd := m.update(msg)
+	if m.ret != nil && m.ret.dest != m.scr {
+		m.ret = nil
+	}
 	m.layout()
 	if m.flashDue && m.after != nil {
 		cmd = tea.Batch(cmd, m.after(flashTTL, flashExpiredMsg{seq: m.flashSeq}))
@@ -269,20 +276,9 @@ func (m *app) stepScreen(d int) { m.scr = (m.scr + numScreens + screen(d)) % num
 
 // textCache is a plain-text screen rendered for one width and snapshot.
 type textCache struct {
-	w     int
-	snap  *snapshot
-	lines []string
-}
-
-// text is the lines of the Overview or Status screen.
-func (m *app) text(scr screen, w int) []string {
-	if c := m.cache[scr]; c.snap == m.data && c.w == w && c.lines != nil {
-		return c.lines
-	}
-	if scr == scrStatus {
-		return renderStatus(m.data.Status, m.data.At, w)
-	}
-	return renderOverview(m.data, w)
+	w    int
+	snap *snapshot
+	page *textPage
 }
 
 // body is the area between the header and the footer, and the prompt that
@@ -293,6 +289,10 @@ func (m *app) body() (w, h int, prompt []string) {
 	switch {
 	case m.cfm != nil:
 		prompt = m.cfm.view(w)
+	case m.nt != nil:
+		prompt = m.nt.view(w)
+	case m.jmp != nil:
+		prompt = m.jmp.view(w, th)
 	case m.prm != nil:
 		prompt = m.prm.view(w, th)
 	}
@@ -327,9 +327,16 @@ func (m *app) layout() {
 		m.prj.proj.fit(room)
 		m.prj.prob.fit(problemRoom)
 	default:
-		m.cache[m.scr] = textCache{w: w, snap: m.data, lines: m.text(m.scr, w)}
-		m.txt[m.scr].refit(len(m.cache[m.scr].lines), nil)
+		pg := m.page(m.scr, w)
+		m.cache[m.scr] = textCache{w: w, snap: m.data, page: pg}
+		m.txt[m.scr].refit(len(pg.lines), nil)
 		m.txt[m.scr].fit(h)
+		m.pageSel[m.scr].refit(len(pg.rows), func(i int) string { return pg.rows[i].key })
+		m.pageSel[m.scr].fit(h)
+	}
+	if m.jmp != nil {
+		_, th := m.size()
+		m.jmp.vp.fit(jumpRows(th))
 	}
 	if m.prm != nil && m.prm.box != nil {
 		_, th := m.size()
@@ -384,13 +391,12 @@ func (m *app) screenBody(w, h int) []string {
 			return m.prj.fix.view(w, h)
 		}
 		if p, ok := m.selectedProject(); ok && m.prj.deep {
-			return projectDetail(p, &m.prj.prob, w, deepRoom(h), true)
+			return projectDetail(p, &m.prj, w, deepRoom(h), true)
 		}
 		return renderProjects(m.data.Projects, &m.prj, w, h)
 	}
-	lines := m.text(m.scr, w)
 	start, end := m.txt[m.scr].window(h)
-	return lines[min(start, len(lines)):min(end, len(lines))]
+	return m.page(m.scr, w).view(start, end, m.pageSel[m.scr].at())
 }
 
 // tabs are the screen tabs as drawn, and the cells each one covers.

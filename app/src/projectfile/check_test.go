@@ -222,3 +222,51 @@ func TestCheckFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestIssuesCarryTheLineOfTheirField(t *testing.T) {
+	src := "# comment\nname: x\nenvs: [dev, prd]\ntechs:\n  - {name: pph, version: v}\n  - name: ruby\n    version: nine\nlockfiles:\n  - type: nope\n    path: a.lock\nenvironments:\n  prod:\n    techs:\n      php: latest\n  qa: {}\n"
+	f := mustParse(t, src)
+	issues := f.ValidateCatalog(testCatalog)
+	want := map[string]int{
+		"envs[1]":                     3,
+		"techs[0]":                    5,
+		"techs[1]":                    6,
+		"lockfiles[0].type":           9,
+		"environments.prod":           12,
+		"environments.prod.techs.php": 14,
+		"environments.qa":             15,
+	}
+	got := map[string]int{}
+	for _, is := range issues {
+		got[is.Field] = is.Line
+	}
+	for field, line := range want {
+		if got[field] != line {
+			t.Errorf("%s: line %d, want %d (all: %v)", field, got[field], line, got)
+		}
+	}
+}
+
+func TestLineOfMapsPathsAndGivesUpOnUnknownOnes(t *testing.T) {
+	f := mustParse(t, "name: x\ntechs:\n  - {name: node.js}\nenvironments:\n  prod:\n    techs:\n      node.js: \"1\"\n")
+	for field, want := range map[string]int{
+		"name": 1, "techs": 2, "techs[0]": 3, "techs[0].name": 3, "environments.prod.techs.node.js": 7,
+		"envs": 0, "techs[1]": 0, "techs[x]": 0, "techs[0].version": 0, "lockfiles[0].path": 0, "": 0, "name.x": 0,
+	} {
+		if got := f.LineOf(field); got != want {
+			t.Errorf("LineOf(%q) = %d, want %d", field, got, want)
+		}
+	}
+	issues := []Issue{{Field: "techs[0]"}, {Field: "techs[0]", Line: 99}, {Field: "gone"}}
+	f.Locate(issues)
+	if issues[0].Line != 3 || issues[1].Line != 99 || issues[2].Line != 0 {
+		t.Errorf("Locate = %+v", issues)
+	}
+}
+
+func TestLineStaysRightWithWindowsLineEndings(t *testing.T) {
+	f := mustParse(t, "name: x\r\ntechs:\r\n  - {name: pph}\r\n")
+	if got := f.LineOf("techs[0]"); got != 3 {
+		t.Errorf("line %d", got)
+	}
+}

@@ -135,6 +135,13 @@ func (m *app) result(msg tea.Msg) outcome {
 	switch msg := msg.(type) {
 	case actionMsg:
 		return outcome{note: msg.info, warn: msg.warn, err: msg.err}
+	case bulkMsg:
+		for _, id := range msg.done {
+			delete(m.fnd.sel, id)
+		}
+		return outcome{note: msg.info, warn: msg.warn, err: msg.err}
+	case detailMsg:
+		m.detailLoaded(msg)
 	case flowMsg:
 		return m.flowStarted(msg)
 	case scanMsg:

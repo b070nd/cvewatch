@@ -136,6 +136,12 @@ func (m *app) stack() []*mode {
 	case m.prm != nil:
 		s = append(s, mo.prompt)
 	}
+	if m.jmp != nil {
+		s = append(s, mo.jump)
+	}
+	if m.nt != nil {
+		s = append(s, mo.notice)
+	}
 	if m.cfm != nil {
 		s = append(s, mo.confirm)
 	}

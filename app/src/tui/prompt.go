@@ -16,6 +16,7 @@ const (
 	pkStatus promptKind = iota // a note for a status change
 	pkAssign                   // owner, due date, ticket
 	pkPath                     // a folder to scan
+	pkBulk                     // a note for a status change of the selected issues
 )
 
 type field struct {
@@ -40,6 +41,7 @@ type prompt struct {
 
 	change ops.Change     // pkStatus
 	assign ops.Assignment // pkAssign
+	bulk   model.Status   // pkBulk
 }
 
 func (p *prompt) view(w, h int) []string {
@@ -99,8 +101,50 @@ func (m *app) startStatus(st model.Status, whole bool) {
 		label = "Reason (required)"
 	}
 	title := fmt.Sprintf("%s: %s", changeWords[st], where(c.Project, c.Env))
-	m.prm = &prompt{kind: pkStatus, title: oneLine(c.ID + " " + title), change: c, fields: []field{{label: label}},
-		hint: "a link to the merge request or ticket makes a good note"}
+	m.prm = &prompt{kind: pkStatus, title: oneLine(c.ID + " " + title), change: c, fields: []field{{label: label}}, hint: noteHint(st)}
+}
+
+// noteHint is what the prompt says about the note: enter saves at once unless
+// the status is a human assertion that needs its reason.
+func noteHint(st model.Status) string {
+	if st == model.StatusNotAffected {
+		return "say why it does not apply here; enter saves, an empty reason is refused"
+	}
+	return "enter saves now; the note is optional (a merge request or ticket link is a good one)"
+}
+
+// bulkChanges are the changes that give every selected issue the status st:
+// on its open environments, or on the closed ones when reopening.
+func (m *app) bulkChanges(st model.Status, note string) []ops.Change {
+	var out []ops.Change
+	for _, is := range m.dataIssues() {
+		if !m.fnd.sel[is.ID] {
+			continue
+		}
+		for _, t := range is.Targets {
+			if (st == model.StatusOpen) == (t.Status == model.StatusOpen) {
+				continue
+			}
+			out = append(out, ops.Change{ID: is.ID, Project: t.Project, Env: t.Env, Status: st, Note: note})
+		}
+	}
+	return out
+}
+
+// startBulk asks for one note for the status change of every selected issue.
+func (m *app) startBulk(st model.Status) {
+	n := len(m.fnd.sel)
+	cs := m.bulkChanges(st, "")
+	if n == 0 || len(cs) == 0 {
+		m.fail("nothing to change in the selected issues")
+		return
+	}
+	label := "Note (optional)"
+	if st == model.StatusNotAffected {
+		label = "Reason (required)"
+	}
+	title := fmt.Sprintf("%s, %s: %s", plural(n, "issue", "issues"), plural(len(cs), "finding", "findings"), changeWords[st])
+	m.prm = &prompt{kind: pkBulk, bulk: st, title: title, fields: []field{{label: label}}, hint: noteHint(st)}
 }
 
 func (m *app) startAssign(whole bool) {
@@ -155,6 +199,13 @@ func (m *app) promptSubmit() tea.Cmd {
 		c := p.change
 		c.Note = val(0)
 		return m.start("saving...", "status "+c.ID+" "+where(c.Project, c.Env), reList|reDetail, p, resolveCmd(m.b, c))
+	case pkBulk:
+		cs := m.bulkChanges(p.bulk, val(0))
+		if len(cs) == 0 {
+			p.problem = "nothing left to change in the selected issues"
+			return nil
+		}
+		return m.start("saving...", "bulk", reList|reDetail, p, bulkCmd(m.b, cs))
 	case pkAssign:
 		a := p.assign
 		a.Owner, a.Due, a.Ticket = val(0), val(1), val(2)
