@@ -31,7 +31,7 @@ func (o Options) refresh() time.Duration {
 // Run shows the TUI full screen until the user quits or ctx ends. A cancelled
 // context is a normal way out and returns nil.
 func Run(ctx context.Context, b Backend, o Options) error {
-	p := tea.NewProgram(New(b, o), tea.WithAltScreen(), tea.WithContext(ctx))
+	p := tea.NewProgram(New(b, o), tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithContext(ctx))
 	_, err := p.Run()
 	if err != nil && ctx.Err() != nil {
 		return nil
@@ -70,6 +70,7 @@ type app struct {
 	w, h    int
 	scr     screen
 	help    bool
+	helpFor *mode // the mode the open help describes
 	helpVP  viewport
 	txt     [numScreens]viewport // the screens that are plain text
 	cache   [numScreens]textCache
@@ -85,6 +86,7 @@ type app struct {
 	prj projectsState
 	frm *form
 	prm *prompt
+	cfm *confirm
 }
 
 // ---- tea.Model ----
@@ -136,6 +138,8 @@ func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		return m.key(msg)
+	case tea.MouseMsg:
+		return m, m.mouse(msg)
 	case tickMsg:
 		next := tickCmd(m.o.refresh())
 		if m.loading {
@@ -231,6 +235,7 @@ func (m *app) scanned(msg scanMsg) (tea.Model, tea.Cmd) {
 		return m, nil // a preview or save is reading the flow right now
 	}
 	m.frm.flow.UseDiscovery(msg.res.Root, msg.res)
+	m.frm.touched = true
 	m.frm.load()
 	m.say(scanNote(msg.res))
 	return m, m.frm.enter(m)
@@ -268,62 +273,10 @@ func (m *app) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	m.flash = ""
-	switch {
-	case m.prm != nil:
-		return m.promptKey(k)
-	case m.help:
-		return m.helpKey(k)
-	case m.frm != nil:
-		return m.formKey(k)
-	case m.prj.fix != nil:
-		return m.fixKey(k)
-	case m.scr == scrFindings && m.fnd.filtering:
-		return m.filterKey(k)
-	}
-	switch s := k.String(); s {
-	case "q":
-		return m, tea.Quit
-	case "?":
-		m.openHelp()
-		return m, nil
-	case "r":
-		return m, m.reload()
-	case "1", "2", "3", "4":
-		m.scr = screen(s[0] - '1')
-		return m, nil
-	case "tab":
-		m.scr = (m.scr + 1) % numScreens
-		return m, nil
-	case "shift+tab":
-		m.scr = (m.scr + numScreens - 1) % numScreens
-		return m, nil
-	}
-	switch m.scr {
-	case scrFindings:
-		return m.findingsKey(k)
-	case scrProjects:
-		return m.projectsKey(k)
-	}
-	m.txt[m.scr].handle(k.String())
-	return m, nil
+	return m, m.dispatch(k)
 }
 
-func (m *app) openHelp() {
-	m.help = true
-	m.helpVP.reset(0)
-}
-
-func (m *app) helpKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch s := k.String(); s {
-	case "?", "esc":
-		m.help = false
-	case "q":
-		return m, tea.Quit
-	default:
-		m.helpVP.handle(s)
-	}
-	return m, nil
-}
+func (m *app) stepScreen(d int) { m.scr = (m.scr + numScreens + screen(d)) % numScreens }
 
 // textCache is a plain-text screen rendered for one width and snapshot.
 type textCache struct {
@@ -348,10 +301,13 @@ func (m *app) text(scr screen, w int) []string {
 func (m *app) body() (w, h int, prompt []string) {
 	w, th := m.size()
 	h = th - 4
-	if m.prm != nil {
+	switch {
+	case m.cfm != nil:
+		prompt = m.cfm.view(w)
+	case m.prm != nil:
 		prompt = m.prm.view(w, th)
-		h = max(h-len(prompt), 1)
 	}
+	h = max(h-len(prompt), 1)
 	return w, h, prompt
 }
 
@@ -361,7 +317,7 @@ func (m *app) layout() {
 	w, h, _ := m.body()
 	switch {
 	case m.help:
-		m.helpVP.refit(len(helpView(m.scr, m.frm != nil)), nil)
+		m.helpVP.refit(len(m.helpText(w)), nil)
 		m.helpVP.fit(h)
 	case m.frm != nil:
 		m.frm.layout(w, h)
@@ -375,6 +331,8 @@ func (m *app) layout() {
 		m.fnd.vp.fit(findingsRoom(h))
 	case m.scr == scrProjects && m.prj.fix != nil:
 		m.prj.fix.layout(w, h)
+	case m.scr == scrProjects && m.prj.deep:
+		m.prj.prob.fit(deepRoom(h))
 	case m.scr == scrProjects:
 		_, room := projectsPanel(m.data.Projects, &m.prj, w, h)
 		m.prj.proj.fit(room)
@@ -397,7 +355,7 @@ func (m *app) View() string {
 	var body []string
 	switch {
 	case m.help:
-		lines := helpView(m.scr, m.frm != nil)
+		lines := m.helpText(w)
 		start, end := m.helpVP.window(bodyH)
 		body = lines[min(start, len(lines)):min(end, len(lines))]
 	case m.frm != nil:
@@ -410,7 +368,8 @@ func (m *app) View() string {
 		body = append(body, "")
 	}
 	body = append(body, prompt...)
-	lines := []string{m.header(w), stMuted.Render(strings.Repeat("─", w))}
+	crumbs, _ := m.crumbLine(w)
+	lines := []string{m.header(w), crumbs}
 	lines = append(lines, body...)
 	lines = append(lines, m.flashLine(w), m.footer(w))
 	for i, l := range lines {
@@ -435,6 +394,9 @@ func (m *app) screenBody(w, h int) []string {
 		if m.prj.fix != nil {
 			return m.prj.fix.view(w, h)
 		}
+		if p, ok := m.selectedProject(); ok && m.prj.deep {
+			return projectDetail(p, &m.prj.prob, w, deepRoom(h), true)
+		}
 		return renderProjects(m.data.Projects, &m.prj, w, h)
 	}
 	lines := m.text(m.scr, w)
@@ -442,8 +404,9 @@ func (m *app) screenBody(w, h int) []string {
 	return lines[min(start, len(lines)):min(end, len(lines))]
 }
 
-func (m *app) header(w int) string {
-	var tabs []string
+// tabs are the screen tabs as drawn, and the cells each one covers.
+func (m *app) tabs() (tabs []string, spans [numScreens][2]int) {
+	x := width("cvewatch") + 2
 	for i := screen(0); i < numScreens; i++ {
 		label := fmt.Sprintf("%d %s", i+1, screenNames[i])
 		if i == scrFindings && m.data != nil {
@@ -454,7 +417,14 @@ func (m *app) header(w int) string {
 		} else {
 			tabs = append(tabs, stTab.Render(" "+label+" "))
 		}
+		spans[i] = [2]int{x, x + width(tabs[i])}
+		x += width(tabs[i]) + 1
 	}
+	return tabs, spans
+}
+
+func (m *app) header(w int) string {
+	tabs, _ := m.tabs()
 	left := stBold.Render("cvewatch") + "  " + strings.Join(tabs, " ")
 	right := ""
 	switch {
@@ -484,31 +454,4 @@ func (m *app) flashLine(w int) string {
 	return ""
 }
 
-func (m *app) footer(w int) string {
-	var hint string
-	switch {
-	case m.prm != nil && m.prm.box != nil:
-		hint = "tab complete or open  shift+tab up  up/down pick  enter use  esc cancel"
-	case m.prm != nil:
-		hint = "enter confirm  tab next field  esc cancel"
-	case m.help:
-		hint = "up/down scroll  ? or esc close help  q quit"
-	case m.frm != nil:
-		hint = m.frm.hint()
-	case m.data == nil && m.loadErr != nil:
-		hint = "r try again  q quit"
-	case m.prj.fix != nil:
-		hint = "y apply the fix  up/down scroll  n or esc cancel"
-	case m.scr == scrFindings && m.fnd.filtering:
-		hint = "type to filter  enter keep  esc clear"
-	case m.scr == scrFindings && m.fnd.det != nil:
-		hint = "up/down environment  f fixed  i ignore  n not-affected  o reopen  a assign  F/I/N/O whole project  esc back"
-	case m.scr == scrFindings:
-		hint = "up/down move  enter open  s min severity  / filter  r refresh  ? help  q quit"
-	case m.scr == scrProjects:
-		hint = "up/down move  e edit  n new  d folder  p problem  f fix  o editor  ? help  q quit"
-	default:
-		hint = "1-4 screens  up/down scroll  r refresh  ? help  q quit"
-	}
-	return stMuted.Render(trunc(hint, w))
-}
+func (m *app) footer(w int) string { return stMuted.Render(m.top().footerLine(m, w)) }

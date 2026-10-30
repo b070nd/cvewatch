@@ -223,6 +223,16 @@ func key(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyEnd}
 	case "tab":
 		return tea.KeyMsg{Type: tea.KeyTab}
+	case "shift+tab":
+		return tea.KeyMsg{Type: tea.KeyShiftTab}
+	case "left":
+		return tea.KeyMsg{Type: tea.KeyLeft}
+	case "right":
+		return tea.KeyMsg{Type: tea.KeyRight}
+	case "f1":
+		return tea.KeyMsg{Type: tea.KeyF1}
+	case "ctrl+d":
+		return tea.KeyMsg{Type: tea.KeyCtrlD}
 	case "ctrl+u":
 		return tea.KeyMsg{Type: tea.KeyCtrlU}
 	case "ctrl+c":
@@ -270,6 +280,20 @@ func (d *driver) wantNot(parts ...string) {
 			d.t.Errorf("screen has %q:\n%s", p, v)
 		}
 	}
+}
+
+// click presses the left mouse button at a screen cell.
+func (d *driver) click(x, y int) {
+	d.send(tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+}
+
+// wheel turns the mouse wheel once at a screen cell.
+func (d *driver) wheel(up bool, x, y int) {
+	b := tea.MouseButtonWheelDown
+	if up {
+		b = tea.MouseButtonWheelUp
+	}
+	d.send(tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionPress, Button: b})
 }
 
 func tea_window(w, h int) tea.WindowSizeMsg { return tea.WindowSizeMsg{Width: w, Height: h} }

@@ -79,7 +79,7 @@ func (m *app) startFix() tea.Cmd {
 	}
 	is := p.Problems[m.prj.prob.at()]
 	if len(is.Fixes) == 0 {
-		m.fail("no automatic fix for this problem; press o to edit the file")
+		m.fail("no automatic fix for this problem; press E to edit the file")
 		return nil
 	}
 	fx := &fixState{project: p.Name, issue: is, fix: is.Fixes[0], vp: scrolling()}
@@ -87,32 +87,24 @@ func (m *app) startFix() tea.Cmd {
 	return fixPreviewCmd(m.b, fx, fx.project, fx.fix.Ops)
 }
 
-func (m *app) fixKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *app) cancelFix() tea.Cmd {
+	m.prj.fix = nil
+	m.say("cancelled, nothing was saved")
+	return nil
+}
+
+func (m *app) applyFix() tea.Cmd {
 	fx := m.prj.fix
-	if fx.saving {
-		return m, nil
+	if fx.prev == nil {
+		return nil
 	}
-	switch s := k.String(); s {
-	case "esc", "n":
-		m.prj.fix = nil
-		m.say("cancelled, nothing was saved")
-	case "y", "Y":
-		if fx.prev == nil {
-			return m, nil
-		}
-		if fx.prev.Blocked() {
-			m.fail("this cannot be saved until the errors are fixed")
-			return m, nil
-		}
-		fx.saving = true
-		m.busy = "saving..."
-		return m, fixSaveCmd(m.b, fx, fx.project, fx.fix.Ops)
-	case "q":
-		return m, tea.Quit
-	default:
-		fx.vp.handle(s)
+	if fx.prev.Blocked() {
+		m.fail("this cannot be saved until the errors are fixed")
+		return nil
 	}
-	return m, nil
+	fx.saving = true
+	m.busy = "saving..."
+	return fixSaveCmd(m.b, fx, fx.project, fx.fix.Ops)
 }
 
 func (m *app) fixPreviewed(msg fixPreviewMsg) {
@@ -181,7 +173,7 @@ func (fx *fixState) view(w, h int) []string {
 	start, end := fx.vp.window(room)
 	start, end = min(start, len(body)), min(end, len(body))
 	out = append(out, body[start:end]...)
-	return append(out, "", stBold.Render("Apply this fix?")+"  y = apply, n or esc = cancel")
+	return append(out, "", stBold.Render("Apply this fix?")+"  y or enter = apply, esc = cancel")
 }
 
 // openEditor runs $EDITOR on the selected project's file; the TUI reloads when it returns.

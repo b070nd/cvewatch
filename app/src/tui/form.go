@@ -27,6 +27,7 @@ type form struct {
 	prevErr string
 	seq     int // identifies the preview request, so a stale answer is dropped
 	saving  bool
+	touched bool // an answer was given, so leaving loses something
 }
 
 func newForm(fl *setup.Flow, creating bool, name string) *form {
@@ -98,128 +99,107 @@ func (f *form) answer() string {
 	return ""
 }
 
-func (f *form) hint() string {
-	switch f.step.Kind {
-	case setup.KindText:
-		return "type  enter next  esc back  ctrl+d scan a folder"
-	case setup.KindChoice:
-		return "up/down move  enter select  esc back  d scan a folder  ? help"
-	case setup.KindMulti:
-		return "up/down move  space toggle  a all/none  enter confirm  esc back  d folder  ? help"
+func (m *app) formAnswerCurrent() tea.Cmd { return m.formAnswer(m.frm.answer()) }
+
+func (m *app) toggleOption() tea.Cmd {
+	f := m.frm
+	if len(f.step.Options) > 0 {
+		v := f.step.Options[f.vp.at()].Value
+		f.sel[v] = !f.sel[v]
 	}
-	if f.step.ID == "review" {
-		return "y save  n do not save  up/down scroll  esc back  ? help"
-	}
-	return "y yes  n no  esc back  ? help"
+	return nil
 }
 
-func (m *app) formKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+// toggleAll ticks every option, or unticks them all when all are ticked.
+func (m *app) toggleAll() tea.Cmd {
 	f := m.frm
-	if f.saving || f.waiting() { // the preview reads the flow in the background
-		return m, nil
-	}
-	s := k.String()
-	switch s {
-	case "esc":
-		return m.formBack()
-	case "ctrl+d":
-		m.startPath()
-		return m, nil
-	}
-	if f.step.Kind == setup.KindText {
-		if s == "enter" {
-			return m.formAnswer(f.answer())
-		}
-		f.in.key(k)
-		return m, nil
-	}
-	switch s { // keys of the steps that are not text
-	case "q":
-		return m, tea.Quit
-	case "d":
-		m.startPath()
-		return m, nil
-	case "?":
-		m.openHelp()
-		return m, nil
-	}
-	n := len(f.step.Options)
-	switch f.step.Kind {
-	case setup.KindChoice:
-		if f.vp.handle(s) {
-			return m, nil
-		}
-		if s == "enter" && n > 0 {
-			return m.formAnswer(f.answer())
-		}
-	case setup.KindMulti:
-		if f.vp.handle(s) {
-			return m, nil
-		}
-		switch s {
-		case " ", "x":
-			if n > 0 {
-				v := f.step.Options[f.vp.at()].Value
-				f.sel[v] = !f.sel[v]
-			}
-		case "a":
-			ticked := 0
-			for _, on := range f.sel {
-				if on {
-					ticked++
-				}
-			}
-			all := ticked < n
-			f.sel = map[string]bool{}
-			for _, o := range f.step.Options {
-				f.sel[o.Value] = all
-			}
-		case "enter":
-			return m.formAnswer(f.answer())
-		}
-	case setup.KindConfirm:
-		switch s {
-		case "y", "Y":
-			return m.formAnswer("yes")
-		case "n", "N":
-			return m.formAnswer("no")
-		default:
-			f.rev.handle(s)
+	ticked := 0
+	for _, on := range f.sel {
+		if on {
+			ticked++
 		}
 	}
-	return m, nil
+	all := ticked < len(f.step.Options)
+	f.sel = map[string]bool{}
+	for _, o := range f.step.Options {
+		f.sel[o.Value] = all
+	}
+	return nil
+}
+
+// clickOption selects the option drawn on the given body line; a second
+// click on it answers (a choice) or ticks it (a checklist).
+func (m *app) clickOption(line int) tea.Cmd {
+	f := m.frm
+	w, _ := m.size()
+	head, _, _ := f.frame(w, m.bodyH())
+	i := rowAt(&f.vp, line-len(head))
+	switch {
+	case i < 0:
+		return nil
+	case i != f.vp.at():
+		f.vp.to(i)
+	case f.step.Kind == setup.KindMulti:
+		return m.toggleOption()
+	default:
+		return m.formAnswer(f.answer())
+	}
+	return nil
 }
 
 // formAnswer gives the flow an answer. A rejected answer leaves the form
 // where it is with the flow's reason on screen; the last accepted one ends
 // the flow and saves.
-func (m *app) formAnswer(v string) (tea.Model, tea.Cmd) {
+func (m *app) formAnswer(v string) tea.Cmd {
 	f := m.frm
 	if err := f.flow.Answer(v); err != nil {
 		f.step = f.flow.Current() // carries the problem; the typed answer stays
-		return m, nil
+		return nil
 	}
+	f.touched = true
 	if f.flow.Done() {
 		f.saving = true
 		m.busy = "saving..."
-		return m, saveCmd(m.b, f, f.flow.Draft().Project.Name, f.flow)
+		return saveCmd(m.b, f, f.flow.Draft().Project.Name, f.flow)
 	}
 	f.load()
-	return m, f.enter(m)
+	return f.enter(m)
 }
 
-// formBack goes one step back, or leaves the form from the first step.
-func (m *app) formBack() (tea.Model, tea.Cmd) {
+// formBack goes one step back. From the first step it leaves the form, after
+// asking when something was entered.
+func (m *app) formBack() tea.Cmd {
 	f := m.frm
 	before := f.step.ID
 	f.flow.Back()
 	if f.flow.Current().ID == before { // the flow stays put only on its first step
-		m.frm = nil
-		m.say("cancelled, nothing was saved")
-		return m, nil
+		return m.leaveForm()
 	}
 	f.load()
-	return m, f.enter(m)
+	return f.enter(m)
+}
+
+// leaveForm closes the form, unless it holds entered data: then it asks.
+func (m *app) leaveForm() tea.Cmd {
+	if m.frm.saving {
+		return nil
+	}
+	if m.frm.dirty() {
+		m.cfm = &confirm{ask: "Discard what you entered? Nothing has been saved.", yes: func(m *app) tea.Cmd { return m.dropForm() }}
+		return nil
+	}
+	return m.dropForm()
+}
+
+func (m *app) dropForm() tea.Cmd {
+	m.frm = nil
+	m.say("cancelled, nothing was saved")
+	return nil
+}
+
+// dirty is whether leaving would throw away an answer or typed text.
+func (f *form) dirty() bool {
+	return f.touched || (f.step.Kind == setup.KindText && f.in.String() != f.step.Default)
 }
 
 func (f *form) title() string {
@@ -346,7 +326,7 @@ func (f *form) reviewBody(w int) []string {
 // issues, and the question.
 func (f *form) reviewRows(w, room int) []string {
 	body := f.reviewBody(w)
-	ask := stBold.Render("Save this project?") + "  y = save, n = do not save, esc = back"
+	ask := stBold.Render("Save this project?") + "  y = save, esc = back (enter saves too)"
 	start, end := f.rev.window(max(room-2, 1))
 	start, end = min(start, len(body)), min(end, len(body))
 	out := append([]string{}, body[start:end]...)

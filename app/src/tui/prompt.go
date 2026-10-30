@@ -118,39 +118,17 @@ func (m *app) startPath() {
 		box: newFolderBox()}
 }
 
-func (m *app) promptKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+// promptEnter moves to the next field, or submits from the last one.
+func (m *app) promptEnter() tea.Cmd {
 	p := m.prm
-	switch k.String() {
-	case "esc":
-		m.prm = nil
-		return m, nil
+	if p.box == nil && p.idx < len(p.fields)-1 {
+		p.idx++
+		return nil
 	}
-	if p.box != nil {
-		if k.String() == "enter" {
-			return m.promptSubmit()
-		}
-		p.box.key(k)
-		return m, nil
-	}
-	switch k.String() {
-	case "tab", "down":
-		p.idx = min(p.idx+1, len(p.fields)-1)
-		return m, nil
-	case "shift+tab", "up":
-		p.idx = max(p.idx-1, 0)
-		return m, nil
-	case "enter":
-		if p.idx < len(p.fields)-1 {
-			p.idx++
-			return m, nil
-		}
-		return m.promptSubmit()
-	}
-	p.fields[p.idx].in.key(k)
-	return m, nil
+	return m.promptSubmit()
 }
 
-func (m *app) promptSubmit() (tea.Model, tea.Cmd) {
+func (m *app) promptSubmit() tea.Cmd {
 	p := m.prm
 	m.prm = nil
 	val := func(i int) string { return strings.TrimSpace(p.fields[i].in.String()) }
@@ -159,21 +137,21 @@ func (m *app) promptSubmit() (tea.Model, tea.Cmd) {
 		c := p.change
 		c.Note = val(0)
 		m.busy = "saving..."
-		return m, resolveCmd(m.b, c)
+		return resolveCmd(m.b, c)
 	case pkAssign:
 		a := p.assign
 		a.Owner, a.Due, a.Ticket = val(0), val(1), val(2)
 		m.busy = "saving..."
-		return m, assignCmd(m.b, a)
+		return assignCmd(m.b, a)
 	}
 	path := p.box.chosen()
 	if path == "" {
 		m.fail("no folder given")
-		return m, nil
+		return nil
 	}
 	m.busy = "scanning..."
 	if m.frm != nil {
-		return m, scanCmd(m.b, path)
+		return scanCmd(m.b, path)
 	}
-	return m, startFlowCmd(m.b, "", path)
+	return startFlowCmd(m.b, "", path)
 }

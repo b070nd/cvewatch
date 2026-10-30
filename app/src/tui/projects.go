@@ -13,10 +13,14 @@ type projectsState struct {
 	proj viewport // the project rows, followed by name
 	prob viewport // the problems of the selected project, followed by field and message
 	fix  *fixState
+	deep bool // inside the selected project: up/down move between its problems
 }
 
 // problemRoom is how many problems the project panel shows at once.
 const problemRoom = 5
+
+// deepRoom is how many problems fit when the project has the whole body.
+func deepRoom(h int) int { return clamp(h-6, 1, 40) }
 
 func problemID(i projectfile.Issue) string { return i.Field + "\x00" + i.Message }
 
@@ -26,56 +30,76 @@ func (m *app) refitProjects(before string) {
 	rows := m.data.Projects
 	m.prj.proj.refit(len(rows), func(i int) string { return rows[i].Name })
 	var probs []projectfile.Issue
-	if p, ok := m.selectedProject(); ok {
+	p, ok := m.selectedProject()
+	if ok {
 		probs = p.Problems
 	}
 	if m.prj.proj.id() != before {
 		m.prj.prob.reset(len(probs))
+		m.prj.deep = false
+	}
+	if !ok {
+		m.prj.deep = false
 	}
 	m.prj.prob.refit(len(probs), func(i int) string { return problemID(probs[i]) })
 }
 
-func (m *app) projectsKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.data == nil {
-		return m, nil // nothing loaded yet; r retries, q quits
+// stepProblem is the p/P alias: it steps the problem cursor from the project list.
+func (m *app) stepProblem(k tea.KeyMsg) tea.Cmd {
+	if p, ok := m.selectedProject(); ok && len(p.Problems) > 0 {
+		d := 1
+		if k.String() == "P" {
+			d = len(p.Problems) - 1
+		}
+		m.prj.prob.to((m.prj.prob.at() + d) % len(p.Problems))
 	}
-	n := len(m.data.Projects)
+	return nil
+}
+
+func (m *app) enterProject() tea.Cmd {
+	if _, ok := m.selectedProject(); ok {
+		m.prj.deep = true
+	}
+	return nil
+}
+
+func (m *app) editProject() tea.Cmd {
+	p, ok := m.selectedProject()
+	if !ok {
+		return nil
+	}
+	if p.Broken != "" {
+		m.fail("the file of " + p.Name + " does not load; press E to edit it")
+		return nil
+	}
+	m.busy = "opening " + oneLine(p.Name) + "..."
+	return startFlowCmd(m.b, p.Name, "")
+}
+
+func (m *app) addProject() tea.Cmd {
+	m.busy = "opening..."
+	return startFlowCmd(m.b, "", "")
+}
+
+func (m *app) scanFolder() tea.Cmd {
+	m.startPath()
+	return nil
+}
+
+// clickProject selects the project drawn on the given body row; a click on
+// the selected one opens it.
+func (m *app) clickProject(line int) tea.Cmd {
+	i := rowAt(&m.prj.proj, line)
+	switch {
+	case i < 0:
+		return nil
+	case i == m.prj.proj.at():
+		return m.enterProject()
+	}
 	before := m.prj.proj.id()
-	if m.prj.proj.handle(k.String()) {
-		m.refitProjects(before)
-		return m, nil
-	}
-	switch k.String() {
-	case "p", "P":
-		if p, ok := m.selectedProject(); ok && len(p.Problems) > 0 {
-			d := 1
-			if k.String() == "P" {
-				d = len(p.Problems) - 1
-			}
-			m.prj.prob.to((m.prj.prob.at() + d) % len(p.Problems))
-		}
-	case "f":
-		return m, m.startFix()
-	case "o":
-		return m, m.openEditor()
-	case "e", "enter":
-		if n == 0 {
-			return m, nil
-		}
-		p := m.data.Projects[m.prj.proj.at()]
-		if p.Broken != "" {
-			m.fail("the file of " + p.Name + " does not load; press o to edit it")
-			return m, nil
-		}
-		m.busy = "opening " + oneLine(p.Name) + "..."
-		return m, startFlowCmd(m.b, p.Name, "")
-	case "n":
-		m.busy = "opening..."
-		return m, startFlowCmd(m.b, "", "")
-	case "d":
-		m.startPath()
-	}
-	return m, nil
+	m.prj.proj.to(i)
+	m.refitProjects(before)
+	return nil
 }
 
 // techList is "php 8.2, nginx", as much as fits.
@@ -96,7 +120,7 @@ func projectsPanel(rows []projectRow, st *projectsState, w, h int) (detail []str
 	if len(rows) == 0 {
 		return nil, 1
 	}
-	detail = projectDetail(rows[st.proj.at()], &st.prob, w)
+	detail = projectDetail(rows[st.proj.at()], &st.prob, w, problemRoom, false)
 	detailH := 0
 	if h > 14 {
 		detailH = len(detail) + 1
@@ -160,7 +184,7 @@ func problemBadge(p projectRow) string {
 	return fmt.Sprintf("%d err %d warn", errs, warns)
 }
 
-func projectDetail(p projectRow, prob *viewport, w int) []string {
+func projectDetail(p projectRow, prob *viewport, w, room int, deep bool) []string {
 	out := []string{section(oneLine(p.Name))}
 	if !p.HasFile {
 		out[0] += stMuted.Render("  defined in the main config, not editable here")
@@ -171,7 +195,7 @@ func projectDetail(p projectRow, prob *viewport, w int) []string {
 	} else {
 		out = append(out, indentWrap("  technologies: ", techList(p), w)...)
 	}
-	out = append(out, problemLines(p.Problems, prob, w)...)
+	out = append(out, problemLines(p.Problems, prob, w, room, deep)...)
 	if p.Broken != "" {
 		return out
 	}
@@ -193,14 +217,18 @@ func projectDetail(p projectRow, prob *viewport, w int) []string {
 }
 
 // problemLines lists the problems, the selected one marked, with the label of
-// its fix underneath. At most problemRoom are shown, the selected one among them.
-func problemLines(issues []projectfile.Issue, prob *viewport, w int) []string {
+// its fix underneath. At most room are shown, the selected one among them.
+func problemLines(issues []projectfile.Issue, prob *viewport, w, room int, deep bool) []string {
 	if len(issues) == 0 {
 		return nil
 	}
 	sel := prob.at()
-	start, end := prob.window(problemRoom)
-	out := []string{stMuted.Render("  problems (p next, f fix):")}
+	start, end := prob.window(room)
+	hint := "problems (enter to select them, x to fix):"
+	if deep {
+		hint = "problems (up/down move, enter or x fix):"
+	}
+	out := []string{stMuted.Render("  " + hint)}
 	for i := start; i < end; i++ {
 		is := issues[i]
 		mark := "    "

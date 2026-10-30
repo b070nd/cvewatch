@@ -76,35 +76,52 @@ func (f *findingsState) refit(all []query.Issue) {
 	f.vp.refit(len(f.vis), func(i int) string { return f.vis[i].ID })
 }
 
-func (m *app) findingsKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.fnd.det != nil {
-		return m.detailKey(k)
+func (m *app) cycleSeverity() tea.Cmd {
+	m.fnd.min = minCycle[(m.fnd.min.Rank()+1)%len(minCycle)] // the cycle is in rank order
+	m.fnd.refit(m.dataIssues())
+	m.say("minimum severity: " + minLabel(m.fnd.min))
+	return nil
+}
+
+func (m *app) startFilter() tea.Cmd {
+	m.fnd.filtering = true
+	m.fnd.in.set(m.fnd.text)
+	return nil
+}
+
+func (m *app) clearFilter() tea.Cmd {
+	m.fnd.filtering, m.fnd.text = false, ""
+	m.fnd.refit(m.dataIssues())
+	return nil
+}
+
+func (m *app) keepFilter() tea.Cmd {
+	m.fnd.filtering = false
+	return nil
+}
+
+// openIssue opens the issue under the cursor.
+func (m *app) openIssue() tea.Cmd {
+	if len(m.fnd.vis) == 0 {
+		return nil
 	}
-	if m.fnd.vp.handle(k.String()) {
-		return m, nil
+	is := m.fnd.vis[m.fnd.vp.at()]
+	m.fnd.det = &detail{id: is.ID, loading: true, body: scrolling()}
+	return detailCmd(m.b, is.ID)
+}
+
+// clickIssue selects the issue drawn on the given body row; a click on the
+// selected one opens it.
+func (m *app) clickIssue(line int) tea.Cmd {
+	i := rowAt(&m.fnd.vp, line)
+	switch {
+	case i < 0:
+		return nil
+	case i == m.fnd.vp.at():
+		return m.openIssue()
 	}
-	switch k.String() {
-	case "s":
-		m.fnd.min = minCycle[(m.fnd.min.Rank()+1)%len(minCycle)] // the cycle is in rank order
-		m.fnd.refit(m.dataIssues())
-		m.say("minimum severity: " + minLabel(m.fnd.min))
-	case "/":
-		m.fnd.filtering = true
-		m.fnd.in.set(m.fnd.text)
-	case "esc":
-		if m.fnd.text != "" {
-			m.fnd.text = ""
-			m.fnd.refit(m.dataIssues())
-		}
-	case "enter":
-		if len(m.fnd.vis) == 0 {
-			return m, nil
-		}
-		is := m.fnd.vis[m.fnd.vp.at()]
-		m.fnd.det = &detail{id: is.ID, loading: true, body: scrolling()}
-		return m, detailCmd(m.b, is.ID)
-	}
-	return m, nil
+	m.fnd.vp.to(i)
+	return nil
 }
 
 func (m *app) dataIssues() []query.Issue {
@@ -114,18 +131,12 @@ func (m *app) dataIssues() []query.Issue {
 	return m.data.Issues
 }
 
-func (m *app) filterKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch k.String() {
-	case "esc":
-		m.fnd.filtering, m.fnd.text = false, ""
-	case "enter":
-		m.fnd.filtering = false
-	default:
-		m.fnd.in.key(k)
-		m.fnd.text = m.fnd.in.String()
-	}
+// filterType feeds a key to the filter text and filters again.
+func (m *app) filterType(k tea.KeyMsg) bool {
+	used := m.fnd.in.key(k)
+	m.fnd.text = m.fnd.in.String()
 	m.fnd.refit(m.dataIssues())
-	return m, nil
+	return used
 }
 
 func (m *app) findingsBody(w, h int) []string {
@@ -293,43 +304,36 @@ func (d *detail) reveal() {
 	}
 }
 
-func (m *app) detailKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+// detailMove is the movement of an issue: up and down pick the environment
+// row, the other keys scroll the page.
+func (m *app) detailMove(key string) bool {
 	d := m.fnd.det
-	switch s := k.String(); s {
-	case "esc", "backspace", "left", "h":
-		m.fnd.det = nil
+	switch key {
 	case "up", "k", "down", "j":
-		if d.loading || len(d.is.Targets) == 0 {
-			return m, nil
+		if !d.loading && len(d.is.Targets) > 0 {
+			d.sel.handle(key)
+			d.reveal()
 		}
-		d.sel.handle(s)
-		d.reveal()
-	case "pgup", "pgdown", "home", "g", "end", "G":
-		d.body.handle(s)
+		return true
 	case " ":
-		d.body.handle("pgdown")
-	case "f":
-		m.startStatus(model.StatusFixed, false)
-	case "i":
-		m.startStatus(model.StatusIgnored, false)
-	case "n":
-		m.startStatus(model.StatusNotAffected, false)
-	case "o":
-		m.startStatus(model.StatusOpen, false)
-	case "F":
-		m.startStatus(model.StatusFixed, true)
-	case "I":
-		m.startStatus(model.StatusIgnored, true)
-	case "N":
-		m.startStatus(model.StatusNotAffected, true)
-	case "O":
-		m.startStatus(model.StatusOpen, true)
-	case "a":
-		m.startAssign(false)
-	case "A":
-		m.startAssign(true)
+		key = "pgdown"
 	}
-	return m, nil
+	return d.body.handle(key)
+}
+
+// clickEnv selects the environment row drawn on the given body line.
+func (m *app) clickEnv(line int) {
+	d := m.fnd.det
+	if d.lay == nil {
+		return
+	}
+	start, _ := d.body.window(d.body.room)
+	for i, r := range d.lay.rows {
+		if r.at == start+line {
+			d.sel.to(i)
+			return
+		}
+	}
 }
 
 // view is the visible part of the page. The page itself is laid out once per

@@ -17,6 +17,15 @@ type viewport struct {
 
 func scrolling() viewport { return viewport{scroll: true} }
 
+// moveKeys are the keys handle applies. The mode tables do not declare them;
+// they describe them once with moveDisp and moveHelp.
+var moveKeys = []string{"up", "k", "down", "j", "pgup", "pgdown", "home", "g", "end", "G"}
+
+const (
+	moveDisp = "up/down"
+	moveHelp = "move; pgup/pgdn page, home/end first and last (k j g G work too)"
+)
+
 // at is the row under the cursor (the top line of a scrolling text). It is lo
 // when there is no row to select.
 func (v *viewport) at() int { return v.cur }
