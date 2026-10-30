@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -117,7 +118,22 @@ type Op struct {
 	Tech     string         `json:"tech,omitempty"`
 	Version  string         `json:"version,omitempty"`
 	Image    string         `json:"image,omitempty"`
-	Lockfile model.Lockfile `json:"lockfile,omitempty"`
+	Since    string         `json:"since,omitempty"`    // YYYY-MM-DD, for set_since; empty clears
+	Lockfile model.Lockfile `json:"lockfile,omitempty"` // for set_lockfile_dev its Dev is the new value
+}
+
+// SinceLayout is how the since date is written.
+const SinceLayout = "2006-01-02"
+
+// SetName gives the project a new name, keeping the comments around it.
+func (f *File) SetName(name string) error {
+	if err := checkName(name); err != nil {
+		return err
+	}
+	doc := cloneNode(f.doc, map[*yaml.Node]*yaml.Node{})
+	setStr(doc.Content[0], "name", name, 0)
+	f.doc = doc
+	return nil
 }
 
 // Apply runs the ops in order. If one fails the file is left unchanged.
@@ -178,6 +194,13 @@ func apply(root *yaml.Node, op Op) error {
 			return fmt.Errorf("invalid lockfile env %q", op.Lockfile.Env)
 		}
 		return removeLockfile(root, op.Lockfile)
+	case "set_lockfile_dev":
+		if op.Lockfile.Env != "" && !op.Lockfile.Env.Valid() {
+			return fmt.Errorf("invalid lockfile env %q", op.Lockfile.Env)
+		}
+		return setLockfileDev(root, op.Lockfile)
+	case "set_since":
+		return setSince(root, strings.TrimSpace(op.Since))
 	}
 	return fmt.Errorf("unknown kind %q", op.Kind)
 }
@@ -353,6 +376,59 @@ func removeLockfile(root *yaml.Node, l model.Lockfile) error {
 	if !found {
 		return fmt.Errorf("no lockfile with path %q", l.Path)
 	}
+	return nil
+}
+
+func setLockfileDev(root *yaml.Node, l model.Lockfile) error {
+	seq := mapGet(root, "lockfiles")
+	found := false
+	if seq != nil && seq.Kind == yaml.SequenceNode {
+		for _, it := range seq.Content {
+			if it.Kind != yaml.MappingNode || lockfileField(it, "path") != l.Path || (l.Env != "" && lockfileField(it, "env") != string(l.Env)) {
+				continue
+			}
+			found = true
+			switch cur := mapGet(it, "dev"); {
+			case !l.Dev:
+				mapDel(it, "dev") // false is the default
+			case cur == nil:
+				mapAppend(it, "dev", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"})
+			default:
+				cur.Kind, cur.Tag, cur.Value, cur.Style = yaml.ScalarNode, "!!bool", "true", 0
+			}
+		}
+	}
+	switch {
+	case found:
+		return nil
+	case l.Env != "":
+		return fmt.Errorf("no lockfile with path %q for env %s", l.Path, l.Env)
+	}
+	return fmt.Errorf("no lockfile with path %q", l.Path)
+}
+
+func setSince(root *yaml.Node, since string) error {
+	if since == "" { // an empty date clears it
+		mapDel(root, "since")
+		return nil
+	}
+	if _, err := time.Parse(SinceLayout, since); err != nil {
+		return fmt.Errorf("since must look like 2026-01-31: %w", err)
+	}
+	v := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!timestamp", Value: since}
+	if cur := mapGet(root, "since"); cur != nil {
+		cur.Kind, cur.Tag, cur.Value, cur.Style = yaml.ScalarNode, "!!timestamp", since, 0
+		cur.Content, cur.Alias = nil, nil
+		return nil
+	}
+	at := len(root.Content) // a new date goes after the inventory, before what differs per environment
+	for _, k := range []string{"lockfiles", "techs", "envs", "name"} {
+		if i := mapIndex(root, k); i >= 0 {
+			at = i + 2
+			break
+		}
+	}
+	root.Content = append(root.Content[:at], append([]*yaml.Node{str("since", 0), v}, root.Content[at:]...)...)
 	return nil
 }
 

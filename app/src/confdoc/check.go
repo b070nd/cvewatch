@@ -78,8 +78,15 @@ func (i Issue) key() string { return string(i.Level) + "|" + i.Doc + "|" + i.Fie
 // place of the files and runs the same checks as config.Load, so a document
 // that would stop the daemon from loading is reported here. Broken project
 // files are warnings: they do not stop settings from being edited.
-func (s *Set) Validate() Report {
+func (s *Set) Validate() Report { return s.ValidateWith(nil) }
+
+// ValidateWith is Validate with more files replaced or hidden, such as project
+// files a change moves; a nil value hides the file (see config.Overlay).
+func (s *Set) ValidateWith(extra config.Overlay) Report {
 	over := config.Overlay{}
+	for p, data := range extra {
+		over[p] = data
+	}
 	for _, d := range s.Docs {
 		if d.Layer != LayerUser || d.Path == "" {
 			continue

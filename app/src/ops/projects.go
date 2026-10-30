@@ -39,6 +39,7 @@ type ProjectView struct {
 	Envs      []string    `json:"envs"`
 	Techs     []TechPin   `json:"techs"`
 	Lockfiles []LockEntry `json:"lockfiles"`
+	Since     string      `json:"since,omitempty"` // YYYY-MM-DD
 }
 
 type TechPin struct {
@@ -50,6 +51,7 @@ type LockEntry struct {
 	Type string `json:"type"`
 	Path string `json:"path"`
 	Env  string `json:"env,omitempty"`
+	Dev  bool   `json:"dev,omitempty"`
 }
 
 // ViewOf copies the parts of a project worth showing.
@@ -62,7 +64,10 @@ func ViewOf(p model.Project) ProjectView {
 		v.Techs = append(v.Techs, TechPin{t.Name, t.Version})
 	}
 	for _, l := range p.Lockfiles {
-		v.Lockfiles = append(v.Lockfiles, LockEntry{l.Type, l.Path, string(l.Env)})
+		v.Lockfiles = append(v.Lockfiles, LockEntry{l.Type, l.Path, string(l.Env), l.Dev})
+	}
+	if !p.Since.IsZero() {
+		v.Since = p.Since.Format(projectfile.SinceLayout)
 	}
 	return v
 }
