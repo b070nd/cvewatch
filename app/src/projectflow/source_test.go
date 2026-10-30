@@ -99,3 +99,29 @@ func TestOpenRejectsAnUnsupportedFile(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestOpenLeavesIgnoredPathsOutUnlessAsked(t *testing.T) {
+	l := layouts["absolute root"](t)
+	write(t, filepath.Join(l.repo, ".gitignore"), "Dockerfile.dev\nlegacy/\n")
+	write(t, filepath.Join(l.repo, "Dockerfile.dev"), "FROM nginx:1.25\n")
+	write(t, filepath.Join(l.repo, "legacy", "Dockerfile"), "FROM php:8.2\n")
+	write(t, filepath.Join(l.repo, "Dockerfile"), "FROM redis:7\n")
+	s := session(t, l.root, "alice", nil)
+
+	o, err := Open(s, Request{Folder: l.repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tech := range o.Flow.Draft().Project.Techs {
+		if tech.Name == "php" {
+			t.Fatalf("an ignored folder was scanned: %+v", o.Flow.Draft().Project.Techs)
+		}
+	}
+	file := filepath.Join(l.repo, "Dockerfile.dev")
+	if _, err := Open(s, Request{Folder: file}); err == nil || !strings.Contains(err.Error(), "is ignored by .gitignore") {
+		t.Fatalf("an ignored file must be refused, err = %v", err)
+	}
+	if _, err := Open(s, Request{Folder: file, IncludeIgnored: true}); err != nil {
+		t.Fatalf("IncludeIgnored: %v", err)
+	}
+}

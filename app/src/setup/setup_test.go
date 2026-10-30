@@ -99,11 +99,14 @@ func TestCreateFlowEndToEnd(t *testing.T) {
 
 	st = f.Current()
 	for _, o := range st.Options {
-		if !o.Selected {
-			t.Errorf("env %s should start selected", o.Value)
+		if o.Selected != (o.Value == "local") {
+			t.Errorf("env %s: selected = %v, only local starts selected", o.Value, o.Selected)
 		}
 	}
-	answer(t, f, "envs", "dev,int,staging,prod")
+	if last := st.Options[len(st.Options)-1]; last.Value != otherEnv || last.Label != "other..." {
+		t.Errorf("the last option should be other...: %+v", last)
+	}
+	answer(t, f, "envs", "local,prod")
 
 	st = f.Current()
 	if st.ID != "review" || st.Kind != KindConfirm || !strings.Contains(st.Help, "postgresql") {
@@ -119,6 +122,7 @@ func TestCreateFlowEndToEnd(t *testing.T) {
 	}
 
 	wantOps := []projectfile.Op{
+		{Kind: "set_envs", Envs: []model.Env{"local", "prod"}},
 		{Kind: "set_tech", Tech: "php", Version: "8.2"},
 		{Kind: "set_tech", Tech: "nginx", Version: "1.25"},
 		{Kind: "set_tech", Tech: "postgresql", Version: "16"},
@@ -215,7 +219,11 @@ func TestEditEnvs(t *testing.T) {
 	f := NewFlow(testCatalog(), ex)
 	answer(t, f, "menu", "envs")
 	st := f.Current()
-	if st.Options[0].Selected != true || st.Options[1].Selected || !st.Options[3].Selected {
+	sel := map[string]bool{}
+	for _, o := range st.Options {
+		sel[o.Value] = o.Selected
+	}
+	if sel["local"] || !sel["dev"] || sel["int"] || sel["staging"] || !sel["prod"] {
 		t.Fatalf("envs options = %+v", st.Options)
 	}
 	answer(t, f, "envs", "prod,dev") // same set, no op
@@ -223,8 +231,8 @@ func TestEditEnvs(t *testing.T) {
 		t.Fatalf("ops = %+v", f.Ops())
 	}
 	answer(t, f, "menu", "envs")
-	answer(t, f, "envs", "dev,int,staging,prod") // all four clears the key
-	want := []projectfile.Op{{Kind: "set_envs"}}
+	answer(t, f, "envs", "dev,int,staging,prod") // all four are written out
+	want := []projectfile.Op{{Kind: "set_envs", Envs: []model.Env{"dev", "int", "staging", "prod"}}}
 	if got := f.Ops(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ops = %+v", got)
 	}
@@ -622,6 +630,19 @@ func TestRevisitChangesOneSectionAndReturnsToTheReview(t *testing.T) {
 		t.Errorf("envs = %v", got)
 	}
 
+	// other... leads to the typed names and from there back to the review
+	if err := f.Revisit("envs"); err != nil {
+		t.Fatal(err)
+	}
+	answer(t, f, "envs", "prod,"+otherEnv)
+	answer(t, f, "envs-other", "qa")
+	if st := f.Current(); st.ID != "review" {
+		t.Fatalf("current = %q", st.ID)
+	}
+	if got := f.Draft().Project.Envs; !reflect.DeepEqual(got, []model.Env{"prod", "qa"}) {
+		t.Errorf("envs = %v", got)
+	}
+
 	// a section with several steps: techs asks for the technologies by name and the versions of new ones
 	if err := f.Revisit("techs"); err != nil {
 		t.Fatal(err)
@@ -713,5 +734,70 @@ func TestFlowEmitsOnlyDeclaredKinds(t *testing.T) {
 		if !slices.Contains(OpKinds, m[1]) {
 			t.Errorf("Flow.Ops emits %s, which OpKinds does not declare", m[1])
 		}
+	}
+}
+
+func TestEnvsOtherNamesAndLegacyDefault(t *testing.T) {
+	// a file without envs means the old four; keeping them asks for no edit
+	ex := &model.Project{Name: "shop"}
+	f := NewFlow(testCatalog(), ex)
+	if hints := f.EnvHints(); len(hints) != 1 || hints[0].Level != "warn" || !strings.Contains(hints[0].Message, "old default") {
+		t.Fatalf("hints = %+v", hints)
+	}
+	answer(t, f, "menu", "envs")
+	for _, o := range f.Current().Options {
+		if want := o.Value == "dev" || o.Value == "int" || o.Value == "staging" || o.Value == "prod"; o.Selected != want {
+			t.Errorf("option %s selected = %v", o.Value, o.Selected)
+		}
+	}
+	answer(t, f, "envs", "dev,int,staging,prod")
+	if len(f.Ops()) != 0 {
+		t.Fatalf("ops = %+v", f.Ops())
+	}
+
+	// own names are typed under other..., checked, and listed next time
+	answer(t, f, "menu", "envs")
+	answer(t, f, "envs", "prod,"+otherEnv)
+	if f.Current().ID != "envs-other" {
+		t.Fatalf("current = %q", f.Current().ID)
+	}
+	if err := f.Answer("QA!"); err == nil {
+		t.Error("an invalid name must be rejected")
+	}
+	answer(t, f, "envs-other", "qa-2, Demo")
+	want := []projectfile.Op{{Kind: "set_envs", Envs: []model.Env{"prod", "demo", "qa-2"}}}
+	if got := f.Ops(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("ops = %+v", got)
+	}
+	if f.Current().ID != "menu" {
+		t.Errorf("current = %q", f.Current().ID)
+	}
+	answer(t, f, "menu", "envs")
+	var names []string
+	for _, o := range f.Current().Options {
+		names = append(names, o.Value)
+	}
+	if got := strings.Join(names, ","); got != "local,dev,int,staging,prod,demo,qa-2,+" {
+		t.Errorf("options = %s", got)
+	}
+
+	// only other... with nothing typed leaves nothing selected
+	answer(t, f, "envs", otherEnv)
+	if err := f.Answer(""); err == nil {
+		t.Error("no environment at all must be rejected")
+	}
+}
+
+func TestNewProjectStartsWithLocalOnly(t *testing.T) {
+	f := NewFlow(testCatalog(), nil)
+	if got := f.Draft().Project.Envs; !reflect.DeepEqual(got, []model.Env{model.EnvLocal}) {
+		t.Fatalf("envs = %v", got)
+	}
+	hints := f.EnvHints()
+	if len(hints) != 1 || hints[0].Level != "info" || !strings.Contains(hints[0].Message, "prod") {
+		t.Fatalf("hints = %+v", hints)
+	}
+	if len(hints[0].Fix) != 1 || hints[0].Fix[0].Kind != "add_env" {
+		t.Errorf("fix = %+v", hints[0].Fix)
 	}
 }

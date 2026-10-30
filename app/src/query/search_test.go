@@ -108,6 +108,8 @@ func TestSearchMatches(t *testing.T) {
 		{"env:dev", php},
 		{"env:dev,staging", php + "," + openssl},
 		{"env:prod project:blog", ""},
+		{"env:Staging", openssl},
+		{"env:qa-2", ""}, // a valid name nothing runs in matches nothing
 		{`owner:"Jane Doe"`, php},
 		{`owner:"Jane Doe`, php},
 		{"owner:jane", ""},
@@ -203,7 +205,7 @@ func TestSearchErrors(t *testing.T) {
 		{"severity:urgent", `unknown severity "urgent"`},
 		{"severity:urgent+", `unknown severity "urgent+"`},
 		{"severity:+", `unknown severity "+"`},
-		{"env:qa", `unknown environment "qa"; use one of: dev, int, staging, prod`},
+		{"env:QA!", `unknown environment "QA!"`},
 		{"status:done", `unknown status "done"; use one of: open, fixed, ignored, not_affected`},
 		{"applies:maybe", `unknown applicability "maybe"`},
 		{"kev:maybe", `kev needs yes or no, not "maybe"`},

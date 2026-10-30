@@ -60,10 +60,13 @@ func TestScopeNarrowsOverviewFindingsAndCounts(t *testing.T) {
 	d.want("scope: mw", "open issues 1", "open findings 1", "in prod 1", "1 of 1 open issues", "CVE-2026-1", "all projects")
 	d.wantNot("CVE-2026-3", "CVE-2026-4")
 	v := d.view()
-	for _, re := range []string{`high 1\s`, `critical 0\s`, `low 0\s`, `dev 0\s`, `staging 0\s`, `prod 1\s`} {
+	for _, re := range []string{`high 1\s`, `critical 0\s`, `low 0\s`, `prod 1\s`} {
 		if !regexp.MustCompile(re).MatchString(v) {
 			t.Errorf("the bars lack %q:\n%s", re, v)
 		}
+	}
+	if regexp.MustCompile(`staging \d`).MatchString(v) {
+		t.Errorf("the bars list an environment the scoped project does not run in:\n%s", v)
 	}
 	d.want("2 Findings (1)")
 

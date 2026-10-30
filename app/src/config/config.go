@@ -42,6 +42,7 @@ type Settings struct {
 	Storage   Storage       `yaml:"storage"`   // where state lives
 	Dashboard Dashboard     `yaml:"dashboard"` // a static status page, refreshed by the daemon
 	TUI       TUI           `yaml:"tui"`       // the full-screen interface
+	Horizon   Horizon       `yaml:"horizon"`   // which publication dates are judged, alerted and digested
 	// Access optionally limits who may see and change which projects, by the
 	// actor name (CVEWATCH_ACTOR or the OS user). Empty means everyone may do
 	// everything, which is right for a single operator. This is authorization
@@ -188,8 +189,9 @@ func Defaults() Settings {
 			Threshold429: 3,
 			Cooldown429:  2 * time.Minute,
 		},
-		Slack: Slack{WebhookEnv: "SLACK_WEBHOOK_URL", MinSeverity: model.SevUnknown},
-		TUI:   TUI{Refresh: 30 * time.Second},
+		Slack:   Slack{WebhookEnv: "SLACK_WEBHOOK_URL", MinSeverity: model.SevUnknown},
+		TUI:     TUI{Refresh: 30 * time.Second},
+		Horizon: Horizon{Window: WindowUnlimited},
 	}
 }
 
@@ -513,7 +515,7 @@ func (b *Bundle) validate(decoded map[string]bool, og origins) []Issue {
 			fail(og.settings, "notify.digest.daily_at", "notify.digest.daily_at must look like 08:00")
 		}
 		if d.Env != "" && !d.Env.Valid() {
-			fail(og.settings, "notify.digest.env", "notify.digest.env %q is unknown", d.Env)
+			fail(og.settings, "notify.digest.env", "notify.digest.env %q is not a valid environment name (lowercase letters, digits, - and _)", d.Env)
 		}
 		for _, c := range d.Channels {
 			if !slices.Contains([]string{"slack", "webhook", "email"}, c) {
@@ -529,7 +531,7 @@ func (b *Bundle) validate(decoded map[string]bool, og origins) []Issue {
 		case r.OwnerWithin <= 0 && r.FixWithin <= 0:
 			fail(og.settings, at+".fix_within", "policy rule %q needs owner_within or fix_within", r.Name)
 		case r.Env != "" && !r.Env.Valid():
-			fail(og.settings, at+".env", "policy rule %q: unknown env %q", r.Name, r.Env)
+			fail(og.settings, at+".env", "policy rule %q: %q is not a valid environment name", r.Name, r.Env)
 		}
 	}
 	if b.TUI.Refresh < time.Second {
@@ -537,6 +539,13 @@ func (b *Bundle) validate(decoded map[string]bool, og origins) []Issue {
 	}
 	if b.TUI.Fetch < 0 {
 		fail(og.settings, "tui.fetch", "tui.fetch must not be negative (0 fetches only on request)")
+	}
+	for _, hp := range b.Horizon.Problems() {
+		fail(og.settings, "horizon."+hp.Field, "%s", hp.Msg)
+	}
+	if reach := b.Horizon.Reach(time.Now()); reach > b.Lookback && b.Lookback > 0 {
+		b.Warnings = append(b.Warnings, fmt.Sprintf("horizon reaches back %s but lookback is %s: sources are only fetched back to the lookback on their first run, so older items are not seen; raise lookback",
+			formatSpan(reach), formatSpan(b.Lookback)))
 	}
 	if !slices.Contains([]string{"", "file", "sqlite"}, b.Storage.Backend) {
 		fail(og.settings, "storage.backend", "storage.backend must be file or sqlite")
@@ -587,7 +596,7 @@ func projectErrors(p model.Project, seen map[string]bool) []fieldErr {
 	seen[p.Name] = true
 	for _, e := range p.Envs {
 		if !e.Valid() {
-			fail("envs", "project %s: unknown env %q (use dev, int, staging, prod)", p.Name, e)
+			fail("envs", "project %s: %q is not a valid environment name (lowercase letters, digits, - and _)", p.Name, e)
 		}
 	}
 	for i, lf := range p.Lockfiles {
@@ -596,12 +605,12 @@ func projectErrors(p model.Project, seen map[string]bool) []fieldErr {
 			fail(at+".type", "project %s: lockfile type %q is unknown (use %s)", p.Name, lf.Type, strings.Join(matrix.Types(), ", "))
 		}
 		if lf.Env != "" && !lf.Env.Valid() {
-			fail(at+".env", "project %s: lockfile env %q is unknown", p.Name, lf.Env)
+			fail(at+".env", "project %s: lockfile env %q is not a valid environment name", p.Name, lf.Env)
 		}
 	}
 	for env := range p.Environments {
 		if !env.Valid() {
-			fail("environments."+string(env), "project %s: environments: unknown env %q", p.Name, env)
+			fail("environments."+string(env), "project %s: environments: %q is not a valid environment name", p.Name, env)
 		}
 	}
 	return errs

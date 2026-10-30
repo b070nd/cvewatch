@@ -266,3 +266,44 @@ func TestProjectSinceDecidesByPublicationDate(t *testing.T) {
 		t.Errorf("skipped by every project must not be relevant: techs %v, matches %d", only.Techs, len(only.Matches))
 	}
 }
+
+func TestHorizonKeepsItemsOutsideTheWindowOutOfEveryProject(t *testing.T) {
+	j := New([]model.Tech{{Name: "php"}})
+	techs := []model.ProjectTech{{Name: "php", Version: "8.2"}}
+	from := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)
+	since := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
+	targets := []Target{
+		{Project: "shop", Env: model.EnvProd, Techs: techs, Horizon: Window{From: from, To: to}},
+		{Project: "late", Env: model.EnvProd, Techs: techs, Since: since, Horizon: Window{From: from, To: to}},
+	}
+	for name, c := range map[string]struct {
+		published time.Time
+		matched   []string
+	}{
+		"before the window":       {from.Add(-time.Second), nil},
+		"the first instant":       {from, []string{"shop"}},
+		"between":                 {since.Add(-time.Hour), []string{"shop"}},
+		"after the project start": {since, []string{"shop", "late"}},
+		"the last instant":        {to, []string{"shop", "late"}},
+		"after the window":        {to.Add(time.Second), nil},
+		"no date":                 {time.Time{}, []string{"shop", "late"}},
+	} {
+		v := j.Judge(model.Item{Title: "PHP flaw", Published: c.published}, targets)
+		var got []string
+		for _, m := range v.Matches {
+			got = append(got, m.Project)
+		}
+		if !slices.Equal(got, c.matched) {
+			t.Errorf("%s: matched %v, want %v (notes %v)", name, got, c.matched, v.Notes)
+		}
+	}
+	v := j.Judge(model.Item{Title: "PHP flaw", Published: to.AddDate(0, 0, 1)}, targets)
+	if v.Relevant() || len(v.Notes) != 2 || !strings.Contains(v.Notes[0], "outside the alert horizon") {
+		t.Errorf("skipped by every window: relevant %v, notes %v", v.Relevant(), v.Notes)
+	}
+	open := j.Judge(model.Item{Title: "PHP flaw", Published: from.AddDate(-5, 0, 0)}, []Target{{Project: "p", Env: model.EnvProd, Techs: techs}})
+	if len(open.Matches) != 1 {
+		t.Error("no horizon judges everything")
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/b070nd/cvewatch/app/src/config"
 	"github.com/b070nd/cvewatch/app/src/matrix"
@@ -47,9 +48,6 @@ type Inventory struct {
 	sources  []Source
 }
 
-// devEnvs are the environments where development-only packages count by default.
-var devEnvs = []model.Env{model.EnvDev, model.EnvInt}
-
 // Load builds the inventory from the configuration, reading every lockfile once.
 func Load(cfg *config.Bundle) *Inventory {
 	inv := &Inventory{}
@@ -80,7 +78,7 @@ func Load(cfg *config.Bundle) *Inventory {
 					continue
 				}
 				for _, pkg := range f.pkg {
-					if pkg.Dev && !f.lf.Dev && !slices.Contains(devEnvs, env) {
+					if pkg.Dev && !f.lf.Dev && !model.IsDevLike(env) {
 						continue
 					}
 					if k := pkg.Ecosystem + "|" + pkg.Name + "|" + pkg.Version; !seen[k] {
@@ -111,6 +109,16 @@ func techsFor(p model.Project, env model.Env) []model.ProjectTech {
 
 // Targets lists every project environment.
 func (i *Inventory) Targets() []relevance.Target { return i.targets }
+
+// Within applies the alert horizon at now: items published outside it are not
+// judged for any target. It returns the inventory for chaining.
+func (i *Inventory) Within(h config.Horizon, now time.Time) *Inventory {
+	from, to := h.Range(now)
+	for k := range i.targets {
+		i.targets[k].Horizon = relevance.Window{From: from, To: to}
+	}
+	return i
+}
 
 // Target returns one project environment.
 func (i *Inventory) Target(project string, env model.Env) (relevance.Target, bool) {

@@ -86,3 +86,37 @@ func TestSearchParseErrorIsReturned(t *testing.T) {
 		t.Fatalf("a bad query must be an error: %v", err)
 	}
 }
+
+func TestPublishedFilterAndHorizonApplyToSearchListAndDigest(t *testing.T) {
+	cfg, st := bundle(t, nil), seeded(t)
+	s := open(t, cfg, st, "alice") // now is two days after the issue was published
+
+	week, _ := query.ParseTimeRange("week")
+	day1, _ := query.ParseTimeRange("day")
+	for name, c := range map[string]struct {
+		f    query.Filter
+		text string
+		want int
+	}{
+		"search flag, inside":  {query.Filter{Published: week}, "tracked", 1},
+		"search flag, outside": {query.Filter{Published: day1}, "tracked", 0},
+		"field, inside":        {query.Filter{}, "tracked published:week", 1},
+		"field, outside":       {query.Filter{}, "tracked published:24h", 0},
+		"field, range":         {query.Filter{}, "tracked published:2026-10-01", 1},
+	} {
+		found, err := s.Search(c.text, c.f, false)
+		if err != nil || len(found) != c.want {
+			t.Errorf("%s: %d issues, %v", name, len(found), err)
+		}
+	}
+	if list, err := s.List(query.Filter{Published: day1}); err != nil || len(list) != 0 {
+		t.Errorf("list outside: %+v %v", list, err)
+	}
+	if d, err := s.Digest(); err != nil || d.Open != 1 {
+		t.Fatalf("digest without a horizon: %+v %v", d, err)
+	}
+	s.Cfg.Horizon = config.Horizon{Window: config.WindowDay}
+	if d, err := s.Digest(); err != nil || d.Open != 0 {
+		t.Fatalf("the digest preview must follow the horizon: %+v %v", d, err)
+	}
+}

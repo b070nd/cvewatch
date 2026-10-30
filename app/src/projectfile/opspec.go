@@ -33,9 +33,30 @@ type OpSpec struct {
 var OpTable = []OpSpec{
 	{
 		Kind: "set_envs", Summary: "choose which environments the project runs in",
-		Params:  []Param{{"envs", "envs", false, "dev, int, staging or prod; empty means all four"}},
+		Params:  []Param{{"envs", "envs", false, "environment names, free to choose (local, dev, prod, qa-2); empty removes the key, which means the old default dev, int, staging, prod"}},
 		Example: Op{Kind: "set_envs", Envs: []model.Env{model.EnvDev, model.EnvProd}},
 		Flag:    "-envs E,E|all", Args: []string{"-envs", "dev,prod"},
+	},
+	{
+		Kind: "add_env", Summary: "add an environment to the project",
+		Params:  []Param{{"env", "env", true, "the name: lowercase letters, digits, - and _; a file without envs first gets the old default list, then this one"}},
+		Example: Op{Kind: "add_env", Env: "qa"},
+		Flag:    "-env-add ENV", Args: []string{"-env-add", "qa"},
+	},
+	{
+		Kind: "remove_env", Summary: "remove an environment from the project's list (its versions and lockfiles stay in the file)",
+		Params:  []Param{{"env", "env", true, "an environment of the project; the last one cannot be removed"}},
+		Example: Op{Kind: "remove_env", Env: "int"},
+		Flag:    "-env-remove ENV", Args: []string{"-env-remove", "int"},
+	},
+	{
+		Kind: "rename_env", Summary: "rename an environment in the list, its versions and its lockfiles",
+		Params: []Param{
+			{"env", "env", true, "the current name"},
+			{"to", "env", true, "the new name; it must not exist yet"},
+		},
+		Example: Op{Kind: "rename_env", Env: "staging", To: "stage"},
+		Flag:    "-env-rename OLD=NEW", Args: []string{"-env-rename", "staging=stage"},
 	},
 	{
 		Kind: "set_tech", Summary: "declare a technology and its version, or change the version",
@@ -55,7 +76,7 @@ var OpTable = []OpSpec{
 	{
 		Kind: "set_env_tech", Summary: "set the version deployed in one environment, when it differs from the declared one",
 		Params: []Param{
-			{"env", "env", true, "dev, int, staging or prod"},
+			{"env", "env", true, "an environment of the project, such as local, dev or prod"},
 			{"tech", "string", true, "catalog name"},
 			{"version", "string", true, "the deployed version"},
 		},
@@ -65,7 +86,7 @@ var OpTable = []OpSpec{
 	{
 		Kind: "remove_env_tech", Summary: "drop the version deployed in one environment",
 		Params: []Param{
-			{"env", "env", true, "dev, int, staging or prod"},
+			{"env", "env", true, "an environment of the project, such as local, dev or prod"},
 			{"tech", "string", true, "catalog name"},
 		},
 		Example: Op{Kind: "remove_env_tech", Env: model.EnvProd, Tech: "php"},
@@ -74,7 +95,7 @@ var OpTable = []OpSpec{
 	{
 		Kind: "set_image", Summary: "set the container image of one environment",
 		Params: []Param{
-			{"env", "env", true, "dev, int, staging or prod"},
+			{"env", "env", true, "an environment of the project, such as local, dev or prod"},
 			{"image", "string", false, "image tag or digest; empty clears"},
 		},
 		Example: Op{Kind: "set_image", Env: model.EnvProd, Image: "shop:1.4.2"},
@@ -107,7 +128,7 @@ var OpTable = []OpSpec{
 			{"lockfile.type", "string", false, "not used to find the entry; accepted so the lockfile object of add_lockfile works as it is"},
 			{"lockfile.path", "string", true, "path of the lockfile as declared"},
 			{"lockfile.env", "env", false, "only the entry for this environment; empty changes every entry with the path"},
-			{"lockfile.dev", "bool", false, "the new value; false (the default) stops counting them outside dev and int"},
+			{"lockfile.dev", "bool", false, "the new value; false (the default) stops counting them outside development-like environments (local, dev, int)"},
 		},
 		Example: Op{Kind: "set_lockfile_dev", Lockfile: model.Lockfile{Type: "composer", Path: "composer.lock", Env: model.EnvProd, Dev: true}},
 		Flag:    "-lock-dev|-lock-nodev TYPE:PATH[:ENV]", Args: []string{"-lock-dev", "composer:composer.lock:prod"},

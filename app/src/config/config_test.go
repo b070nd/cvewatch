@@ -37,7 +37,12 @@ func TestLoadDefaultsAndWarnings(t *testing.T) {
 func TestLoadRejectsMistakes(t *testing.T) {
 	cases := map[string][2]string{
 		"unknown key": {"config/config.yaml", "intervall: 1h\n"},
-		"bad env":     {"config/projects/a.yaml", "name: a\nenvs: [qa]\n"},
+		"bad env":     {"config/projects/a.yaml", "name: a\nenvs: [QA]\n"},
+		"env name":    {"config/projects/a.yaml", "name: a\nenvs: [local, 2fast]\n"},
+		"lock env":    {"config/projects/a.yaml", "name: a\nlockfiles: [{type: npm, path: p, env: 'a b'}]\n"},
+		"env key":     {"config/projects/a.yaml", "name: a\nenvironments: {Prod: {image: i}}\n"},
+		"rule env":    {"config/config.yaml", "policy:\n  rules:\n    - {name: r, env: Prod, fix_within: 24h}\n"},
+		"digest env":  {"config/config.yaml", "notify:\n  digest:\n    daily_at: '08:00'\n    env: Prod\n"},
 		"bad source":  {"sources/s.yaml", "sources: [{id: x, type: rss}]\n"},
 		"http source": {"sources/s.yaml", "sources: [{id: x, type: rss, url: 'http://a.test/f'}]\n"},
 		"creds":       {"sources/s.yaml", "sources: [{id: x, type: rss, url: 'https://u:p@a.test/f'}]\n"},
@@ -85,7 +90,7 @@ func TestLoadLenientDropsBrokenProjects(t *testing.T) {
 	put(t, root, "config/projects/good.yaml", "name: good\ntechs: [{name: php}]\n")
 	put(t, root, "config/projects/yaml.yaml", "name: yaml\ntechs: [\n")
 	put(t, root, "config/projects/key.yaml", "name: key\nbogus: 1\n")
-	put(t, root, "config/projects/env.yaml", "name: env\nenvs: [qa]\n")
+	put(t, root, "config/projects/env.yaml", "name: env\nenvs: [QA]\n")
 	put(t, root, "config/projects/lock.yaml", "name: lock\nlockfiles: [{type: nope, path: x}]\n")
 	b, err := LoadLenient(root)
 	if err != nil {
@@ -94,7 +99,7 @@ func TestLoadLenientDropsBrokenProjects(t *testing.T) {
 	if len(b.Projects) != 1 || b.Projects[0].Name != "good" {
 		t.Fatalf("projects = %+v", b.Projects)
 	}
-	want := map[string]string{"yaml": "yaml", "key": "bogus", "env": `unknown env "qa"`, "lock": `lockfile type "nope"`}
+	want := map[string]string{"yaml": "yaml", "key": "bogus", "env": `"QA" is not a valid environment name`, "lock": `lockfile type "nope"`}
 	if len(b.Broken) != len(want) {
 		t.Fatalf("broken = %+v", b.Broken)
 	}
@@ -113,7 +118,7 @@ func TestLoadStillFailsOnBrokenProject(t *testing.T) {
 	cases := map[string]struct{ body, want string }{
 		"yaml": {"name: a\ntechs: [\n", "a.yaml"},
 		"key":  {"name: a\nbogus: 1\n", "bogus"},
-		"env":  {"name: a\nenvs: [qa]\n", `unknown env "qa"`},
+		"env":  {"name: a\nenvs: [QA]\n", `"QA" is not a valid environment name`},
 		"lock": {"name: a\nlockfiles: [{type: nope, path: x}]\n", `lockfile type "nope"`},
 	}
 	for name, c := range cases {
@@ -132,7 +137,7 @@ func TestLoadStillFailsOnBrokenProject(t *testing.T) {
 func TestLoadLenientStillFailsOnOtherProblems(t *testing.T) {
 	root := t.TempDir()
 	put(t, root, "config/config.yaml", "intervall: 1h\n")
-	put(t, root, "config/projects/bad.yaml", "name: bad\nenvs: [qa]\n")
+	put(t, root, "config/projects/bad.yaml", "name: bad\nenvs: [QA]\n")
 	if _, err := LoadLenient(root); err == nil {
 		t.Fatal("a broken config.yaml must stay fatal")
 	}
@@ -141,7 +146,7 @@ func TestLoadLenientStillFailsOnOtherProblems(t *testing.T) {
 func TestLoadLenientAccessNamesBrokenProjects(t *testing.T) {
 	root := t.TempDir()
 	put(t, root, "config/config.yaml", "access:\n  alice: {projects: [env]}\n")
-	put(t, root, "config/projects/env.yaml", "name: env\nenvs: [qa]\n")
+	put(t, root, "config/projects/env.yaml", "name: env\nenvs: [QA]\n")
 	if _, err := LoadLenient(root); err != nil {
 		t.Fatalf("access to a broken project must stay valid: %v", err)
 	}
@@ -178,10 +183,13 @@ func TestShippedExamplesLoadWhenUncommented(t *testing.T) {
 	put(t, root, "config/techs.yaml", uncomment(t, shipped.UserTechs(), "techs"))
 	put(t, root, "sources/custom.yaml", uncomment(t, shipped.UserSources(), "sources"))
 	put(t, root, "config/projects/shop.yaml", "name: shop\n")
-	put(t, root, "config/config.yaml", uncomment(t, shipped.Settings(), "access")+uncomment(t, shipped.Settings(), "dashboard")+uncomment(t, shipped.Settings(), "tui"))
+	put(t, root, "config/config.yaml", uncomment(t, shipped.Settings(), "access")+uncomment(t, shipped.Settings(), "dashboard")+uncomment(t, shipped.Settings(), "tui")+uncomment(t, shipped.Settings(), "horizon"))
 	b, err := Load(root)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if b.Horizon.Window != WindowUnlimited || b.Horizon.From != "2026-01-01" {
+		t.Fatalf("example horizon not loaded: %+v", b.Horizon)
 	}
 	if tech, ok := b.Catalog.Get("acme-gateway"); !ok || len(tech.Aliases) != 1 {
 		t.Fatalf("example tech not loaded: %+v", tech)
@@ -310,5 +318,23 @@ func TestProjectFilesAreKeyedByTheNameInTheFile(t *testing.T) {
 	got["shop"] = "changed"
 	if b.ProjectFiles()["shop"] == "changed" {
 		t.Error("ProjectFiles must hand out a copy")
+	}
+}
+
+func TestAnyEnvironmentNameLoads(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, "config/techs.yaml", "techs: [{name: php}]\n")
+	put(t, root, "config/projects/a.yaml", "name: a\nenvs: [local, qa-2, production]\ntechs: [{name: php}]\nlockfiles: [{type: npm, path: p, env: qa-2}]\nenvironments: {qa-2: {image: i}}\n")
+	put(t, root, "config/projects/b.yaml", "name: b\n")
+	put(t, root, "config/config.yaml", "policy:\n  rules:\n    - {name: r, env: production, fix_within: 24h}\nnotify:\n  digest:\n    daily_at: '08:00'\n    env: production\n")
+	b, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := b.Projects[0].EffectiveEnvs(); !slices.Equal(got, []model.Env{"local", "qa-2", "production"}) {
+		t.Errorf("envs = %v", got)
+	}
+	if got := b.Projects[1].EffectiveEnvs(); !slices.Equal(got, []model.Env{"dev", "int", "staging", "prod"}) {
+		t.Errorf("a file without envs keeps the old four: %v", got)
 	}
 }

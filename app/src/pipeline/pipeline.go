@@ -112,7 +112,7 @@ type cycle struct {
 // cursor stays put so the next run retries the same window.
 func (r *Runner) Run(ctx context.Context) (Result, error) {
 	c := &cycle{
-		r: r, judge: relevance.New(r.Cfg.Techs), inv: inventory.Load(r.Cfg), now: r.Now(),
+		r: r, judge: relevance.New(r.Cfg.Techs), inv: inventory.Load(r.Cfg).Within(r.Cfg.Horizon, r.Now()), now: r.Now(),
 		dirty: map[string]bool{}, res: Result{Fresh: map[string]bool{}},
 	}
 	for _, p := range c.inv.Problems() {
@@ -441,7 +441,7 @@ func (r *Runner) alert(ctx context.Context, now time.Time) int {
 		for _, f := range r.Ledger.Findings() {
 			v := r.Ledger.Vuln(f.VulnID)
 			if f.Status != model.StatusOpen || f.Delivered(name) || v == nil ||
-				f.Applies == model.AppNotAffected || !v.Severity.AtLeast(d.Min) {
+				f.Applies == model.AppNotAffected || !v.Severity.AtLeast(d.Min) || !r.Cfg.Horizon.Contains(v.Published, now) {
 				continue
 			}
 			if n := len(batch); n > 0 && batch[n-1].Vuln.ID == v.ID {
@@ -493,7 +493,7 @@ func clipErr(err error) error {
 }
 
 func hasProd(fs []model.Finding) bool {
-	return slices.ContainsFunc(fs, func(f model.Finding) bool { return f.Env == model.EnvProd })
+	return slices.ContainsFunc(fs, func(f model.Finding) bool { return model.IsProd(f.Env) })
 }
 
 // digests sends the periodic "still open" summary to each configured channel,
@@ -513,7 +513,7 @@ func (r *Runner) digests(ctx context.Context, now time.Time) int {
 	}
 
 	sent := 0
-	digest := BuildDigest(r.Ledger, query.Filter{Env: cfg.Env}, cfg.Max, now)
+	digest := BuildDigest(r.Ledger, query.Filter{Env: cfg.Env, Published: query.InHorizon(r.Cfg.Horizon, now)}, cfg.Max, now)
 	for _, d := range r.Channels {
 		name := d.Channel.Name()
 		if len(cfg.Channels) > 0 && !slices.Contains(cfg.Channels, name) {

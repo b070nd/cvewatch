@@ -42,3 +42,13 @@ slack:
 #   refresh: 30s     # how often it re-reads the state; at least 1s
 #   fetch: 0s        # how often it fetches the feeds itself; 0 only on request.
 #                    # A running daemon already fetches every interval.
+
+# Alert horizon: only vulnerabilities published inside the window are judged,
+# alerted and put in digests, like Google's time filter. Findings that exist
+# stay. A project's `since` still applies; the later start wins. Items without
+# a publication date are always inside. Keep lookback at least as long as the
+# window, because a source's first run only reaches back to the lookback.
+# horizon:
+#   window: unlimited   # unlimited | hour | day | week | month | year | custom
+#   from: 2026-01-01    # custom only: YYYY-MM-DD or RFC3339; empty means no start
+#   to: ""              # custom only: YYYY-MM-DD (that whole day) or RFC3339; empty means now

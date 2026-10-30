@@ -79,14 +79,7 @@ func num(v float64) *float64 { return &v }
 
 var (
 	severities = []string{string(model.SevUnknown), string(model.SevLow), string(model.SevMedium), string(model.SevHigh), string(model.SevCritical)}
-	envNames   = func() []string {
-		var out []string
-		for _, e := range model.AllEnvs {
-			out = append(out, string(e))
-		}
-		return out
-	}()
-	channels = []string{"slack", "webhook", "email"}
+	channels   = []string{"slack", "webhook", "email"}
 )
 
 func fields() []Field {
@@ -121,6 +114,11 @@ func fields() []Field {
 	f = core("tui.fetch", "TUI fetch", TypeDuration, "How often the full-screen interface fetches the feeds itself; 0 only on request. A running daemon already fetches every interval.")
 	f.Min = num(0)
 	add(f)
+	f = core("horizon.window", "Alert horizon", TypeEnum, "Only vulnerabilities published inside this window are judged, alerted and digested; findings that exist stay. unlimited is any time; custom uses from and to. Sources are fetched back to the lookback on a first run, so keep the lookback at least as long.")
+	f.Enum = config.Windows
+	add(f)
+	add(core("horizon.from", "Horizon from", TypeString, "Custom window only: YYYY-MM-DD or RFC3339. Empty means no start."))
+	add(core("horizon.to", "Horizon to", TypeString, "Custom window only: YYYY-MM-DD (that whole day) or RFC3339. Empty means now."))
 
 	add(httpF("user_agent", "User agent", TypeString, "Sent with every request."))
 	add(httpF("timeout", "Timeout", TypeDuration, "Per request."))
@@ -169,9 +167,7 @@ func fields() []Field {
 	f.Enum = severities
 	add(f)
 	add(notify("notify.digest.daily_at", "Digest time", TypeString, "Local time like 08:00; empty disables the digest."))
-	f = notify("notify.digest.env", "Digest environment", TypeEnum, "Only findings in this environment; empty means all.")
-	f.Enum = envNames
-	add(f)
+	add(notify("notify.digest.env", "Digest environment", TypeString, "Only findings in this environment (any name, such as prod); empty means all."))
 	f = notify("notify.digest.channels", "Digest channels", TypeList, "Empty means every active channel.")
 	f.Elem, f.Enum = TypeEnum, channels
 	add(f)
@@ -186,9 +182,7 @@ func fields() []Field {
 	f.Elem, f.Key = TypeRecord, "name"
 	add(f)
 	add(pol("policy.rules.*.name", "Name", TypeString, ""))
-	f = pol("policy.rules.*.env", "Environment", TypeEnum, "Empty means every environment.")
-	f.Enum = envNames
-	add(f)
+	add(pol("policy.rules.*.env", "Environment", TypeString, "Any environment name, such as prod. Empty means every environment."))
 	add(pol("policy.rules.*.kev", "KEV only", TypeBool, "Only issues on the CISA KEV list."))
 	f = pol("policy.rules.*.min_severity", "Minimum severity", TypeEnum, "")
 	f.Enum = severities

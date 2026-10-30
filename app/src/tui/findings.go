@@ -432,7 +432,7 @@ func (m *app) detailLoaded(msg detailMsg) {
 		if c := strings.Compare(a.Project, b.Project); c != 0 {
 			return c
 		}
-		return slices.Index(model.AllEnvs, a.Env) - slices.Index(model.AllEnvs, b.Env)
+		return model.EnvCompare(a.Env, b.Env)
 	})
 	d.sel.refit(len(d.is.Targets), func(i int) string { return targetID(d.is.Targets[i]) })
 }

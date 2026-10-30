@@ -29,15 +29,18 @@ type token struct {
 	isOr    bool
 }
 
-var fieldNames = []string{"id", "severity", "project", "env", "owner", "ticket", "tech", "status", "applies", "kev", "fix", "overdue", "after", "before"}
+var fieldNames = []string{"id", "severity", "project", "env", "owner", "ticket", "tech", "status", "applies", "kev", "fix", "overdue", "after", "before", "published"}
 
 var fieldAliases = map[string]string{"cve": "id", "sev": "severity"}
 
-func ParseSearch(text string) (Search, error) {
+func ParseSearch(text string) (Search, error) { return ParseSearchAt(text, time.Now()) }
+
+// ParseSearchAt is ParseSearch with the clock a relative published: filter counts back from.
+func ParseSearchAt(text string, now time.Time) (Search, error) {
 	var s Search
 	joined := false
 	for _, t := range operators(tokenize(text)) {
-		tm, err := compile(t.token)
+		tm, err := compile(t.token, now)
 		if err != nil {
 			return Search{}, err
 		}
@@ -147,11 +150,11 @@ func isLetters(s string) bool {
 	return s != "" && strings.IndexFunc(s, func(r rune) bool { return !unicode.IsLetter(r) }) < 0
 }
 
-func compile(t token) (term, error) {
+func compile(t token, now time.Time) (term, error) {
 	if t.field == "" {
 		return term{exclude: t.exclude, plain: strings.ToLower(t.value), test: containing(strings.ToLower(t.value))}, nil
 	}
-	test, err := fieldTest(t.field, t.value)
+	test, err := fieldTest(t.field, t.value, now)
 	return term{exclude: t.exclude, test: test}, err
 }
 
@@ -170,7 +173,7 @@ func haystack(is Issue) string {
 	return strings.ToLower(strings.Join(parts, "\n"))
 }
 
-func fieldTest(field, value string) (func(Issue) bool, error) {
+func fieldTest(field, value string, now time.Time) (func(Issue) bool, error) {
 	if canonical, ok := fieldAliases[field]; ok {
 		field = canonical
 	}
@@ -183,7 +186,7 @@ func fieldTest(field, value string) (func(Issue) bool, error) {
 		if v == "" {
 			return nil, fmt.Errorf("missing value after %s:", field)
 		}
-		test, err := valueTest(field, v)
+		test, err := valueTest(field, v, now)
 		if err != nil {
 			return nil, err
 		}
@@ -199,7 +202,7 @@ func fieldTest(field, value string) (func(Issue) bool, error) {
 	}, nil
 }
 
-func valueTest(field, v string) (func(Issue) bool, error) {
+func valueTest(field, v string, now time.Time) (func(Issue) bool, error) {
 	switch field {
 	case "id":
 		return idTest(v), nil
@@ -216,8 +219,11 @@ func valueTest(field, v string) (func(Issue) bool, error) {
 			return slices.ContainsFunc(is.Techs, func(tech string) bool { return strings.EqualFold(tech, v) })
 		}, nil
 	case "env":
-		env, err := parseEnum("environment", v, model.AllEnvs)
-		return targetTest(func(t Target) bool { return t.Env == env }), err
+		env := model.Env(strings.ToLower(v))
+		if !env.Valid() {
+			return nil, fmt.Errorf("unknown environment %q; use a lowercase name such as local, dev or prod", v)
+		}
+		return targetTest(func(t Target) bool { return t.Env == env }), nil
 	case "status":
 		status, err := parseEnum("status", v, []model.Status{model.StatusOpen, model.StatusFixed, model.StatusIgnored, model.StatusNotAffected})
 		return targetTest(func(t Target) bool { return t.Status == status }), err
@@ -230,6 +236,8 @@ func valueTest(field, v string) (func(Issue) bool, error) {
 		return yesNoTest(field, v, func(is Issue) bool { return slices.ContainsFunc(is.Targets, func(t Target) bool { return t.Overdue }) })
 	case "fix":
 		return fixTest(v)
+	case "published":
+		return publishedTest(v, now)
 	}
 	return dateTest(field, v)
 }
@@ -318,4 +326,12 @@ func dateTest(field, v string) (func(Issue) bool, error) {
 		return func(is Issue) bool { return !is.Published.IsZero() && !is.Published.Before(day) }, nil
 	}
 	return func(is Issue) bool { return !is.Published.IsZero() && is.Published.Before(day) }, nil
+}
+
+func publishedTest(v string, now time.Time) (func(Issue) bool, error) {
+	r, err := ParseTimeRange(v)
+	if err != nil {
+		return nil, err
+	}
+	return func(is Issue) bool { return r.Contains(is.Published, now) }, nil
 }

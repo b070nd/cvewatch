@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -96,7 +98,17 @@ func (m *app) overviewHead(w, h int) []string {
 		most = max(most, n)
 	}
 	var envs []string
-	for _, e := range model.AllEnvs {
+	inUse := maps.Clone(c.ByEnv) // the environments of the projects in scope, and any a finding names
+	for _, p := range sn.Projects {
+		if m.scope == "" || p.Name == m.scope {
+			for _, e := range p.Envs {
+				if _, ok := inUse[model.Env(e)]; !ok {
+					inUse[model.Env(e)] = 0
+				}
+			}
+		}
+	}
+	for _, e := range slices.SortedFunc(maps.Keys(inUse), model.EnvCompare) {
 		envs = append(envs, fmt.Sprintf("%s %d %s", e, c.ByEnv[e], bar(c.ByEnv[e], most, barW)))
 	}
 	blocks = append(blocks, summaryBlock{4, []string{"  by environment  " + strings.Join(envs, "  ")}})

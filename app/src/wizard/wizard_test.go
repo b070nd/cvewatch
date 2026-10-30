@@ -305,3 +305,46 @@ func TestMenuEndOfInputQuits(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestCreateWithAnOwnKeywordAndHints(t *testing.T) {
+	s := newSession(t)
+	// shop; no scanned techs; algolia is refused with the way out, +algolia is taken; no version; default environments; save.
+	in := "shop\n\nalgolia\n+algolia\n\n\n\nyes\n"
+	out, err := run(t, in, func(io IO) error { return Setup(io, s, "", "") })
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{
+		`"algolia" is not in the catalog; write +algolia to add it as your own keyword`,
+		"Your own technologies, added to techs.yaml:",
+		"warn: techs[0].version: algolia has no version",
+		"info: envs: no prod environment",
+		"added to techs.yaml as your own: algolia",
+		"saved config/projects/shop.yaml",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "is not in the catalog, so no advisory will match it") {
+		t.Errorf("the staged keyword is known to the review:\n%s", out)
+	}
+	b, err := os.ReadFile(filepath.Join(s.Cfg.Root, "config", "techs.yaml"))
+	if err != nil || !strings.Contains(string(b), "name: algolia") {
+		t.Fatalf("techs.yaml: %s %v", b, err)
+	}
+	if p, _ := os.ReadFile(projectFile(s, "shop")); !strings.Contains(string(p), "algolia") {
+		t.Fatalf("project file:\n%s", p)
+	}
+}
+
+func TestQuitLeavesNoOwnKeywordBehind(t *testing.T) {
+	s := newSession(t)
+	out, err := run(t, "shop\n\n+algolia\n\nquit\n", func(io IO) error { return Setup(io, s, "", "") })
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(s.Cfg.Root, "config", "techs.yaml")); err == nil {
+		t.Fatal("quitting wrote techs.yaml")
+	}
+}

@@ -189,6 +189,30 @@ func projectRows(ps []Project) ([]string, map[string]map[model.Env]bool) {
 	return names, envs
 }
 
+// matrixEnvs is every environment a project runs in or a finding names, in display order.
+func matrixEnvs(penvs map[string]map[model.Env]bool, cells map[string]map[model.Env]*cellStats) []model.Env {
+	seen := map[model.Env]bool{}
+	var out []model.Env
+	add := func(e model.Env) {
+		if !seen[e] {
+			seen[e] = true
+			out = append(out, e)
+		}
+	}
+	for _, m := range penvs {
+		for e := range m {
+			add(e)
+		}
+	}
+	for _, m := range cells {
+		for e := range m {
+			add(e)
+		}
+	}
+	model.SortEnvs(out)
+	return out
+}
+
 func (c *cellStats) render() string {
 	var b strings.Builder
 	if c.open > 0 {
@@ -244,9 +268,7 @@ func openByProject(is query.Issue) string {
 	parts := make([]string, 0, len(names))
 	for _, n := range names {
 		envs := byProject[n]
-		slices.SortStableFunc(envs, func(a, b model.Env) int {
-			return slices.Index(model.AllEnvs, a) - slices.Index(model.AllEnvs, b)
-		})
+		model.SortEnvs(envs)
 		strs := make([]string, len(envs))
 		for i, e := range envs {
 			strs[i] = string(e)
@@ -324,14 +346,15 @@ func HTML(d Data, now time.Time) string {
 		p("<p class=\"muted\">No projects configured.</p>\n")
 	} else {
 		cells := matrix(d.Issues)
+		columns := matrixEnvs(penvs, cells)
 		p("<div class=\"scroll\"><table>\n<thead><tr><th scope=\"col\">Project</th>")
-		for _, e := range model.AllEnvs {
+		for _, e := range columns {
 			p("<th scope=\"col\">%s</th>", esc(string(e)))
 		}
 		p("</tr></thead>\n<tbody>\n")
 		for _, n := range names {
 			p("<tr><th scope=\"row\">%s</th>", esc(n))
-			for _, e := range model.AllEnvs {
+			for _, e := range columns {
 				c := cells[n][e]
 				if c == nil && !penvs[n][e] {
 					p("<td class=\"cell absent\"><span class=\"muted\">%s</span></td>", emptyMarker)

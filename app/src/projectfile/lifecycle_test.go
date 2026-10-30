@@ -112,7 +112,7 @@ func TestSetLockfileDevErrors(t *testing.T) {
 	for name, op := range map[string]Op{
 		"unknown path": {Kind: "set_lockfile_dev", Lockfile: model.Lockfile{Path: "nope.lock", Dev: true}},
 		"wrong env":    {Kind: "set_lockfile_dev", Lockfile: model.Lockfile{Path: "composer.lock", Env: "prod", Dev: true}},
-		"bad env":      {Kind: "set_lockfile_dev", Lockfile: model.Lockfile{Path: "composer.lock", Env: "qa", Dev: true}},
+		"bad env":      {Kind: "set_lockfile_dev", Lockfile: model.Lockfile{Path: "composer.lock", Env: "QA", Dev: true}},
 	} {
 		f := mustParse(t, sinceFile)
 		if err := f.Apply(op); err == nil {

@@ -87,7 +87,7 @@ func (f *File) validate(known func(tech string) bool, suggest func(name string) 
 	enabled := map[model.Env]bool{}
 	for i, e := range p.EffectiveEnvs() {
 		if !e.Valid() {
-			add("error", fmt.Sprintf("envs[%d]", i), "invalid environment %q (valid: %v)", e, model.AllEnvs)
+			add("error", fmt.Sprintf("envs[%d]", i), "invalid environment %q (use lowercase letters, digits, - and _)", e)
 			continue
 		}
 		enabled[e] = true
@@ -124,7 +124,7 @@ func (f *File) validate(known func(tech string) bool, suggest func(name string) 
 			if !sharedPath(p, l) {
 				fixes = []Fix{RemoveLockfileFix(l)}
 			}
-			addFix("error", field+".env", fixes, "invalid environment %q (valid: %v)", l.Env, model.AllEnvs)
+			addFix("error", field+".env", fixes, "invalid environment %q (use lowercase letters, digits, - and _)", l.Env)
 		case l.Env != "" && !enabled[l.Env]:
 			addFix("warning", field+".env", []Fix{enableEnvFix(p, l.Env), RemoveLockfileFix(l)},
 				"environment %s is not in envs, so lockfile %s is not used", l.Env, l.Path)
@@ -143,7 +143,7 @@ func (f *File) validate(known func(tech string) bool, suggest func(name string) 
 		field := "environments." + string(e)
 		switch {
 		case !e.Valid():
-			add("error", field, "invalid environment %q (valid: %v)", e, model.AllEnvs)
+			add("error", field, "invalid environment %q (use lowercase letters, digits, - and _)", e)
 		case !enabled[e]:
 			addFix("warning", field, []Fix{enableEnvFix(p, e)}, "environment %s is not in envs, so it is not monitored", e)
 		}

@@ -32,16 +32,19 @@ func cell(t *testing.T, page, project string, env model.Env) string {
 	}
 	row := page[start : start+strings.Index(page[start:], "</tr>")]
 	parts := strings.Split(row, "<td")[1:]
-	for i, e := range model.AllEnvs {
-		if e == env {
+	head := page[strings.Index(page, "Exposure matrix"):]
+	head = head[:strings.Index(head, "</tr>")]
+	heads := regexp.MustCompile(`<th scope="col">([^<]*)</th>`).FindAllStringSubmatch(head, -1)
+	for i, h := range heads[1:] { // the first heading is the project column
+		if h[1] == string(env) {
 			return parts[i]
 		}
 	}
-	t.Fatalf("unknown env %q", env)
+	t.Fatalf("no column for env %q", env)
 	return ""
 }
 
-func fullEnvs() []model.Env { return model.AllEnvs }
+func fullEnvs() []model.Env { return model.LegacyEnvs }
 
 func TestMatrixCountsAndWorstSeverity(t *testing.T) {
 	d := Data{
@@ -117,7 +120,7 @@ func TestMatrixAbsentEnvAndOverdue(t *testing.T) {
 	over := tgt("api", model.EnvProd, model.StatusOpen)
 	over.Overdue = true
 	d := Data{
-		Projects: []Project{{Name: "zeta", Envs: []model.Env{model.EnvProd}}, {Name: "api", Envs: []model.Env{model.EnvDev, model.EnvProd}}},
+		Projects: []Project{{Name: "zeta", Envs: []model.Env{model.EnvProd}}, {Name: "api", Envs: []model.Env{model.EnvDev, model.EnvProd}}, {Name: "mid", Envs: []model.Env{model.EnvStaging}}},
 		Issues:   []query.Issue{issue("CVE-1", model.SevHigh, over)},
 	}
 	page := HTML(d, now)
@@ -369,5 +372,28 @@ func TestTimesAreUTC(t *testing.T) {
 	page := HTML(Data{}, time.Date(2026, 10, 28, 12, 0, 0, 0, zone))
 	if !regexp.MustCompile(`Generated 2026-10-28 07:00 UTC`).MatchString(page) {
 		t.Error("generated time should be in UTC")
+	}
+}
+
+func TestMatrixColumnsFollowTheEnvironmentsInUse(t *testing.T) {
+	d := Data{
+		Projects: []Project{{Name: "shop", Envs: []model.Env{"qa", "local"}}, {Name: "api", Envs: []model.Env{model.EnvProd}}},
+		Issues:   []query.Issue{issue("CVE-1", model.SevHigh, tgt("shop", "uat-eu", model.StatusOpen))},
+	}
+	page := HTML(d, now)
+	head := page[strings.Index(page, "Exposure matrix"):]
+	head = head[:strings.Index(head, "</tr>")]
+	var cols []string
+	for _, m := range regexp.MustCompile(`<th scope="col">([^<]*)</th>`).FindAllStringSubmatch(head, -1) {
+		cols = append(cols, m[1])
+	}
+	if got, want := strings.Join(cols, ","), "Project,local,prod,qa,uat-eu"; got != want {
+		t.Fatalf("columns = %s, want %s", got, want)
+	}
+	if c := cell(t, page, "shop", "uat-eu"); !strings.Contains(c, "open") {
+		t.Errorf("a finding in an environment the project does not list still shows: %s", c)
+	}
+	if c := cell(t, page, "api", "qa"); !strings.Contains(c, ">-<") {
+		t.Errorf("absent env should show a dash: %s", c)
 	}
 }

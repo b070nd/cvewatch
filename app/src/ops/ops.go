@@ -167,7 +167,7 @@ func (s *Session) reload() error {
 func ParseFilter(min, project, env string) (query.Filter, error) {
 	f := query.Filter{Project: project, Env: model.Env(env)}
 	if env != "" && !f.Env.Valid() {
-		return f, fmt.Errorf("unknown env %q (use dev, int, staging, prod)", env)
+		return f, fmt.Errorf("%q is not a valid environment name (lowercase letters, digits, - and _)", env)
 	}
 	if min != "" {
 		if f.Min = model.ParseSeverity(min); f.Min == model.SevUnknown {
@@ -295,7 +295,7 @@ func (s *Session) judge(v *model.Vulnerability) relevance.Verdict {
 		Title: v.Title, Summary: v.Summary, IDs: v.Keys(), Affected: v.Affected, Severity: v.Severity,
 		Published: v.Published, TitleOnly: v.Summary == "", // irrelevant records kept no summary
 	}
-	return relevance.New(s.Cfg.Techs).Judge(it, inventory.Load(s.Cfg).Targets())
+	return relevance.New(s.Cfg.Techs).Judge(it, inventory.Load(s.Cfg).Within(s.Cfg.Horizon, s.Now()).Targets())
 }
 
 // ---- writes ----
@@ -325,7 +325,7 @@ func (c Change) validate(cfg *config.Bundle) error {
 
 func validateTarget(cfg *config.Bundle, project string, env model.Env) error {
 	if env != "" && !env.Valid() {
-		return fmt.Errorf("unknown env %q (use dev, int, staging, prod)", env)
+		return fmt.Errorf("%q is not a valid environment name (lowercase letters, digits, - and _)", env)
 	}
 	if project == "" {
 		return errors.New("a project is required")
@@ -485,9 +485,9 @@ func (s *Session) Rescan(apply bool) (Rescan, error) {
 		}
 	}
 	out := Rescan{Applied: apply}
-	targets := inventory.Load(s.Cfg).Targets()
-	judge := relevance.New(s.Cfg.Techs)
 	now := s.Now()
+	targets := inventory.Load(s.Cfg).Within(s.Cfg.Horizon, now).Targets()
+	judge := relevance.New(s.Cfg.Techs)
 	relevant := map[string]bool{}
 	for _, v := range s.Ledger.Relevant() {
 		relevant[v.ID] = true
@@ -619,7 +619,7 @@ func (s *Session) Violations() ([]priority.Violation, error) {
 
 // Digest builds the "still open" summary as the digest channels would send it.
 func (s *Session) Digest() (notify.Digest, error) {
-	f, err := s.scope(query.Filter{Env: s.Cfg.Notify.Digest.Env})
+	f, err := s.scope(query.Filter{Env: s.Cfg.Notify.Digest.Env, Published: query.InHorizon(s.Cfg.Horizon, s.Now())})
 	if err != nil {
 		return notify.Digest{}, err
 	}

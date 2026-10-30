@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/b070nd/cvewatch/app/src/catalog"
 	"github.com/b070nd/cvewatch/app/src/discovery"
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/ops"
@@ -116,8 +117,21 @@ func catalogCmd(s *ops.Session, args []string) error {
 	}
 	cat := s.Cfg.Catalog
 	techs := cat.All()
-	if q := strings.TrimSpace(strings.Join(fs.Args(), " ")); q != "" {
+	q := strings.TrimSpace(strings.Join(fs.Args(), " "))
+	if q != "" {
 		techs = cat.Search(q)
+		if len(techs) == 0 && !*asJSON {
+			fmt.Printf("%q is not in the catalog.", q)
+			if close := cat.Suggest(q, 5); len(close) > 0 {
+				var names []string
+				for _, t := range close {
+					names = append(names, t.Name)
+				}
+				fmt.Printf(" Did you mean: %s?", strings.Join(names, ", "))
+			}
+			fmt.Printf(" To match it anyway, add it as your own keyword: cvewatch tech add %s\n", catalog.Slug(q))
+			return nil
+		}
 	}
 	var shown []model.Tech
 	for _, t := range techs {
@@ -142,8 +156,9 @@ func catalogCmd(s *ops.Session, args []string) error {
 func discoverCmd(s *ops.Session, args []string) error {
 	fs := flag.NewFlagSet("discover", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "print JSON")
+	all := fs.Bool("all", false, "also look at paths .gitignore ignores")
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return errors.New("usage: cvewatch discover DIR|FILE [-json] (FILE is a Dockerfile, compose file or Kubernetes manifest)")
+		return errors.New("usage: cvewatch discover DIR|FILE [-json] [-all] (FILE is a Dockerfile, compose file or Kubernetes manifest; paths .gitignore ignores are left out unless -all)")
 	}
 	typed := args[0]
 	if err := fs.Parse(args[1:]); err != nil {
@@ -153,7 +168,10 @@ func discoverCmd(s *ops.Session, args []string) error {
 	if err != nil {
 		return err
 	}
-	res, err := projectflow.ScanSource(src, s.Cfg.Catalog)
+	res, err := projectflow.ScanSourceWith(src, s.Cfg.Catalog, discovery.Options{IncludeIgnored: *all})
+	if errors.Is(err, discovery.ErrIgnored) {
+		return fmt.Errorf("%w (use -all to read it anyway)", err)
+	}
 	if err != nil {
 		return err
 	}
@@ -257,19 +275,22 @@ type projectEdit struct {
 // projectfile.OpTable lists; its parity test runs every row through here.
 func parseProjectEdit(args []string) (projectEdit, error) {
 	fs := flag.NewFlagSet("project", flag.ContinueOnError)
-	var set, remove, lock, unlock, lockDev, lockNoDev, envSet, envUnset, image listFlag
+	var set, remove, lock, unlock, lockDev, lockNoDev, envSet, envUnset, envAdd, envRemove, envRename, image listFlag
 	var since optFlag
 	fs.Var(&set, "set", "declare tech=version (version may be empty), repeatable")
 	fs.Var(&remove, "remove", "stop declaring a tech, repeatable")
 	fs.Var(&lock, "lock", "add a lockfile as type:path[:env][:dev], repeatable")
 	fs.Var(&unlock, "unlock", "remove a lockfile as type:path[:env], repeatable")
 	fs.Var(&lockDev, "lock-dev", "count a lockfile's dev-only packages everywhere: type:path[:env], repeatable")
-	fs.Var(&lockNoDev, "lock-nodev", "stop counting a lockfile's dev-only packages outside dev and int: type:path[:env], repeatable")
+	fs.Var(&lockNoDev, "lock-nodev", "stop counting a lockfile's dev-only packages outside dev-like environments: type:path[:env], repeatable")
 	fs.Var(&envSet, "env-set", "set the version deployed in one environment as env:tech=version, repeatable")
 	fs.Var(&envUnset, "env-unset", "drop a per-environment version as env:tech, repeatable")
+	fs.Var(&envAdd, "env-add", "add an environment to the project (any lowercase name), repeatable")
+	fs.Var(&envRemove, "env-remove", "remove an environment from the project's list, repeatable")
+	fs.Var(&envRename, "env-rename", "rename an environment as old=new, also in its versions and lockfiles, repeatable")
 	fs.Var(&image, "image", "set the image of an environment as env=tag (empty tag clears), repeatable")
 	fs.Var(&since, "since", "date advisories count from, YYYY-MM-DD (empty clears)")
-	envs := fs.String("envs", "", "comma-separated environments (\"all\" means every one)")
+	envs := fs.String("envs", "", "comma-separated environments, any names (\"all\" means the old default dev,int,staging,prod)")
 	save := fs.Bool("save", false, "write the change; without it only show the diff")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "usage: cvewatch project NAME [flags]\n\nEdit flags (diff only without -save):\n%s\nOther: -save writes the change.\n", projectfile.FlagHelp("  "))
@@ -337,6 +358,19 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 		}
 		changes = append(changes, projectfile.Op{Kind: "remove_env_tech", Env: model.Env(env), Tech: tech})
 	}
+	for _, e := range envAdd {
+		changes = append(changes, projectfile.Op{Kind: "add_env", Env: model.Env(e)})
+	}
+	for _, e := range envRemove {
+		changes = append(changes, projectfile.Op{Kind: "remove_env", Env: model.Env(e)})
+	}
+	for _, v := range envRename {
+		from, to, ok := strings.Cut(v, "=")
+		if !ok || from == "" || to == "" {
+			return projectEdit{}, fmt.Errorf("%q must look like old=new, for example staging=stage", v)
+		}
+		changes = append(changes, projectfile.Op{Kind: "rename_env", Env: model.Env(from), To: model.Env(to)})
+	}
 	for _, v := range image {
 		env, img, ok := strings.Cut(v, "=")
 		if !ok || env == "" {
@@ -345,7 +379,7 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 		changes = append(changes, projectfile.Op{Kind: "set_image", Env: model.Env(env), Image: img})
 	}
 	if len(changes) == 0 {
-		return projectEdit{}, errors.New("nothing to change: use -set, -remove, -env-set, -env-unset, -image, -lock, -unlock, -lock-dev, -lock-nodev, -since or -envs (cvewatch project NAME -h lists them)")
+		return projectEdit{}, errors.New("nothing to change: use -set, -remove, -env-set, -env-unset, -image, -lock, -unlock, -lock-dev, -lock-nodev, -since, -envs, -env-add, -env-remove or -env-rename (cvewatch project NAME -h lists them)")
 	}
 	return projectEdit{name: name, ops: changes, save: *save}, nil
 }
@@ -353,8 +387,20 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 func showProject(s *ops.Session, c ops.ProjectChange) error {
 	p, err := s.EditProject(c)
 	fmt.Print(p.Diff)
+	covered := map[string]bool{} // a hint says more than the warning on the same field
+	for _, h := range p.Hints {
+		covered[h.Field] = true
+	}
 	for _, i := range p.Issues {
-		fmt.Printf("%s: %s: %s\n", i.Level, i.Field, i.Message)
+		if i.Level == "error" || !covered[i.Field] {
+			fmt.Printf("%s: %s: %s\n", i.Level, i.Field, i.Message)
+		}
+	}
+	for _, h := range p.Hints {
+		fmt.Printf("%s: %s: %s\n", h.Level, h.Field, h.Message)
+		if h.Keyword != "" {
+			fmt.Printf("  to add it as your own keyword: cvewatch tech add %s -yes\n", catalog.Slug(h.Keyword))
+		}
 	}
 	switch {
 	case err != nil:
@@ -382,7 +428,8 @@ func parseLock(v string) (model.Lockfile, error) {
 	if n := len(parts); n > 1 && parts[n-1] == "dev" {
 		l.Dev, parts = true, parts[:n-1]
 	}
-	if n := len(parts); n > 1 && model.Env(parts[n-1]).Valid() {
+	// a single letter before it is a drive (C:data), so the last part is part of the path
+	if n := len(parts); n > 1 && model.Env(parts[n-1]).Valid() && !(n == 2 && len(parts[0]) == 1) {
 		l.Env, parts = model.Env(parts[n-1]), parts[:n-1]
 	}
 	l.Path = strings.Join(parts, ":")
@@ -410,6 +457,7 @@ func relTo(root, path string) string {
 func setupCmd(s *ops.Session, args []string) error {
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
 	project := fs.String("project", "", "edit this existing project")
+	all := fs.Bool("all", false, "also scan paths .gitignore ignores")
 	dir := ""
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		dir, args = args[0], args[1:]
@@ -421,7 +469,7 @@ func setupCmd(s *ops.Session, args []string) error {
 	if dir == "" && *project == "" {
 		return wizard.Menu(io, s)
 	}
-	return wizard.Setup(io, s, dir, *project)
+	return wizard.SetupWith(io, s, dir, *project, *all)
 }
 
 // tuiCmd starts the cvewatch-tui program that sits next to this executable

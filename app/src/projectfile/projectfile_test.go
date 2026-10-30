@@ -283,7 +283,7 @@ func TestSetEnvs(t *testing.T) {
 			t.Fatalf("envs still there:\n%s", got)
 		}
 		f := mustParse(t, got)
-		if !reflect.DeepEqual(f.Project().EffectiveEnvs(), model.AllEnvs) {
+		if !reflect.DeepEqual(f.Project().EffectiveEnvs(), model.LegacyEnvs) {
 			t.Fatalf("effective envs = %v", f.Project().EffectiveEnvs())
 		}
 	})
@@ -309,8 +309,8 @@ func TestApplyErrors(t *testing.T) {
 	}{
 		{"unknown kind", Op{Kind: "explode"}, `unknown kind "explode"`},
 		{"empty kind", Op{}, "unknown kind"},
-		{"invalid env in set_envs", Op{Kind: "set_envs", Envs: []model.Env{"dev", "qa"}}, `"qa"`},
-		{"invalid env in set_env_tech", Op{Kind: "set_env_tech", Env: "qa", Tech: "php", Version: "8"}, `"qa"`},
+		{"invalid env in set_envs", Op{Kind: "set_envs", Envs: []model.Env{"dev", "QA"}}, `"QA"`},
+		{"invalid env in set_env_tech", Op{Kind: "set_env_tech", Env: "QA", Tech: "php", Version: "8"}, `"QA"`},
 		{"missing env", Op{Kind: "set_image", Image: "x"}, "invalid env"},
 		{"empty tech in set_tech", Op{Kind: "set_tech", Tech: "  "}, "empty"},
 		{"empty tech in remove_tech", Op{Kind: "remove_tech"}, "empty"},
@@ -322,7 +322,7 @@ func TestApplyErrors(t *testing.T) {
 		{"remove absent lockfile", Op{Kind: "remove_lockfile", Lockfile: model.Lockfile{Path: "/nope"}}, `"/nope"`},
 		{"remove lockfile for the wrong env", Op{Kind: "remove_lockfile", Lockfile: model.Lockfile{Path: "/path/to/shop/composer.lock", Env: "dev"}}, "dev"},
 		{"lockfile without path", Op{Kind: "add_lockfile", Lockfile: model.Lockfile{Type: "npm"}}, "path"},
-		{"lockfile with bad env", Op{Kind: "add_lockfile", Lockfile: model.Lockfile{Type: "npm", Path: "p", Env: "qa"}}, "qa"},
+		{"lockfile with bad env", Op{Kind: "add_lockfile", Lockfile: model.Lockfile{Type: "npm", Path: "p", Env: "QA"}}, "QA"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -417,7 +417,7 @@ func TestDiff(t *testing.T) {
 func TestValidate(t *testing.T) {
 	known := func(s string) bool { return s == "php" || s == "magento" }
 	src := `name: ""
-envs: [dev, qa]
+envs: [dev, QA]
 techs:
   - {name: php, version: "8.2"}
   - {name: PHP}
@@ -427,13 +427,13 @@ lockfiles:
   - {type: composer, path: composer.lock}
   - {type: nope, path: x}
   - {type: npm, path: ""}
-  - {type: npm, path: p, env: qa}
+  - {type: npm, path: p, env: QA}
 environments:
   prod:
     techs: {php: "8.2.30", node: "20"}
-  uat: {}
+  UAT: {}
 `
-	// "uat" and "qa" are not valid environments; the file still parses because
+	// "UAT" and "QA" are not valid environments (names are lowercase); the file still parses because
 	// the model keys are plain strings
 	issues := mustParse(t, src).Validate(known)
 	got := map[string]string{}
@@ -448,7 +448,7 @@ environments:
 		"error lockfiles[1].type",
 		"error lockfiles[2].path",
 		"error lockfiles[3].env",
-		"error environments.uat",
+		"error environments.UAT",
 		"warning techs[2]",                     // ruby unknown and version "latest"
 		"warning environments.prod",            // prod not in envs
 		"warning environments.prod.techs.node", // unknown tech

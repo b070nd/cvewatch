@@ -25,6 +25,7 @@ type Filter struct {
 	All       bool           // include targets whose version is not affected
 	Closed    bool           // also list the fixed, ignored and not-affected targets of issues that still have an open one
 	AnyStatus bool           // list issues whose findings are in any status, with all their targets
+	Published TimeRange      // only issues published in this range; the zero value is any time
 }
 
 func (f Filter) allows(project string) bool {
@@ -120,7 +121,7 @@ func Open(l *ledger.Ledger, f Filter, now time.Time) []Issue {
 	for _, fd := range all {
 		v := l.Vuln(fd.VulnID)
 		if (fd.Status != model.StatusOpen && !f.AnyStatus) || v == nil || !v.Severity.AtLeast(f.Min) || !f.allows(fd.Project) || !f.allowsEnv(fd.Env) ||
-			(!f.All && fd.Applies == model.AppNotAffected) {
+			(!f.All && fd.Applies == model.AppNotAffected) || !f.Published.Contains(v.Published, now) {
 			continue
 		}
 		is := byID[v.ID]
@@ -132,7 +133,7 @@ func Open(l *ledger.Ledger, f Filter, now time.Time) []Issue {
 		}
 		is.Targets = append(is.Targets, target(fd, now))
 		is.Applies = worst(is.Applies, fd.Applies, len(is.Targets) == 1)
-		is.ProdOpen = is.ProdOpen || (fd.Env == model.EnvProd && fd.Status == model.StatusOpen)
+		is.ProdOpen = is.ProdOpen || (model.IsProd(fd.Env) && fd.Status == model.StatusOpen)
 	}
 	if f.Closed || f.AnyStatus {
 		for _, fd := range all {
@@ -145,7 +146,7 @@ func Open(l *ledger.Ledger, f Filter, now time.Time) []Issue {
 				if c := strings.Compare(a.Project, b.Project); c != 0 {
 					return c
 				}
-				return slices.Index(model.AllEnvs, a.Env) - slices.Index(model.AllEnvs, b.Env)
+				return model.EnvCompare(a.Env, b.Env)
 			})
 		}
 	}
@@ -218,7 +219,7 @@ func Entries(l *ledger.Ledger, f Filter, now time.Time) []calendar.Entry {
 func (is *Issue) addTarget(fd model.Finding, now time.Time) {
 	is.Targets = append(is.Targets, target(fd, now))
 	is.Applies = worst(is.Applies, fd.Applies, len(is.Targets) == 1)
-	is.ProdOpen = is.ProdOpen || (fd.Env == model.EnvProd && fd.Status == model.StatusOpen)
+	is.ProdOpen = is.ProdOpen || (model.IsProd(fd.Env) && fd.Status == model.StatusOpen)
 }
 
 func worst(cur, next model.Applicability, first bool) model.Applicability {

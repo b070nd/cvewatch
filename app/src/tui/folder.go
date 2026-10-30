@@ -94,12 +94,13 @@ func (b *folderBox) addFiles(typed string) {
 		prefix = typed[len(f):]
 	}
 	var files []discovery.Entry
+	ign := discovery.NewIgnore(b.parent)
 	for _, d := range children {
 		name := d.Name()
 		if strings.HasPrefix(name, ".") && !strings.HasPrefix(prefix, ".") || !strings.Contains(strings.ToLower(name), strings.ToLower(prefix)) || !b.takes(name) {
 			continue
 		}
-		if path := filepath.Join(b.parent, name); isFile(path, d) {
+		if path := filepath.Join(b.parent, name); isFile(path, d) && !ign.Ignored(path, false) {
 			files = append(files, discovery.Entry{Path: path, Name: name, Marks: []string{fileKind(name)}})
 		}
 	}

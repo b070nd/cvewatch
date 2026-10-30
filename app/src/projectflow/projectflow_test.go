@@ -12,6 +12,7 @@ import (
 
 	"github.com/b070nd/cvewatch/app/src/config"
 	"github.com/b070nd/cvewatch/app/src/discovery"
+	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/ops"
 	"github.com/b070nd/cvewatch/app/src/projectfile"
 	"github.com/b070nd/cvewatch/app/src/setup"
@@ -159,8 +160,8 @@ func TestOpenCreatingFromFolder(t *testing.T) {
 				}
 			}
 			got := Edits(s, o.Flow)
-			want := []projectfile.Op{{Kind: "add_lockfile", Lockfile: d.Project.Lockfiles[0]}}
-			want[0].Lockfile.Path = "repos/app/composer.lock"
+			want := []projectfile.Op{{Kind: "set_envs", Envs: []model.Env{model.EnvLocal}}, {Kind: "add_lockfile", Lockfile: d.Project.Lockfiles[0]}}
+			want[1].Lockfile.Path = "repos/app/composer.lock"
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("edits = %+v, want %+v", got, want)
 			}
@@ -325,7 +326,7 @@ func TestEditsPathOutsideRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := Edits(s, o.Flow)
-	if len(got) != 1 || got[0].Lockfile.Path != "../other/app/composer.lock" {
+	if len(got) != 2 || got[1].Lockfile.Path != "../other/app/composer.lock" { // set_envs local comes first
 		t.Fatalf("edits = %+v", got)
 	}
 }
@@ -336,7 +337,7 @@ func TestEditsKeepsRelativePaths(t *testing.T) {
 	f := setup.NewFlow(s.Cfg.Catalog, nil)
 	f.UseDiscovery("", discovery.Result{Lockfiles: []discovery.LockProposal{{Type: "composer", Path: "composer.lock"}}})
 	got := Edits(s, f)
-	if len(got) != 1 || got[0].Lockfile.Path != "composer.lock" {
+	if len(got) != 2 || got[1].Lockfile.Path != "composer.lock" {
 		t.Fatalf("edits = %+v", got)
 	}
 }
@@ -412,5 +413,66 @@ func TestOpenEditsAProjectWhoseFileHasAnotherName(t *testing.T) {
 				t.Fatalf("stored = %+v", stored)
 			}
 		})
+	}
+}
+
+func TestCustomKeywordIsSavedWithTheProject(t *testing.T) {
+	root := t.TempDir()
+	s := session(t, root, "alice", nil)
+	o, err := Open(s, Request{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := o.Flow
+	for _, a := range []string{"shop", "", "+algolia"} {
+		if err := f.Answer(a); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	p, err := s.EditProject(Change(s, f, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Saved || len(p.NewTechs) != 1 || p.NewTechs[0] != "algolia" || !strings.Contains(p.TechsDiff, "algolia") || p.Blocked() {
+		t.Fatalf("preview: %+v", p)
+	}
+	for _, is := range p.Issues {
+		if strings.Contains(is.Message, "not in the catalog") {
+			t.Errorf("a staged technology is known to the validation: %+v", is)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "config", "techs.yaml")); err == nil {
+		t.Fatal("the preview wrote techs.yaml")
+	}
+
+	p, err = s.EditProject(Change(s, f, true))
+	if err != nil || !p.Saved {
+		t.Fatalf("%+v %v", p, err)
+	}
+	b, _ := os.ReadFile(filepath.Join(root, "config", "techs.yaml"))
+	if !strings.Contains(string(b), "name: algolia") {
+		t.Fatalf("techs.yaml:\n%s", b)
+	}
+	cfg, err := config.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Catalog.Has("algolia") || len(cfg.Warnings) != 0 && strings.Contains(strings.Join(cfg.Warnings, "\n"), "algolia") {
+		t.Fatalf("the loaded catalog must know it and not warn: %v", cfg.Warnings)
+	}
+	if len(cfg.Projects) != 1 || cfg.Projects[0].Techs[0].Name != "algolia" {
+		t.Fatalf("%+v", cfg.Projects)
+	}
+
+	// an existing project reports its own hints
+	hints, err := s.ProjectHints("shop")
+	if err != nil || len(hints) == 0 {
+		t.Fatalf("%v %v", hints, err)
+	}
+	for _, h := range hints {
+		if h.Project != "shop" || strings.Contains(h.Message, "not in the catalog") {
+			t.Errorf("%+v", h)
+		}
 	}
 }

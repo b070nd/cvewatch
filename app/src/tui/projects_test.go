@@ -58,7 +58,7 @@ func TestSetupFormCreatesProjectFromTypedNameAndTechs(t *testing.T) {
 	d.want("Version of PHP")
 	d.typ("8.2")
 	d.press("enter")
-	d.want("Environments", "[x] dev", "[x] prod")
+	d.want("Environments", "[x] local", "[ ] dev", "[ ] prod", "other...")
 	d.press("enter")
 	d.want("Save this project?", `+   - {name: php, version: "8.2"}`)
 	d.want("Save this project?  y = save")

@@ -13,7 +13,7 @@ func lifeKey(verb ops.LifecycleVerb) func(*app, tea.KeyMsg) tea.Cmd {
 
 func (m *app) newProject() tea.Cmd {
 	m.prm = &prompt{kind: pkNew, title: "New empty project", fields: []field{{label: "Name"}, {label: "Environments"}},
-		hint: "letters, digits, - and _; environments are dev, int, staging, prod separated by commas, empty means all"}
+		hint: "letters, digits, - and _; environments are any names (local, dev, prod) separated by commas, empty means local"}
 	return nil
 }
 

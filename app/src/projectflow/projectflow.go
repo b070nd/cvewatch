@@ -20,6 +20,8 @@ import (
 type Request struct {
 	Project string
 	Folder  string
+	// IncludeIgnored scans paths .gitignore ignores too.
+	IncludeIgnored bool
 }
 
 type Opened struct {
@@ -60,7 +62,7 @@ func Open(s *ops.Session, req Request) (Opened, error) {
 		if err != nil {
 			return out, err
 		}
-		r, err := ScanSource(src, cat)
+		r, err := ScanSourceWith(src, cat, discovery.Options{IncludeIgnored: req.IncludeIgnored})
 		if err != nil {
 			return out, err
 		}
@@ -109,11 +111,26 @@ func Open(s *ops.Session, req Request) (Opened, error) {
 		out.Name = req.Project
 	}
 
+	if mine, err := s.UserTechs(); err == nil {
+		var names []string
+		for _, t := range mine {
+			names = append(names, t.Name)
+		}
+		out.Flow.SetOwn(names)
+	}
+
 	if res != nil {
 		out.Flow.UseDiscovery(res.Root, *res)
 		out.Note = scanNote(*res)
 	}
 	return out, nil
+}
+
+// Change is the project change the flow stands for: its edits, and the
+// technologies of the person's own it staged, which are written to techs.yaml
+// together with the project. Preview it, then save it with Save set.
+func Change(s *ops.Session, f *setup.Flow, save bool) ops.ProjectChange {
+	return ops.ProjectChange{Project: f.Draft().Project.Name, Ops: Edits(s, f), NewTechs: f.Custom(), Save: save}
 }
 
 func Edits(s *ops.Session, f *setup.Flow) []projectfile.Op {

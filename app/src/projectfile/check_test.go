@@ -166,9 +166,9 @@ func TestFixEnvironments(t *testing.T) {
 		t.Errorf("envs = %v", got)
 	}
 
-	checkFixes(t, "name: x\nlockfiles: [{type: composer, path: composer.lock, env: qa}]\n", validateCatalog,
+	checkFixes(t, "name: x\nlockfiles: [{type: composer, path: composer.lock, env: QA}]\n", validateCatalog,
 		"lockfiles[0].env", "invalid environment", "remove lockfile composer.lock")
-	i, _ := issueWith(validateCatalog(mustParse(t, "name: x\nlockfiles: [{type: npm, path: a, env: qa}, {type: npm, path: a, env: dev}]\n")), "lockfiles[0].env", "invalid")
+	i, _ := issueWith(validateCatalog(mustParse(t, "name: x\nlockfiles: [{type: npm, path: a, env: QA}, {type: npm, path: a, env: dev}]\n")), "lockfiles[0].env", "invalid")
 	if len(i.Fixes) != 0 {
 		t.Errorf("a shared path must not be removed blindly: %+v", i.Fixes)
 	}
@@ -224,7 +224,7 @@ func TestCheckFiles(t *testing.T) {
 }
 
 func TestIssuesCarryTheLineOfTheirField(t *testing.T) {
-	src := "# comment\nname: x\nenvs: [dev, prd]\ntechs:\n  - {name: pph, version: v}\n  - name: ruby\n    version: nine\nlockfiles:\n  - type: nope\n    path: a.lock\nenvironments:\n  prod:\n    techs:\n      php: latest\n  qa: {}\n"
+	src := "# comment\nname: x\nenvs: [dev, PRD]\ntechs:\n  - {name: pph, version: v}\n  - name: ruby\n    version: nine\nlockfiles:\n  - type: nope\n    path: a.lock\nenvironments:\n  prod:\n    techs:\n      php: latest\n  QA: {}\n"
 	f := mustParse(t, src)
 	issues := f.ValidateCatalog(testCatalog)
 	want := map[string]int{
@@ -234,7 +234,7 @@ func TestIssuesCarryTheLineOfTheirField(t *testing.T) {
 		"lockfiles[0].type":           9,
 		"environments.prod":           12,
 		"environments.prod.techs.php": 14,
-		"environments.qa":             15,
+		"environments.QA":             15,
 	}
 	got := map[string]int{}
 	for _, is := range issues {

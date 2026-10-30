@@ -19,7 +19,7 @@ func repairRoot(t *testing.T) string {
 		"config/projects/shop.yaml": "name: shop\ntechs: [{name: php, version: \"8.2\"}]\n",
 		"config/projects/yaml.yaml": "name: yaml\ntechs: [\n",
 		"config/projects/key.yaml":  "name: key\nbogus: 1\n",
-		"config/projects/env.yaml":  "name: env\nenvs: [qa]\n",
+		"config/projects/env.yaml":  "name: env\nenvs: [QA]\n",
 		"config/projects/lock.yaml": "name: lock\nlockfiles: [{type: nope, path: x}]\n",
 	}
 	for rel, body := range files {

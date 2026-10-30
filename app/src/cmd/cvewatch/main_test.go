@@ -35,3 +35,22 @@ func TestParseListFailOn(t *testing.T) {
 		t.Fatal("an unknown level must be rejected")
 	}
 }
+
+func TestParseListPublished(t *testing.T) {
+	o, err := parseList("list", nil)
+	if err != nil || !o.Published.Any() {
+		t.Fatalf("default is any time: %+v %v", o.Published, err)
+	}
+	for value, label := range map[string]string{"week": "past week", "24h": "past 24 hours", "2026-01-01..2026-03-01": "2026-01-01 to 2026-03-01", "..2026-03-01": "until 2026-03-01"} {
+		if o, err = parseList("list", []string{"-published", value}); err != nil || o.Published.Label() != label {
+			t.Errorf("%s: %q %v", value, o.Published.Label(), err)
+		}
+	}
+	if _, err = parseList("list", []string{"-published", "soon"}); err == nil {
+		t.Fatal("a bad time filter must be rejected")
+	}
+	var f query.Filter
+	if err := setPublished(&f, "month"); err != nil || f.Published.Label() != "past month" {
+		t.Fatalf("setPublished: %+v %v", f.Published, err)
+	}
+}

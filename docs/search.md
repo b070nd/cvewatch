@@ -76,7 +76,7 @@ Rules:
 
 A mistake stops the search with a message instead of an empty list:
 
-- `unknown field "foo"; use one of: id, severity, project, env, owner, ticket, tech, status, applies, kev, fix, overdue, after, before`
+- `unknown field "foo"; use one of: id, severity, project, env, owner, ticket, tech, status, applies, kev, fix, overdue, after, before, published`
 - `unknown severity "urgent"; use low, medium, high, critical or unknown, and add + for that or worse`
 - `missing value after owner:`
 - `bad date "2026-9-1" for after; use YYYY-MM-DD`
@@ -101,6 +101,7 @@ Each field has a short alias where one is shown.
 | `overdue` | an open finding whose due date has passed | `yes`, `no` | `overdue:yes` |
 | `after` | published on or after this day | `YYYY-MM-DD` | `after:2026-09-01` |
 | `before` | published before this day | `YYYY-MM-DD` | `before:2026-10-01` |
+| `published` | published in this time, like Google's time filter | `hour`, `day`, `week`, `month`, `year`, a span such as `24h`, `7d`, `2w`, `1y`, a day `YYYY-MM-DD`, or a range `FROM..TO` where either side may be empty | `published:week`, `published:2026-01-01..2026-03-01`, `published:..2026-03-01` |
 
 Notes:
 
@@ -108,6 +109,8 @@ Notes:
 - `severity:high` means high only. `severity:high+` means high and critical.
 - `kev`, `overdue` and `fix` also accept `true` and `false` for `yes` and `no`.
 - `after` includes its day and `before` does not. An issue with no publish date matches neither.
+- `published:week` counts back from now: `hour` is 1 hour, `day` 24 hours, `week` 7 days, `month` 30 days, `year` 365 days. In a range both days are included, dates are UTC, and the range may start or end open (`2026-01-01..`). `published:any` matches every date. An issue with no publish date does not match a bounded `published`.
+- The same values work as `-published VALUE` on `cvewatch list`, `update`, `search` and `export`. Both apply when you give both.
 
 ## Where it works
 

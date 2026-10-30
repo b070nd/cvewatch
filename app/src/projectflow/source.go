@@ -82,8 +82,13 @@ func ResolveSource(typed string) (Source, error) {
 
 // ScanSource runs the folder scan or the single-file scan, whichever the source is.
 func ScanSource(src Source, cat *catalog.Catalog) (discovery.Result, error) {
+	return ScanSourceWith(src, cat, discovery.Options{})
+}
+
+// ScanSourceWith is ScanSource with scan options, such as IncludeIgnored.
+func ScanSourceWith(src Source, cat *catalog.Catalog, o discovery.Options) (discovery.Result, error) {
 	if src.IsFile() {
-		return discovery.ScanFile(src.Path, cat, discovery.Options{})
+		return discovery.ScanFile(src.Path, cat, o)
 	}
-	return discovery.Scan(src.Path, cat, discovery.Options{})
+	return discovery.Scan(src.Path, cat, o)
 }

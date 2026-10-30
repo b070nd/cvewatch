@@ -384,9 +384,9 @@ func TestNewEmptyProjectNeedsNoFolder(t *testing.T) {
 	d.press("shift+tab", "ctrl+u")
 	d.typ("blog")
 	d.press("tab")
-	d.typ("qa")
+	d.typ("QA")
 	d.press("enter")
-	d.want("not an environment", "blog", "qa")
+	d.want("not a valid environment name", "blog", "QA")
 	d.press("ctrl+u")
 	d.typ("dev, prod")
 	d.press("enter")
@@ -462,5 +462,19 @@ func TestProjectRowOfAFileNamedDifferentlyHasItsFileAndCanBeDeleted(t *testing.T
 	}
 	if got := strings.Join(rowNames(d), ","); got != "mw" {
 		t.Fatalf("rows %s", got)
+	}
+}
+
+func TestNewEmptyProjectWithoutEnvironmentsRunsInLocalOnly(t *testing.T) {
+	b, root := diskFake(t, nil)
+	d := start(t, b, Options{})
+	d.press("3", "N")
+	d.typ("solo")
+	d.press("enter", "enter")
+	d.want("New project: solo", "envs: [local]", "Save this change?")
+	d.press("y")
+	d.want("ok: saved solo")
+	if got := fileAt(t, root, "config/projects/solo.yaml"); !strings.Contains(got, "envs: [local]") {
+		t.Fatalf("file:\n%s", got)
 	}
 }

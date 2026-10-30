@@ -29,10 +29,10 @@ func TestReviewListsTheStepsAndReturnsAfterOneAnswer(t *testing.T) {
 	d.wantNot("Go back to which step?")
 
 	d.press("e", "end", "enter") // Environments
-	d.want("Environments", "[x] dev")
-	d.press("down", " ") // untick int
+	d.want("Environments", "[x] local", "[ ] dev", "other...")
+	d.press("down", " ") // tick dev
 	d.press("enter")
-	d.want("Save this project?", "envs: [dev, staging, prod]") // the review again, not the steps after
+	d.want("Save this project?", "envs: [local, dev]") // the review again, not the steps after
 	if a := d.m.(*app); a.frm == nil || a.frm.step.ID != "review" {
 		t.Fatal("not at the review")
 	}
@@ -51,7 +51,7 @@ func TestReviewListsTheStepsAndReturnsAfterOneAnswer(t *testing.T) {
 	d.press("y")
 	d.want("ok: created project blog")
 	f := projectFile(t, b, "blog")
-	if !strings.Contains(f, "8.3") || !strings.Contains(f, "staging") {
+	if !strings.Contains(f, "8.3") || !strings.Contains(f, "envs: [local, dev]") {
 		t.Fatalf("project file:\n%s", f)
 	}
 	if b.writes != 1 {

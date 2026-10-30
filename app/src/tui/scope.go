@@ -33,7 +33,7 @@ func narrow(issues []query.Issue, project string) []query.Issue {
 		is.Targets = ts
 		is.ProdOpen, is.Applies = false, ""
 		for i, t := range ts {
-			is.ProdOpen = is.ProdOpen || (t.Env == model.EnvProd && t.Status == model.StatusOpen)
+			is.ProdOpen = is.ProdOpen || (model.IsProd(t.Env) && t.Status == model.StatusOpen)
 			switch {
 			case i > 0:
 				is.Applies = is.Applies.Worse(t.Applies)

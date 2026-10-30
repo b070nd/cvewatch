@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -157,7 +158,7 @@ func (p projectRow) lockID(l ops.LockEntry) string {
 // topRows are the fields, each with what it holds.
 func topRows(p projectRow) []fieldRow {
 	versions, images := 0, []string{}
-	for _, env := range model.AllEnvs {
+	for _, env := range slices.SortedFunc(maps.Keys(p.Environments), model.EnvCompare) {
 		versions += len(p.Environments[env].Techs)
 		if img := p.Environments[env].Image; img != "" {
 			images = append(images, string(env)+": "+img)
@@ -575,7 +576,13 @@ func (m *app) promptImage(p projectRow, row fieldRow) {
 
 func (m *app) pickEnvs(p projectRow) {
 	pk := &picker{title: "Environments of " + oneLine(p.Name), hint: "tick the environments the project runs in", crumb: "Environments", multi: true, sel: map[string]bool{}}
-	for _, e := range model.AllEnvs {
+	names := slices.Clone(model.SuggestedEnvs)
+	for _, e := range p.Envs {
+		if !slices.Contains(names, model.Env(e)) {
+			names = append(names, model.Env(e))
+		}
+	}
+	for _, e := range names {
 		pk.items = append(pk.items, pickItem{value: string(e), label: string(e)})
 	}
 	for _, e := range p.Envs {
@@ -746,12 +753,14 @@ func (m *app) submitNew(p *prompt, name, envText string) tea.Cmd {
 		var es []model.Env
 		for _, e := range envs {
 			if !model.Env(e).Valid() {
-				p.problem = fmt.Sprintf("%q is not an environment (dev, int, staging, prod)", e)
+				p.problem = fmt.Sprintf("%q is not a valid environment name (lowercase letters, digits, - and _)", e)
 				return nil
 			}
 			es = append(es, model.Env(e))
 		}
 		edits = append(edits, projectfile.Op{Kind: "set_envs", Envs: es})
+	} else {
+		edits = append(edits, projectfile.Op{Kind: "set_envs", Envs: []model.Env{model.EnvLocal}})
 	}
 	return m.previewEdit(name, nil, "create project "+name, edits, name, p)
 }

@@ -123,6 +123,9 @@ func TestParseLock(t *testing.T) {
 		"composer:" + win:                     {Type: "composer", Path: win},
 		"composer:" + win + ":prod":           {Type: "composer", Path: win, Env: model.EnvProd},
 		"go:dev":                              {Type: "go", Path: "dev"},
+		"npm:package-lock.json:qa-2":          {Type: "npm", Path: "package-lock.json", Env: "qa-2"},
+		"npm:sub/package-lock.json:local:dev": {Type: "npm", Path: "sub/package-lock.json", Env: model.EnvLocal, Dev: true},
+		"go:C:data":                           {Type: "go", Path: "C:data"}, // a drive letter, not an environment
 	} {
 		got, err := parseLock(in)
 		if err != nil || got != want {

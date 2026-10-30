@@ -10,4 +10,4 @@ var OpKinds = []string{
 
 // NotYet are kinds no guided front end emits yet. Whoever adds the editing
 // field moves the kind to OpKinds; the test fails if a kind is in both.
-var NotYet = []string{}
+var NotYet = []string{"add_env", "remove_env", "rename_env"}

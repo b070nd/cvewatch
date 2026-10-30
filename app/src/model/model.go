@@ -7,30 +7,74 @@ import (
 	"encoding/hex"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
 
-// Env is a deployment environment. AllEnvs is also the promotion order.
+// Env is a deployment environment. The name is free: a lowercase slug.
 type Env string
 
+// The names the tool knows something about. Any other slug is allowed.
 const (
+	EnvLocal   Env = "local"
 	EnvDev     Env = "dev"
 	EnvInt     Env = "int"
 	EnvStaging Env = "staging"
 	EnvProd    Env = "prod"
 )
 
-var AllEnvs = []Env{EnvDev, EnvInt, EnvStaging, EnvProd}
+// SuggestedEnvs are offered as hints and sort first, in this order.
+var SuggestedEnvs = []Env{EnvLocal, EnvDev, EnvInt, EnvStaging, EnvProd}
 
-func (e Env) Valid() bool {
-	for _, v := range AllEnvs {
-		if e == v {
-			return true
-		}
+// LegacyEnvs is what a project file without envs means, as it always did.
+var LegacyEnvs = []Env{EnvDev, EnvInt, EnvStaging, EnvProd}
+
+var envSlug = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+
+// Valid says whether e is a usable name: a lowercase slug of 1 to 32 characters.
+func (e Env) Valid() bool { return envSlug.MatchString(string(e)) }
+
+// IsProd says whether e is a production environment.
+func IsProd(e Env) bool { return e == EnvProd || e == "production" }
+
+// IsDevLike says whether e is a development environment, where
+// development-only packages count by default.
+func IsDevLike(e Env) bool {
+	switch e {
+	case EnvLocal, EnvDev, EnvInt, "development", "test":
+		return true
 	}
 	return false
 }
+
+// EnvLess orders suggested names first, in their order, then the rest by name.
+func EnvLess(a, b Env) bool {
+	ia, ib := slices.Index(SuggestedEnvs, a), slices.Index(SuggestedEnvs, b)
+	switch {
+	case ia >= 0 && ib >= 0:
+		return ia < ib
+	case ia >= 0:
+		return true
+	case ib >= 0:
+		return false
+	}
+	return a < b
+}
+
+// EnvCompare is EnvLess as a three-way comparison for slices.SortFunc.
+func EnvCompare(a, b Env) int {
+	switch {
+	case a == b:
+		return 0
+	case EnvLess(a, b):
+		return -1
+	}
+	return 1
+}
+
+// SortEnvs sorts in place with EnvLess.
+func SortEnvs(envs []Env) { slices.SortStableFunc(envs, EnvCompare) }
 
 // Status tracks whether the fix for one finding has been dealt with.
 type Status string
@@ -177,7 +221,7 @@ func (t Tech) Terms() []string {
 // Project is one monitored system (app/config/projects/*.yaml).
 type Project struct {
 	Name      string        `yaml:"name"`
-	Envs      []Env         `yaml:"envs"` // defaults to AllEnvs
+	Envs      []Env         `yaml:"envs"` // none means LegacyEnvs
 	Techs     []ProjectTech `yaml:"techs"`
 	Lockfiles []Lockfile    `yaml:"lockfiles"`
 	Since     time.Time     `yaml:"since"` // vulnerabilities published before this day are not checked
@@ -204,13 +248,13 @@ type Lockfile struct {
 	Path string `yaml:"path" json:"path"`
 	Env  Env    `yaml:"env" json:"env,omitempty"` // applies to this environment only; empty means all
 	// Dev includes development-only packages (composer require-dev and the
-	// like) in every environment. By default they count only in dev and int.
+	// like) in every environment. By default they count only in development-like environments (see IsDevLike).
 	Dev bool `yaml:"dev" json:"dev,omitempty"`
 }
 
 func (p Project) EffectiveEnvs() []Env {
 	if len(p.Envs) == 0 {
-		return AllEnvs
+		return slices.Clone(LegacyEnvs)
 	}
 	return p.Envs
 }

@@ -1,6 +1,6 @@
 # Copy to <name>.yaml (any *.yaml in this folder is loaded and stays untracked).
 name: shop
-envs: [dev, int, staging, prod]   # omit for all four
+envs: [local, prod]               # free names, e.g. local, dev, qa, prod; without envs: dev, int, staging, prod
 techs:                            # names must exist in techs.yaml
   - {name: php, version: "8.2"}
   - {name: elasticsearch, version: "8.11"}

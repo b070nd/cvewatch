@@ -66,6 +66,7 @@ func Suggest(typed string) (parent string, entries []Entry, err error) {
 		return parent, nil, fmt.Errorf("no such folder: %s", parent)
 	}
 	scanned := 0
+	ign := NewIgnore(parent)
 	for _, d := range children {
 		name := d.Name()
 		if skipDirs[name] {
@@ -78,7 +79,7 @@ func Suggest(typed string) (parent string, entries []Entry, err error) {
 			continue
 		}
 		path := filepath.Join(parent, name)
-		if !isFolder(path, d) {
+		if !isFolder(path, d) || ign.Ignored(path, true) {
 			continue
 		}
 		e := Entry{Path: path, Name: name}

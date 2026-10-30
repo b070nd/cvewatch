@@ -115,6 +115,7 @@ type Op struct {
 	Kind     string         `json:"kind"`
 	Env      model.Env      `json:"env,omitempty"`
 	Envs     []model.Env    `json:"envs,omitempty"`
+	To       model.Env      `json:"to,omitempty"` // the new name, for rename_env
 	Tech     string         `json:"tech,omitempty"`
 	Version  string         `json:"version,omitempty"`
 	Image    string         `json:"image,omitempty"`
@@ -153,6 +154,12 @@ func apply(root *yaml.Node, op Op) error {
 	switch op.Kind {
 	case "set_envs":
 		return setEnvs(root, op.Envs)
+	case "add_env":
+		return addEnv(root, op.Env)
+	case "remove_env":
+		return removeEnv(root, op.Env)
+	case "rename_env":
+		return renameEnv(root, op.Env, op.To)
 	case "set_tech":
 		if tech == "" {
 			return errors.New("tech name is empty")
@@ -165,7 +172,7 @@ func apply(root *yaml.Node, op Op) error {
 		return removeTech(root, tech)
 	case "set_env_tech", "remove_env_tech", "set_image":
 		if !op.Env.Valid() {
-			return fmt.Errorf("invalid env %q (valid: %v)", op.Env, model.AllEnvs)
+			return fmt.Errorf("invalid env %q (lowercase letters, digits, - and _)", op.Env)
 		}
 		switch op.Kind {
 		case "set_image":
@@ -210,7 +217,7 @@ func setEnvs(root *yaml.Node, envs []model.Env) error {
 	seen := map[model.Env]bool{}
 	for _, e := range envs {
 		if !e.Valid() {
-			return fmt.Errorf("invalid env %q (valid: %v)", e, model.AllEnvs)
+			return fmt.Errorf("invalid env %q (lowercase letters, digits, - and _)", e)
 		}
 		if !seen[e] {
 			seen[e] = true

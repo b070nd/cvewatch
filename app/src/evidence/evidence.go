@@ -8,7 +8,6 @@
 package evidence
 
 import (
-	"cmp"
 	"slices"
 	"strings"
 	"time"
@@ -118,7 +117,7 @@ func Build(v *model.Vulnerability, findings []model.Finding, events []audit.Even
 		if c := strings.Compare(a.Project, b.Project); c != 0 {
 			return c
 		}
-		if c := cmp.Compare(envRank(a.Env), envRank(b.Env)); c != 0 {
+		if c := model.EnvCompare(a.Env, b.Env); c != 0 {
 			return c
 		}
 		return strings.Compare(string(a.Env), string(b.Env))
@@ -263,14 +262,6 @@ func row(f model.Finding) Row {
 	}
 	slices.SortStableFunc(r.Evidence, func(a, b model.Evidence) int { return a.Time.Compare(b.Time) })
 	return r
-}
-
-// envRank orders environments by promotion; unknown ones go last.
-func envRank(e model.Env) int {
-	if i := slices.Index(model.AllEnvs, e); i >= 0 {
-		return i
-	}
-	return len(model.AllEnvs)
 }
 
 // clean removes control characters, flattens whitespace and clips. It is

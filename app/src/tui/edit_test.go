@@ -137,8 +137,8 @@ func TestFieldEditorEditsEveryKindOfFieldAndKeepsComments(t *testing.T) {
 	// environments: a checklist
 	d.toField(0)
 	d.press("enter")
-	d.want("Environments of shop", "[x] dev", "[ ] int", "[ ] staging", "[x] prod")
-	d.press("down", " ", "enter")
+	d.want("Environments of shop", "[ ] local", "[x] dev", "[ ] int", "[ ] staging", "[x] prod")
+	d.press("down", "down", " ", "enter")
 	save("set environments to dev, int, prod", "set_envs")
 	if got := fileAt(t, root, "config/projects/shop.yaml"); !strings.Contains(got, "int") {
 		t.Fatalf("envs:\n%s", got)
@@ -297,9 +297,9 @@ func TestEditRejectionKeepsTheTypedText(t *testing.T) {
 	d.press("enter", "+")
 	d.typ(other)
 	d.press("enter")
-	d.typ("qa")
+	d.typ("QA")
 	d.press("enter", "enter")
-	d.want("problem:", "invalid lockfile env", "Add a composer lockfile to shop", "qa")
+	d.want("problem:", "invalid lockfile env", "Add a composer lockfile to shop", "QA")
 	d.wantNot("Save this change?")
 	d.press("esc")
 	d.want("TYPE", "+ add a lockfile")
@@ -418,11 +418,11 @@ func TestFieldEditorMouse(t *testing.T) {
 	d.click(5, row(0)) // environments: the checklist
 	d.want("Environments of shop")
 	pk := a.prj.ed.pick
-	d.click(5, bodyTop+pickHead+2) // staging
-	if pk.vp.at() != 2 {
+	d.click(5, bodyTop+pickHead+3) // staging, after local, dev and int
+	if pk.vp.at() != 3 {
 		t.Fatalf("a click picks: %d", pk.vp.at())
 	}
-	d.click(5, bodyTop+pickHead+2) // a second click ticks
+	d.click(5, bodyTop+pickHead+3) // a second click ticks
 	d.want("[x] staging")
 	d.press("enter")
 	d.want("Save this change?")

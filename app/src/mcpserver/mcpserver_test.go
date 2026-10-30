@@ -248,3 +248,26 @@ func TestEditProjectTakesTheLockfileObjectOfAFix(t *testing.T) {
 		t.Fatalf("the lockfile is still there:\n%s", b)
 	}
 }
+
+func TestEditProjectAddsAndRenamesEnvironments(t *testing.T) {
+	root := fixture(t)
+	file := filepath.Join(root, "config", "projects", "shop.yaml")
+	os.WriteFile(file, []byte("name: shop\nenvs: [local, prod]\n"), 0o644)
+
+	cs := connect(t, root, true)
+	edit := func(changes ...any) (*mcp.CallToolResult, string) {
+		return call(t, cs, "edit_project", map[string]any{"project": "shop", "changes": changes})
+	}
+	if res, out := edit(map[string]any{"kind": "add_env", "env": "qa-2"}, map[string]any{"kind": "rename_env", "env": "prod", "to": "production"}); res.IsError {
+		t.Fatalf("edit_project: %s %v", out, res.Content[0].(*mcp.TextContent).Text)
+	}
+	if b, _ := os.ReadFile(file); !strings.Contains(string(b), "envs: [local, production, qa-2]") {
+		t.Fatalf("file:\n%s", b)
+	}
+	if res, _ := edit(map[string]any{"kind": "add_env", "env": "Not Valid"}); !res.IsError {
+		t.Error("an invalid name must be an error")
+	}
+	if res, _ := edit(map[string]any{"kind": "remove_env", "env": "qa-2"}, map[string]any{"kind": "remove_env", "env": "local"}, map[string]any{"kind": "remove_env", "env": "production"}); !res.IsError {
+		t.Error("removing every environment must be an error")
+	}
+}
