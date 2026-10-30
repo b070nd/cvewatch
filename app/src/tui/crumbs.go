@@ -76,6 +76,12 @@ type crumbSpan struct{ from, to, idx int }
 // loses its start to an ellipsis. The rest of the line is a rule.
 func (m *app) crumbLine(w int) (string, []crumbSpan) {
 	cs := m.crumbs()
+	chip := m.scopeChip()
+	if chip != "" && w > width(chip)+12 {
+		w -= width(chip) + 1 // the scope chip sits at the right end
+	} else {
+		chip = ""
+	}
 	type cell struct {
 		r   rune
 		seg int // the crumb it belongs to, -1 for a separator
@@ -141,6 +147,11 @@ func (m *app) crumbLine(w int) (string, []crumbSpan) {
 	}
 	if x+2 <= w {
 		out.WriteString(stMuted.Render(" " + strings.Repeat("─", w-x-1)))
+	} else if chip != "" {
+		out.WriteString(spaces(w - x))
+	}
+	if chip != "" {
+		out.WriteString(" " + stScope.Render(chip))
 	}
 	return out.String(), spans
 }

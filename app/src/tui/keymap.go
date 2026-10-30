@@ -14,7 +14,7 @@ var mo struct {
 	noData, overview, status, findings, detail, filter, projects, project, fix *mode
 	formText, formChoice, formMulti, formConfirm, formReview, formBusy         *mode
 	prompt, promptBusy, folder, confirm, help, doc                             *mode
-	jump, notice, formPick                                                     *mode
+	jump, notice, formPick, violations                                         *mode
 	fields, fieldSub, picker, life                                             *mode
 	settings, setFields, setFilter, setReview                                  *mode
 }
@@ -41,8 +41,13 @@ func bindRefresh() binding {
 		do: plain(func(m *app) tea.Cmd { return m.refresh(reList | reDetail) })}
 }
 
+func bindFetch() binding {
+	return binding{keys: ks("F"), help: "fetch the feeds now, in the background; the header shows the progress", short: "fetch", prio: 3,
+		do: plain(func(m *app) tea.Cmd { return m.fetchBegin(false) })}
+}
+
 func bindQuit() binding {
-	return binding{keys: ks("q"), help: "quit", short: "quit", do: plain(func(*app) tea.Cmd { return tea.Quit })}
+	return binding{keys: ks("q"), help: "quit", short: "quit", do: plain((*app).quit)}
 }
 
 // bindBack goes back one level, or closes the popup. q does the same.
@@ -103,7 +108,7 @@ func bindReturn(level string) binding {
 }
 
 func rootBinds(own ...binding) []binding {
-	return append(append(own, bindScreens(), bindTabs(), bindJump(), bindRefresh(), bindHelp()), bindQuit())
+	return append(append(own, bindScreens(), bindTabs(), bindJump(), bindClearScope(), bindRefresh(), bindFetch(), bindHelp()), bindQuit())
 }
 
 func viewportOf(get func(m *app) *viewport) func(m *app, key string) bool {
@@ -137,8 +142,6 @@ func init() {
 			{keys: ks("r"), help: "try to load the state again", short: "try again", do: plain(func(m *app) tea.Cmd { return m.refresh(reList | reDetail) })},
 			bindQuit(), bindHelp(), bindScreens(), bindTabs(),
 		}}
-	mo.overview = pageScreen(scrOverview, "overview", "Keys on the overview screen", "open",
-		"open the issue of the selected policy violation", "up/down select a policy violation; pgup/pgdn, home/end scroll the page")
 	mo.status = pageScreen(scrStatus, "status", "Keys on the status screen", "details",
 		"go to the project the selected error names, else show the error in full", "up/down select an error; pgup/pgdn, home/end scroll the page")
 
@@ -148,16 +151,15 @@ func init() {
 		click: func(m *app, x, y int) tea.Cmd { return m.clickIssue(y - 2) },
 		binds: rootBinds(
 			binding{keys: ks("enter"), help: "open the selected issue: its environments and what to do", short: "open", prio: 1, do: plain((*app).openIssue)},
-			binding{keys: ks("/"), help: "filter by words or fields such as severity:high", short: "filter", prio: 1, do: plain((*app).startFilter)},
-			binding{keys: ks("s"), help: "cycle the minimum severity: all, low+, medium+, high+, critical+", short: "severity", prio: 2, do: plain((*app).cycleSeverity)},
+			bindFilter(),
+			bindSeverity(),
 			binding{keys: ks(" "), disp: "space", help: "mark or unmark the issue for a change of many; the cursor moves on", short: "select", prio: 2, do: plain((*app).toggleSelect)},
 			binding{keys: ks("ctrl+a"), help: "select every issue in the list, or none when all of them are selected", short: "all", prio: 3, do: plain((*app).selectAll)},
 			binding{keys: ks("f", "i", "n", "o"), disp: "f/i/n/o", help: "mark every selected issue fixed, ignored, not affected or reopened (its open environments); one note for all",
 				short: "mark selected", prio: 1, when: hasSelection, do: m2(func(m *app, s string) { m.startBulk(statusKeys[s]) })},
 			binding{keys: ks("esc"), help: "clear the selection", short: "clear selection", prio: 1, when: hasSelection, do: plain((*app).clearSelection)},
 			bindReturn(lvList),
-			binding{keys: ks("esc"), help: "clear the filter", short: "clear filter", prio: 2,
-				when: func(m *app) bool { return m.fnd.text != "" && !m.retAt(lvList) }, do: plain((*app).clearFilter)},
+			bindClearFilter(func(m *app) bool { return m.retAt(lvList) }),
 		),
 		notes: []string{"Enter opens an issue; inside it f i n o mark the selected environment."},
 	}
@@ -239,7 +241,7 @@ func init() {
 			binding{keys: ks("x", "f"), disp: "x", help: "fix the selected problem: shows the change to the file, enter or y applies it", short: "fix", prio: 2, do: plain((*app).startFix)},
 			binding{keys: ks("E", "o"), disp: "E", help: "open the project's file in $EDITOR (also when it is broken), then reload", short: "editor", prio: 3, do: plain((*app).openEditor)},
 			binding{keys: ks("p", "P"), alias: true, help: "next or previous problem of the project", do: (*app).stepProblem},
-			binding{keys: ks("i", "F"), disp: "i", help: "the issues of this project: the findings screen filtered by it", short: "issues", prio: 2, do: plain((*app).goFindings)},
+			binding{keys: ks("i"), help: "the issues of this project: the findings screen filtered by it", short: "issues", prio: 2, do: plain((*app).goFindings)},
 			binding{keys: ks("R"), help: "rename the project: its findings and access rules follow the new name", short: "rename", prio: 4, do: lifeKey(ops.VerbRename)},
 			binding{keys: ks("D"), help: "duplicate the project under another name", short: "duplicate", prio: 5, do: lifeKey(ops.VerbDuplicate)},
 			binding{keys: ks("X"), help: "delete the project: its file moves to the project backups", short: "delete", prio: 5, do: lifeKey(ops.VerbDelete)},
@@ -262,7 +264,7 @@ func init() {
 			{keys: ks("N"), help: "new empty project: a name and its environments, no folder needed", prio: 4, do: plain((*app).newProject)},
 			{keys: ks("a", "n"), disp: "a", help: "add a project with the guided form", prio: 4, do: plain((*app).addProject)},
 			{keys: ks("d"), help: "add a project from a folder", prio: 4, do: plain((*app).scanFolder)},
-			{keys: ks("i", "F"), disp: "i", help: "the issues of this project: the findings screen filtered by it", short: "issues", prio: 3, do: plain((*app).goFindings)},
+			{keys: ks("i"), help: "the issues of this project: the findings screen filtered by it", short: "issues", prio: 3, do: plain((*app).goFindings)},
 			{keys: ks("[", "]"), disp: "[/]", help: "choose another fix of the problem when it has several", short: "fix", prio: 2,
 				when: severalFixes, do: func(m *app, k tea.KeyMsg) tea.Cmd { m.chooseFix(k.String() == "]"); return nil }},
 			bindBack("back to the list of projects", func(m *app) tea.Cmd {
@@ -272,7 +274,7 @@ func init() {
 				m.prj.deep = false
 				return nil
 			}),
-			bindJump(), bindRefresh(), bindTabs(), bindHelp(),
+			bindJump(), bindRefresh(), bindFetch(), bindTabs(), bindHelp(),
 		}}
 	mo.fix = &mode{name: "fix", title: "Keys in the fix preview", move: viewportOf(func(m *app) *viewport { return &m.prj.fix.vp }), moveShort: "scroll",
 		binds: []binding{
@@ -444,7 +446,7 @@ func formMode(f *form) *mode {
 
 // allModes lists every mode, for the tests.
 func allModes() []*mode {
-	return []*mode{mo.noData, mo.overview, mo.status, mo.findings, mo.filter, mo.detail, mo.projects, mo.project, mo.fix,
+	return []*mode{mo.noData, mo.overview, mo.violations, mo.status, mo.findings, mo.filter, mo.detail, mo.projects, mo.project, mo.fix,
 		mo.formBusy, mo.formText, mo.formChoice, mo.formMulti, mo.formConfirm, mo.formReview, mo.formPick, mo.prompt, mo.promptBusy, mo.folder, mo.confirm,
 		mo.jump, mo.notice, mo.help, mo.doc, mo.fields, mo.fieldSub, mo.picker, mo.life,
 		mo.settings, mo.setFields, mo.setFilter, mo.setReview}

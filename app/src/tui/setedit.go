@@ -135,7 +135,21 @@ func (m *app) setSaved(msg setSavedMsg) outcome {
 	case !msg.prev.Saved:
 		return outcome{note: "no changes to save"}
 	}
+	if msg.rv.tuiOnly() {
+		return outcome{note: "saved: " + msg.rv.label + " (applies on the next re-read)"}
+	}
 	return outcome{note: "saved: " + msg.rv.label + " (applies from the next daemon cycle)"}
+}
+
+// tuiOnly says the edits are of the tui section, which this program itself
+// reads again every period and not the daemon.
+func (rv *setReview) tuiOnly() bool {
+	for _, e := range rv.edits {
+		if !strings.HasPrefix(e.Path, "tui.") {
+			return false
+		}
+	}
+	return len(rv.edits) > 0
 }
 
 // settingsNote is what people are told after a save: when the daemon sees it.
@@ -145,6 +159,13 @@ func settingsNote(interval string) string {
 		note += " (up to " + interval + " away)"
 	}
 	return note + "."
+}
+
+func (rv *setReview) note(interval string) string {
+	if rv.tuiOnly() {
+		return "Changes apply on the next re-read of the interface."
+	}
+	return settingsNote(interval)
 }
 
 func (rv *setReview) frame(w, h int) (head []string, room int) {
@@ -195,7 +216,7 @@ func (rv *setReview) view(w, h int, interval string) []string {
 	start, end := rv.vp.window(room)
 	start, end = min(start, len(body)), min(end, len(body))
 	out = append(out, body[start:end]...)
-	return append(out, "", stBold.Render("Save these settings changes?")+"  y or enter = save, esc = cancel", stMuted.Render(trunc(settingsNote(interval), w)))
+	return append(out, "", stBold.Render("Save these settings changes?")+"  y or enter = save, esc = cancel", stMuted.Render(trunc(rv.note(interval), w)))
 }
 
 // ---- the keys that start a change ----

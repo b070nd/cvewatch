@@ -42,7 +42,7 @@ func (p *textPage) view(start, end, sel int) []string {
 	return out
 }
 
-// page is the lines and rows of the Overview or Status screen.
+// page is the lines and rows of the Status screen, or of the policy violations of the Overview.
 func (m *app) page(scr screen, w int) *textPage {
 	if c := m.cache[scr]; c.snap == m.data && c.w == w && c.page != nil {
 		return c.page
@@ -50,7 +50,7 @@ func (m *app) page(scr screen, w int) *textPage {
 	if scr == scrStatus {
 		return renderStatus(m.data.Status, m.data.At, w, projectNames(m.data))
 	}
-	return renderOverview(m.data, w)
+	return renderViolations(m.violations(), append(slices.Clone(m.data.Status.Warnings), m.data.Warnings...), w)
 }
 
 func projectNames(sn *snapshot) []string {

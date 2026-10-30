@@ -33,7 +33,7 @@ func TestStatusShowsFailingFeed(t *testing.T) {
 	d.want("FAIL", "error: boom red")
 	d.wantNot("\x1b")
 	d.press("1")
-	d.want("Warnings", "feed hn has failed 3 times in a row")
+	d.want("! feed hn has failed 3 times in a row")
 }
 
 func TestUntrustedTextIsStripped(t *testing.T) {

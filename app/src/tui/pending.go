@@ -182,6 +182,9 @@ func (m *app) refresh(set reloadSet) tea.Cmd {
 	if set&reSettings != 0 {
 		cmds = append(cmds, m.loadSettings())
 	}
+	if set&(reList|reSettings) != 0 {
+		cmds = append(cmds, tuiCmd(m.b)) // the periods may have been changed in the Settings screen or the file
+	}
 	if set&reList != 0 {
 		m.loading = true
 		cmds = append(cmds, loadCmd(m.b))

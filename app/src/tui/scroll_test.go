@@ -152,22 +152,18 @@ func TestTextScreensAndHelpScroll(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
 	d.send(tea_window(80, 10))
 	a := d.m.(*app)
-	d.want("daemon:")
+	d.press("4")
+	d.want("Overall")
 	d.press("pgdown")
-	if a.txt[scrOverview].at() != 5 {
-		t.Fatalf("a page is the body (6 lines) minus one, scrolled to %d", a.txt[scrOverview].at())
+	if a.txt[scrStatus].at() != 5 {
+		t.Fatalf("a page is the body (6 lines) minus one, scrolled to %d", a.txt[scrStatus].at())
 	}
-	d.wantNot("daemon:")
+	d.wantNot("Overall")
 	d.press("end")
-	d.want("Policy violations")
-	d.press("home")
-	d.want("daemon:")
-	d.press("G", "g")
-	d.want("daemon:")
-
-	d.press("4", "end")
 	d.want("Recent cycles")
 	d.press("home")
+	d.want("Overall")
+	d.press("G", "g")
 	d.want("Overall")
 
 	d.press("?")

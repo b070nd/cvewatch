@@ -69,7 +69,8 @@ func init() {
 		}
 		return sc
 	}
-	screens[scrOverview] = page(scrOverview, func() *mode { return mo.overview })
+	o := &screens[scrOverview]
+	o.modes, o.body, o.layout, o.crumbs = overviewModes, overviewBody, overviewLayout, overviewCrumbs
 	screens[scrStatus] = page(scrStatus, func() *mode { return mo.status })
 
 	f := &screens[scrFindings]
@@ -77,7 +78,7 @@ func init() {
 		if m.data == nil {
 			return ""
 		}
-		return " (" + strconv.Itoa(len(m.data.Issues)) + ")"
+		return " (" + strconv.Itoa(len(m.dataIssues())) + ")"
 	}
 	f.modes = func(m *app) []*mode {
 		s := []*mode{mo.findings}

@@ -12,15 +12,22 @@ import (
 	"github.com/b070nd/cvewatch/app/src/query"
 )
 
-type findingsState struct {
+// issueList is the searchable, selectable list of issues that the Findings and
+// the Overview screen both show: the rows, the cursor, the severity floor and
+// the search text. Each screen has its own, so one search does not narrow the other.
+type issueList struct {
 	vp        viewport // over vis; follows its issue by id
 	vis       []query.Issue
 	min       model.Severity
 	text      string
 	filtering bool
 	in        input
-	det       *detail
 	sel       map[string]bool // issues marked for a change of many; always among vis
+}
+
+type findingsState struct {
+	issueList
+	det *detail
 }
 
 // minCycle is the order `s` steps through; unknown means no minimum.
@@ -72,14 +79,18 @@ func targetWords(is query.Issue) []string {
 
 // refit filters the issues again after they or the filter changed and puts
 // the cursor back on its issue.
-func (f *findingsState) refit(all []query.Issue) {
-	f.vis = filterIssues(all, f.min, f.text)
-	f.vp.refit(len(f.vis), func(i int) string { return f.vis[i].ID })
-	for id := range f.sel {
-		if !slices.ContainsFunc(f.vis, func(is query.Issue) bool { return is.ID == id }) {
-			delete(f.sel, id)
+func (l *issueList) refit(all []query.Issue) {
+	l.vis = filterIssues(all, l.min, l.text)
+	l.vp.refit(len(l.vis), func(i int) string { return l.vis[i].ID })
+	for id := range l.sel {
+		if !slices.ContainsFunc(l.vis, func(is query.Issue) bool { return is.ID == id }) {
+			delete(l.sel, id)
 		}
 	}
+}
+
+func (f *findingsState) refit(all []query.Issue) {
+	f.issueList.refit(all)
 	if d := f.det; d != nil {
 		if i := slices.IndexFunc(f.vis, func(is query.Issue) bool { return is.ID == d.id }); i >= 0 {
 			d.pos = i
@@ -148,28 +159,61 @@ func (m *app) stepIssue(dir int) tea.Cmd {
 	return m.openIssueID(m.fnd.vis[to].ID)
 }
 
+// list is the issue list of the screen in front: the Overview has its own, every
+// other screen that lists issues shows the Findings one.
+func (m *app) list() *issueList {
+	if m.scr == scrOverview {
+		return &m.ovw.issueList
+	}
+	return &m.fnd.issueList
+}
+
+// refitLists filters both lists again after the issues, the scope or a filter changed.
+func (m *app) refitLists() {
+	all := m.dataIssues()
+	m.fnd.refit(all)
+	m.ovw.refit(all)
+}
+
 func (m *app) cycleSeverity() tea.Cmd {
-	m.fnd.min = minCycle[(m.fnd.min.Rank()+1)%len(minCycle)] // the cycle is in rank order
-	m.fnd.refit(m.dataIssues())
-	m.say("minimum severity: " + minLabel(m.fnd.min))
+	l := m.list()
+	l.min = minCycle[(l.min.Rank()+1)%len(minCycle)] // the cycle is in rank order
+	m.refitLists()
+	m.say("minimum severity: " + minLabel(l.min))
 	return nil
 }
 
 func (m *app) startFilter() tea.Cmd {
-	m.fnd.filtering = true
-	m.fnd.in.set(m.fnd.text)
+	l := m.list()
+	l.filtering = true
+	l.in.set(l.text)
 	return nil
 }
 
 func (m *app) clearFilter() tea.Cmd {
-	m.fnd.filtering, m.fnd.text = false, ""
-	m.fnd.refit(m.dataIssues())
+	l := m.list()
+	l.filtering, l.text = false, ""
+	m.refitLists()
 	return nil
 }
 
 func (m *app) keepFilter() tea.Cmd {
-	m.fnd.filtering = false
+	m.list().filtering = false
 	return nil
+}
+
+func bindFilter() binding {
+	return binding{keys: ks("/"), help: "filter by words or fields such as severity:high", short: "filter", prio: 1, do: plain((*app).startFilter)}
+}
+
+func bindSeverity() binding {
+	return binding{keys: ks("s"), help: "cycle the minimum severity: all, low+, medium+, high+, critical+", short: "severity", prio: 2, do: plain((*app).cycleSeverity)}
+}
+
+// bindClearFilter is esc on a list with a filter; except says when esc has another meaning.
+func bindClearFilter(except func(m *app) bool) binding {
+	return binding{keys: ks("esc"), help: "clear the filter", short: "clear filter", prio: 2,
+		when: func(m *app) bool { return m.list().text != "" && !except(m) }, do: plain((*app).clearFilter)}
 }
 
 // openIssue opens the issue under the cursor.
@@ -200,18 +244,12 @@ func (m *app) clickIssue(line int) tea.Cmd {
 	return nil
 }
 
-func (m *app) dataIssues() []query.Issue {
-	if m.data == nil {
-		return nil
-	}
-	return m.data.Issues
-}
-
 // filterType feeds a key to the filter text and filters again.
 func (m *app) filterType(k tea.KeyMsg) bool {
-	used := m.fnd.in.key(k)
-	m.fnd.text = m.fnd.in.String()
-	m.fnd.refit(m.dataIssues())
+	l := m.list()
+	used := l.in.key(k)
+	l.text = l.in.String()
+	m.refitLists()
 	return used
 }
 
@@ -222,7 +260,7 @@ func (m *app) findingsBody(w, h int) []string {
 		}
 		return d.view(w, h)
 	}
-	return renderFindings(len(m.data.Issues), &m.fnd, w, h)
+	return renderFindings(len(m.dataIssues()), &m.fnd.issueList, m.scope, w, h)
 }
 
 // projectEnvs summarises where an issue is open, e.g. "shop:dev,prod mw:prod".
@@ -263,7 +301,7 @@ func findingsRoom(h int) int { return max(h-2, 1) }
 
 // renderFindings draws the table: a count line, a header and the rows around
 // the cursor. total is the unfiltered count.
-func renderFindings(total int, st *findingsState, w, h int) []string {
+func renderFindings(total int, st *issueList, scope string, w, h int) []string {
 	rows := st.vis
 	info := fmt.Sprintf("%d of %d open issues   min severity: %s", len(rows), total, minLabel(st.min))
 	if n := len(st.sel); n > 0 {
@@ -278,6 +316,9 @@ func renderFindings(total int, st *findingsState, w, h int) []string {
 	lines := []string{stMuted.Render(trunc(info, w))}
 	if len(rows) == 0 {
 		msg := "Nothing open. No open vulnerabilities to act on."
+		if scope != "" {
+			msg = "Nothing open in project " + oneLine(scope) + ". Press 0 to see all projects."
+		}
 		if total > 0 {
 			msg = "No issue matches the filter. Press s to lower the severity, / to change the text."
 		}
