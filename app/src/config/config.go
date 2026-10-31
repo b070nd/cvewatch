@@ -56,7 +56,7 @@ type Settings struct {
 // Update switches the scheduled refresh on or off for everything. A project
 // asks for its own period in its file (update.every); this is the main switch.
 type Update struct {
-	Auto bool `yaml:"auto"` // false: the daemon and the TUI refresh nothing by themselves; update and the F key still do
+	Auto bool `yaml:"auto"` // false: the daemon and the TUI refresh nothing by themselves; update and the u key still do
 }
 
 // Notify configures channels besides Slack. A channel is active when its

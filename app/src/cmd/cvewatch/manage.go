@@ -324,7 +324,7 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 	fs.Var(&since, "since", "date advisories count from, YYYY-MM-DD (empty clears)")
 	fs.Var(&vendor, "vendor", "the vendor (customer or organisation) that owns the project, a lowercase name (empty clears)")
 	fs.Var(&updateEvery, "update-every", "how often the project is refreshed, such as 30m, 1h or 2d, at least 5m (default removes it: the interval of config.yaml applies)")
-	fs.Var(&updateAuto, "update-auto", "false takes the project out of scheduled runs (update and the F key still include it), true puts it back")
+	fs.Var(&updateAuto, "update-auto", "false takes the project out of scheduled runs (update and the u key still include it), true puts it back")
 	envs := fs.String("envs", "", "comma-separated environments, any names (\"all\" means the old default dev,int,staging,prod)")
 	migrate := fs.Bool("migrate-envs", false, "rewrite the old environments: map as when@ENV blocks (same meaning)")
 	save := fs.Bool("save", false, "write the change; without it only show the diff")

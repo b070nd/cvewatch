@@ -122,7 +122,7 @@ Access rules apply everywhere: you find only issues in projects you may see, as 
 
 - **Command line:** `cvewatch search`. An unknown ID given to `cvewatch show` gets suggestions from the same search.
 - **MCP:** the `search_findings` tool, for agents. Its input is `query`, with the optional `open_only`, `min_severity`, `vendor`, `project` and `env`. These mean the same as the flags. It returns the same JSON document as `list_findings`. See [agents.md](agents.md).
-- **Terminal UI:** on the findings screen, press `/` and type. The list narrows as you type, and `esc` clears the filter. While the text is not a complete query yet, such as `severity:` without a value, the filter matches the plain words only. It checks them against the ID, title, technologies, aliases, projects, environments and owners. `published:` works there too. The `t` key cycles the same presets as a quick filter (any time, hour, day, week, month, year), and `0` clears it.
+- **Terminal UI:** on the Findings or Overview screen, press `/` and type. The list narrows as you type, and `esc` clears the filter. While the text is not a complete query yet, such as `severity:` without a value, the filter matches the plain words only. It checks them against the ID, title, technologies, aliases, projects, environments and owners. `published:` works there too. The `t` key cycles the same presets as a quick filter (any time, hour, day, week, month, year), and `0` clears it.
 
 ## Limits
 

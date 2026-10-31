@@ -8,11 +8,12 @@ The Go module lives in the `app/` directory. Run all commands from there:
 
 ```sh
 cd app
+go build -o /tmp/cvewatch ./src/cmd/cvewatch      # and ./src/cmd/cvewatch-tui for the full-screen interface
 go vet ./...
 go test -race ./...
 ```
 
-Format code with `gofmt` before you commit:
+Format code with `gofmt` before you commit. CI fails on any file `gofmt -l .` lists:
 
 ```sh
 gofmt -l -w .
@@ -25,8 +26,8 @@ Tests must not reach the network. Use fixtures stored with the tests instead. `s
 - `app/src/<package>` contains one package per concern. Keep each package focused on one job.
 - `app/src/cmd` contains the command-line entry points.
 - `app/src/feeds` contains the feed parsers, one file per feed type.
-- `app/config` contains the default configuration, project definitions, and the tech list.
-- `app/sources` contains the default feed source definitions.
+- `app/src/defaults` contains the built-in technology catalog, feed sources and starter files, embedded in the binary.
+- `app/config` contains the sample configuration and project files used when you run from the repository.
 - `docs/` contains the project documentation. Update it when behavior changes.
 
 ## Conventions
@@ -45,6 +46,14 @@ Tests must not reach the network. Use fixtures stored with the tests instead. `s
 3. Register the parser in the `parsers` map in `app/src/feeds/feeds.go`, using the type name used in source definitions.
 4. Add a fixture file and tests in `app/src/feeds` that run the parser against the fixture. Do not fetch the live feed in tests.
 5. Add the source type to the feed documentation in `docs/`.
+
+## Releasing
+
+1. Move the `[Unreleased]` entries of `CHANGELOG.md` into a new `## [X.Y.Z] - YYYY-MM-DD` section, with an upgrade list for anything an existing setup can notice, and leave an empty `[Unreleased]` above it.
+2. Open a pull request and merge it into `master` once the `test` check passes.
+3. Tag the merge commit on `master` as `vX.Y.Z` and push the tag.
+4. The release workflow builds the binaries for Linux, macOS and Windows (amd64 and arm64), publishes the archives and checksums, and pushes the container image `ghcr.io/b070nd/cvewatch:vX.Y.Z`.
+5. The `CHANGELOG.md` section for that version becomes the release notes, and the workflow fails when the section is missing.
 
 ## Reporting bugs and security issues
 

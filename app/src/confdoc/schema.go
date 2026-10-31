@@ -98,7 +98,7 @@ func fields() []Field {
 	f := core("interval", "Interval", TypeDuration, "How often a project is refreshed unless its file says otherwise (update.every), and the longest the daemon sleeps before it looks at the configuration again.")
 	f.Min = num(1)
 	add(f)
-	add(core("update.auto", "Scheduled updates", TypeBool, "Refresh projects by themselves, the daemon and the full-screen interface alike. Off, only update and the F key refresh. A project can opt out or pick its own period in its file (update.auto, update.every)."))
+	add(core("update.auto", "Scheduled updates", TypeBool, "Refresh projects by themselves, the daemon and the full-screen interface alike. Off, only update and the u key refresh. A project can opt out or pick its own period in its file (update.auto, update.every)."))
 	add(core("lookback", "Lookback", TypeDuration, "How far back a source's first run reaches. A project's since date reaches further, once: after you set or move it, the next fetch goes back to that date."))
 	add(core("retention", "Retention", TypeDuration, "Forget items that matched nothing after this long; 0 keeps them. At least twice the lookback. Until then a new tech or project can pick them up again (cvewatch revalidate)."))
 	add(core("data_dir", "Data directory", TypeString, "Where state, the audit log and backups live; relative to the root folder."))

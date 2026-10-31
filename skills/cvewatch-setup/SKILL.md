@@ -12,10 +12,10 @@ cvewatch needs to know what a system runs before it can tell the team which advi
 1. **Look at the repository.** `discover_stack` with the absolute folder (CLI: `cvewatch discover DIR`). Every proposal has evidence (file and reason) and a confidence.
 2. **Show the user what was found**, with the evidence, as a short list: technology, version, why. Keep `high` and `medium` as proposals to confirm. Ask about every `low` one; do not declare it silently.
 3. **Fill the gaps.** Anything the repository cannot show (a database, a CDN, a gateway, vendor appliances) comes from the user. Look names up with `search_catalog` (CLI: `cvewatch catalog WORDS`). If something is missing from the catalog, say so: an entry can be added to `config/techs.yaml`. Never invent a name.
-4. **Ask for the deployed versions** when they differ from what the repository declares, per environment (dev, int, staging, prod). A wrong version either hides a real finding or cries wolf, so unknown is better than guessed.
+4. **Ask for the deployed versions** when they differ from what the repository declares, per environment, using the project's own environment names (for example `dev` and `prod`; any lowercase name works). A wrong version either hides a real finding or cries wolf, so unknown is better than guessed.
 5. **Preview.** `preview_project_change` with the changes (CLI: `cvewatch project NAME -set php=8.2 -lock composer:PATH`, without `-save`). The changes can also set a per-environment version (`-env-set prod:php=8.3`), an image (`-image prod=TAG`), the `since` date, and mark a lockfile as counting dev packages (`-lock composer:PATH:prod:dev`). Show the user the diff and any problems it reports.
 6. **Save only after a clear yes.** `edit_project` (CLI: add `-save`). The old file is backed up and the change is audited under your name.
-7. **Check.** `check_projects` (CLI: `cvewatch doctor`) lists problems per project and field, with fixes you can pass to `preview_project_change`. `get_status` should show the project with its technologies and no problems.
+7. **Check.** `check_projects` (CLI: `cvewatch doctor`) lists problems per project and field, with fixes you can pass to `preview_project_change`. `get_status` lists the project with its last update and next due time, and a problem named `project:NAME` means its file or a lockfile cannot be used.
 
 ## Other changes
 

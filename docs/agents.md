@@ -5,7 +5,7 @@
 Register the server once per machine (Claude Code shown; other clients take the same command):
 
 ```bash
-claude mcp add cvewatch -- /path/to/cvewatch -root /path/to/repo/app mcp
+claude mcp add cvewatch -- /path/to/cvewatch -root /path/to/cvewatch-home mcp
 ```
 
 It starts read-only with these tools:
@@ -75,6 +75,7 @@ The project edit inputs, for `preview_project_change` and `edit_project`:
 
 - `vendor`: for `set_vendor`, the customer or organisation that owns the project: lowercase letters, digits, `-` and `_`, at most 63 characters. An empty value clears it. Setting it needs write access to every project, because it decides who may see the project.
 - `since`: the first day advisories count from, `YYYY-MM-DD`. An empty value clears it. The open findings of older advisories are closed or reopened when the change is judged (see [Changing the configuration](overview.md#changing-the-configuration)).
+- `every`, `auto`: for `set_update`, how often the project is refreshed (a period of at least 5m such as `1h`; `default` removes it, so the `interval` of `config.yaml` applies) and whether scheduled runs include it (`false` leaves it out; a manual update still covers it). See [Update schedule per project](overview.md#update-schedule-per-project).
 - `lockfile`: one object with `type`, `path`, `env` (optional) and `dev` (optional, a boolean). `dev: true` counts the lockfile's development-only packages in every environment. The flat fields `lockfile_type`, `lockfile_path`, `lockfile_env` and `lockfile_dev` do the same.
 - `kind`: one of the op kinds in `projectfile.OpTable`, each described in the schema with the inputs it takes. The kinds are `set_envs`, `add_env`, `remove_env`, `rename_env` (with `to`), `set_tech`, `remove_tech`, `set_tech_envs`, `set_env_tech`, `remove_env_tech`, `exclude_env_tech`, `include_env_tech`, `set_image`, `migrate_envs`, `add_lockfile`, `remove_lockfile`, `set_lockfile_dev`, `set_since`, `set_vendor` and `set_update`. `set_env_tech`, `remove_env_tech`, `exclude_env_tech`, `include_env_tech` and `set_image` write the environment's `when@<env>` block; `migrate_envs` rewrites an old `environments:` block as `when@` blocks.
 

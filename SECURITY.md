@@ -14,7 +14,7 @@ This is a volunteer project. These are goals, not guarantees.
 
 ## Supported versions
 
-Only the latest release receives security fixes.
+Only the latest release, currently the 2.x series, receives security fixes. If you run 1.x, upgrade (see the upgrade notes in [CHANGELOG.md](CHANGELOG.md)).
 
 ## Scope
 

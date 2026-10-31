@@ -1,7 +1,7 @@
 # Supported technologies. An item is relevant when its title or summary
-# mentions an alias as a whole word. Edit freely: changes apply to items
-# first seen from the next run on; earlier decisions are never rewritten
-# (use `cvewatch rescan` to look back deliberately).
+# mentions an alias as a whole word. Edit freely: a change is noticed by the
+# daemon and the TUI, which re-judge the stored items and fetch older ones
+# where the new setup needs them (`cvewatch revalidate` shows what would change).
 #
 # Each entry has catalog metadata (title, category, vendor, source) so setup
 # can offer it, plus how to recognise it in a repository (detect) and,

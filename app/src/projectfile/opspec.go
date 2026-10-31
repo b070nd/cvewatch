@@ -181,7 +181,7 @@ var OpTable = []OpSpec{
 		Kind: "set_update", Summary: "set how often the project is refreshed, or take it out of scheduled runs",
 		Params: []Param{
 			{"every", "string", false, "a period such as 30m, 1h or 2d, at least 5m; default removes it, so the interval of config.yaml applies; empty leaves it"},
-			{"auto", "bool", false, "false: scheduled runs skip the project (cvewatch update and the F key still include it); true schedules it again; left out leaves it"},
+			{"auto", "bool", false, "false: scheduled runs skip the project (cvewatch update and the u key still include it); true schedules it again; left out leaves it"},
 		},
 		Example: Op{Kind: "set_update", Every: "1h", Auto: &autoOff},
 		Flag:    "-update-every SPAN, -update-auto BOOL", Args: []string{"-update-every", "1h", "-update-auto", "false"},
