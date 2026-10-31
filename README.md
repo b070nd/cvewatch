@@ -37,7 +37,7 @@ HIGH (1)
 | **Decides** | what matters to you, whether your version is affected, and what to do first |
 | **Tracks** | open, fixed, ignored or not-affected per environment, with owner, deadline, ticket and evidence |
 | **Tells** | Slack, signed webhook, email, a daily digest, JSON/CSV/Markdown/SARIF exports, a status page, an MCP server |
-| **Shows** | a full-screen TUI, a static dashboard and `cvewatch status`: is the monitor itself working? |
+| **Shows** | a full-screen TUI, a static dashboard and `cvewatch status`: is the monitor itself working? GREEN, YELLOW or RED, as for an Elasticsearch cluster, with the problems listed until they are fixed |
 | **Proves** | a hash-chained audit log and an evidence pack per issue |
 | **Runs as** | one binary, on your machine, no telemetry |
 
@@ -310,7 +310,7 @@ Read-only by default. The agent can call:
 | `get_evidence` | the full timeline and per-environment matrix for one issue |
 | `policy_violations` | which deadlines are broken right now |
 | `get_calendar` | what was published this month |
-| `get_status` | whether the monitor itself is healthy: daemon, feeds, channels |
+| `get_status` | whether the monitor itself is healthy: GREEN, YELLOW or RED, the problems behind it, daemon, feeds, channels |
 | `search_catalog`, `suggest_tech`, `preview_tech_change`, `discover_stack`, `list_projects`, `check_projects`, `preview_project_change`, `get_settings`, `preview_settings_change` | set a project and the settings up: find technologies (and the closest names for a typo), read a repository, find problems and hints in project files, preview a change to a project, to your own technologies or to the settings |
 
 Opt in to writing with `mcp -allow-write`, and the agent can also `set_status`, `assign`, `attach_evidence`, `refresh`, `edit_project`, `edit_settings`, `edit_tech` and `manage_project`. The skills in [`skills/`](skills) walk an agent through setup (`cvewatch-setup`) and triage (`cvewatch-triage`), asking the human at every step that matters.
@@ -336,18 +336,19 @@ sequenceDiagram
 
 - **Feed text is untrusted data.** Titles and descriptions come from public websites. They are cleaned on the way in, escaped on the way out and delivered under `untrusted`; the server instructions tell the agent never to follow instructions found there.
 - **Writes are opt-in and recorded.** Every change is an audit-log entry with the actor (`mcp:<user>`), and the log is hash-chained, so editing history is detectable.
-- **Per-actor access.** `access:` in `config.yaml` limits which projects an actor sees and whether it may write; an agent never sees projects it has no access to.
+- **Per-actor access.** `access:` in `config.yaml` limits which projects an actor sees and whether it may write; `vendor:acme` grants every project of a vendor. An agent never sees projects it has no access to.
 - **Nothing leaves the machine** except the feeds you configure, your channels and NVD lookups of the CVSS score and (only if you enable it) EPSS lookups for tracked CVE ids.
 
 ```yaml
 access:
   alice:  {projects: [shop, admin], write: true}
   ci-bot: {projects: ["*"], write: false}
+  acme-team: {projects: ["vendor:acme"], write: false}
 ```
 
 ### Run it for the whole factory
 
-- **One install, many products.** Each repository gets a project file (`cvewatch setup DIR`), each environment its own versions, SBOM and image reference. The ledger is shared, so a CVE that touches three products appears once, with three rows.
+- **One install, many products.** Each repository gets a project file (`cvewatch setup DIR`), each environment its own versions, SBOM and image reference. The ledger is shared, so a CVE that touches three products appears once, with three rows. Projects can belong to a vendor (a customer or team, `vendor: acme` in the project file); rows of different projects or vendors are never merged, and every list, search and export can be narrowed to one vendor or project.
 - **A ritual that fits your process.** A daily digest of what is still open in prod; `policy` as the escalation trigger; `assign` for owner, deadline and ticket.
 - **Evidence on demand.** `cvewatch evidence CVE-...` is the pack you hand to an auditor or a customer: when it was published, when you detected it, who was told, who owned it, what was attached, when each environment was fixed, and whether the audit chain verified. [docs/compliance.md](docs/compliance.md) explains how this supports NIS2 vulnerability-handling duties and the GDPR (it supports them; it does not make you compliant).
 - **Plays with your scanners.** Run Trivy, Grype or OSV-Scanner for detection and SBOM generation; let cvewatch own the multi-environment open/fixed truth and the deadlines.

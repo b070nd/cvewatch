@@ -444,10 +444,10 @@ Each step that succeeded is undone, newest first, when a later step fails. The m
 
 ## Command line: projects and settings
 
-Every project edit is a flag list. Without `-save` the command only shows the diff. Several flags can be given together. They apply grouped by flag, in this order: technologies, lockfiles, environments, lockfile dev flags, since, the versions and exclusions per environment, the scope of technologies, `-migrate-envs`, then images. If one fails, nothing is written.
+Every project edit is a flag list. Without `-save` the command only shows the diff. Several flags can be given together. They apply grouped by flag, in this order: technologies, lockfiles, environments, lockfile dev flags, since, vendor, the versions and exclusions per environment, the scope of technologies, `-migrate-envs`, then images. If one fails, nothing is written.
 
 ```bash
-cvewatch project list                                   # the monitored projects; disabled ones are marked
+cvewatch project list                                   # the monitored projects with their vendor (- for none); disabled ones are marked
 cvewatch project shop -set php=8.3 -lock composer:shop/composer.lock:prod:dev   # diff only
 cvewatch project shop -set php=8.3 -save                # write it; a backup goes to data/project-backups/
 ```
@@ -469,6 +469,7 @@ cvewatch project shop -set php=8.3 -save                # write it; a backup goe
 | `-lock-dev TYPE:PATH[:ENV]` | change an existing entry to count its development-only packages in every environment |
 | `-lock-nodev TYPE:PATH[:ENV]` | change an existing entry to stop counting them outside development-like environments |
 | `-since DATE` | advisories count from this day (`YYYY-MM-DD`); `-since ""` clears it |
+| `-vendor NAME` | the vendor that owns the project (see [Vendors and projects](#vendors-and-projects)); `-vendor ""` clears it |
 | `-update-every SPAN` | how often the project is refreshed, such as `30m`, `1h` or `2d` (at least 5m); `default` removes it (see [Update schedule per project](#update-schedule-per-project)) |
 | `-update-auto BOOL` | `false` leaves the project out of scheduled runs, `true` puts it back |
 | `-save` | write the change |
@@ -552,6 +553,25 @@ The old `environments:` key still loads with the same meaning, and a hint says i
 | `migrate_envs` | `-migrate-envs` | rewrites the old `environments:` block |
 
 Setup asks once, after the environments, whether an environment differs from the rest (default no). It is asked only with more than one environment. Yes asks per environment for the differences only: another version, an extra technology, an excluded one or an image. No removes the differences the project has.
+
+## Vendors and projects
+
+A project belongs to a vendor: the customer or organisation that owns it, or the team in a multi-tenant setup. The vendor is optional and is one line in the project file, right after the name:
+
+```yaml
+name: shop
+vendor: acme
+```
+
+A vendor is a lowercase name of letters, digits, `-` and `_`, at most 63 characters, like a project name. Any other spelling is an error, in `cvewatch check` and when the file is edited. Set it with `cvewatch project shop -vendor acme -save`, the MCP op `set_vendor` or by hand; `-vendor ""` clears it. Projects without a vendor belong to no vendor, shown as `-` and selected with `vendor:-` or `-vendor -`. The order is vendor, then project, then environment.
+
+Findings stay with their project and are never merged across projects or vendors:
+
+- Every target of an issue (`list -json`, `export`, MCP, the evidence matrix) names its `project` and its `vendor` (absent for none). The vendor is looked up in the current project files when the issue is read, so changing a project's vendor moves its findings at once, and findings of a deleted project show no vendor.
+- `-vendor V` on `list`, `update`, `search`, `export` and `calendar`, `vendor` in the MCP tools and `vendor:acme` in a search keep only the projects of that vendor. With `-project` or `project:` the other projects' targets are removed from the issue as well, not just hidden. `cvewatch show`, the evidence pack and the TUI issue page can be narrowed the same way.
+- The terms of a search that name a project, vendor, environment, status or owner must hold on the same environment of the same project. `project:crm env:prod` finds nothing when `crm` has no prod environment, even if another project does.
+- When an issue is open in several projects, the reason "open in prod" names the projects that are: `open in prod: blog, shop`.
+- An `access` rule can grant every project of a vendor with `vendor:acme` next to project names. It is resolved on every request, so a project added to the vendor later is covered, and one that leaves it is not. Setting a vendor needs write access to every project, because it decides who may see the project.
 
 ## Start date per project
 
@@ -658,7 +678,15 @@ A back-fill that fails, or is cancelled, stays owed and is tried again at the ne
 
 ## Is it working?
 
-`cvewatch status` shows the daemon (running, overdue, or only manual runs), each feed (last success, failures in a row), each channel, the last update and next due time of each project, and the last cycles. The overall level is `unknown` until a cycle has read at least one feed (a new monitor has shown nothing yet, so it is not `ok`), and `warn` when no feed is enabled. It exits non-zero only when something fails, so `unknown` and `warn` exit 0. `cvewatch dashboard` writes a static HTML page with the same plus open findings. Set `dashboard: {enabled: true}` in `config.yaml` and the daemon refreshes it every cycle. The page has no scripts and makes no external requests.
+The monitor reports its own health the way an Elasticsearch cluster does, as one colour:
+
+- **GREEN**: nothing needs attention. The line says when the last check was, for example `GREEN · last check 12:13 (4m ago)`.
+- **YELLOW**: something needs attention. This includes a monitor that has not proven itself yet: until a cycle has read at least one feed, the problem is "no cycle has run yet". The line counts the problems, for example `YELLOW · 2 problems`.
+- **RED**: the monitor cannot be relied on, for example a feed or channel that failed three times in a row, a daemon that is overdue, or a damaged audit log.
+
+The colour is the worst of the problems. Each problem has a stable key, a title, a detail with the last error, a hint for what to do, and since when it exists. A problem is listed until its cause is gone; there is no way to dismiss it. The causes are a failing or stale feed (one problem per feed), an overdue daemon, no cycle yet, no enabled source, a failing notification channel, a project file that cannot be used or a lockfile that cannot be read (`project:NAME`), and a broken audit chain. The problems are sorted red first, then yellow, then oldest first.
+
+`cvewatch status` prints the colour line and the problems with their hints, then the daemon (running, overdue, or only manual runs), each feed (last success, failures in a row), each channel, the last update and next due time of each project, and the last cycles. It exits non-zero only on RED, so YELLOW exits 0. `cvewatch status -json` has `level` (`green`, `yellow` or `red`) and `problems`; the same levels name the daemon, each feed and each channel. `cvewatch dashboard` writes a static HTML page with the same plus open findings. Set `dashboard: {enabled: true}` in `config.yaml` and the daemon refreshes it every cycle. The page has no scripts and makes no external requests.
 
 ## Vendor records (CVE Program)
 
@@ -755,7 +783,7 @@ Channels switch on when their secret is in the environment, so one config file i
 
 ## Exports and the JSON contract
 
-`cvewatch export -format json|csv|md|sarif` lists open issues with the status of every environment. JSON from `export`, `list -json` and MCP is one versioned document (`schema_version`, `generated_at`, `count`, `issues`); the schema is in [schema/export-v1.schema.json](schema/export-v1.schema.json). Feed text sits under `untrusted`. CSV cells that could be read as spreadsheet formulas are neutralized.
+`cvewatch export -format json|csv|md|sarif` lists open issues with the status of every environment. JSON from `export`, `list -json` and MCP is one versioned document (`schema_version`, `generated_at`, `count`, `issues`); the schema is in [schema/export-v1.schema.json](schema/export-v1.schema.json). Feed text sits under `untrusted`. Each target carries its `vendor` when its project has one; CSV has a `vendor` column at the end. CSV cells that could be read as spreadsheet formulas are neutralized.
 
 ## Layout
 
@@ -794,7 +822,7 @@ The JSON export and `show` carry `cvss`, `cvss_version`, `cvss_vector` and `cvss
 
 ## Several people
 
-By default everyone who can run the tool may do everything. To limit that, add `access` to `config.yaml`: per actor (`CVEWATCH_ACTOR`, else the OS user), the projects visible and whether changes are allowed. Reads are filtered, writes need write access to the project, and `update` needs write access to all projects. This is authorization on top of a local identity, not authentication.
+By default everyone who can run the tool may do everything. To limit that, add `access` to `config.yaml`: per actor (`CVEWATCH_ACTOR`, else the OS user), the projects visible and whether changes are allowed. Reads are filtered, writes need write access to the project, and `update` needs write access to all projects. `projects` can also hold `vendor:acme`, which means every project whose file says `vendor: acme`, now and later. This is authorization on top of a local identity, not authentication.
 
 ## Platforms
 
