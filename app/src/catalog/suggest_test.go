@@ -84,3 +84,61 @@ func TestSuggestLimitAndOrder(t *testing.T) {
 		t.Fatalf("punctuation is ignored: %v", got)
 	}
 }
+
+func TestSuggestMultiWordTerms(t *testing.T) {
+	c := shippedCatalog(t)
+	for _, tc := range []struct {
+		term  string
+		first string
+		also  string // must be among the first five
+	}{
+		{"ubuntu kernel", "linux-kernel", "ubuntu"},
+		{"debian kernel", "linux-kernel", "debian"},
+		{"linux kernel", "linux-kernel", ""},
+		{"Linux-Kernel", "linux-kernel", ""},
+		{"kernel linux", "linux-kernel", ""},
+		{"ubuntu 22.04 kernel", "linux-kernel", "ubuntu"},
+		{"linux-image", "linux-kernel", ""},
+		{"kernal", "linux-kernel", ""},
+		{"ubuntu_kernal", "linux-kernel", ""},
+	} {
+		got := names(c.Suggest(tc.term, 5))
+		if len(got) == 0 || got[0] != tc.first || tc.also != "" && !slices.Contains(got, tc.also) {
+			t.Errorf("Suggest(%q) = %v, want %s first and %s among them", tc.term, got, tc.first, tc.also)
+		}
+	}
+	for _, term := range []string{"algolia search", "22.04", "the app"} {
+		if got := names(c.Suggest(term, 5)); len(got) != 0 {
+			t.Errorf("Suggest(%q) = %v, want nothing", term, got)
+		}
+	}
+}
+
+func TestClosestOffersOnlyAClearAnswer(t *testing.T) {
+	c := shippedCatalog(t)
+	for term, want := range map[string]string{"kernal": "linux-kernel", "ubuntu kernel": "linux-kernel", "rabbitMW": "rabbitmq"} {
+		if got, ok := c.Closest(term); !ok || got.Name != want {
+			t.Errorf("Closest(%q) = %q, %v; want %s", term, got.Name, ok, want)
+		}
+	}
+	for _, term := range []string{"algolia", "myssql", "linux", "exchang", "ubuntu linux kerne", ""} {
+		if got, ok := c.Closest(term); ok {
+			t.Errorf("Closest(%q) = %q, want no answer", term, got.Name)
+		}
+	}
+}
+
+func TestKernelAliasesDoNotMatchBareWords(t *testing.T) {
+	c := shippedCatalog(t)
+	k, _ := c.Get("linux-kernel")
+	for _, bare := range []string{"linux", "kernel"} {
+		if slices.Contains(k.Aliases, bare) {
+			t.Errorf("alias %q would match every advisory that says Linux or kernel", bare)
+		}
+	}
+	for _, a := range []string{"ubuntu kernel", "debian kernel", "linux-image", "linux image"} {
+		if tech, ok := c.ForTerm(a); !ok || tech.Name != "linux-kernel" {
+			t.Errorf("ForTerm(%q) = %v, %v", a, tech.Name, ok)
+		}
+	}
+}

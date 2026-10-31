@@ -213,7 +213,7 @@ func (m *app) lifeApplied(msg lifeAppliedMsg) outcome {
 	default:
 		note = "enabled " + req.Project
 	}
-	return outcome{note: note, then: loadLandCmd(m.b, land)}
+	return outcome{note: note, then: loadLandCmd(m.b, m.stl, land)}
 }
 
 // ---- drawing ----

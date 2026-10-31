@@ -19,6 +19,7 @@ var now = time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
 func sample() []query.Issue {
 	return []query.Issue{{
 		ID: "CVE-2026-0001", Aliases: []string{"GHSA-aaaa", "OSV-1"}, Severity: model.SevCritical, CVSS: 9.8,
+		CVSSVersion: model.CVSS31, CVSSVector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", CVSSSource: model.ScoreNVD,
 		Published: now.Add(-50 * time.Hour), Age: "2d 2h", AgeHours: 50, FirstSeen: now.Add(-48 * time.Hour),
 		Techs: []string{"php"}, Applies: model.AppAffected, ArticleCount: 2,
 		Fix:      query.FixInfo{Available: true, Official: true},

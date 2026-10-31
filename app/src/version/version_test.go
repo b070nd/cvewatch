@@ -37,6 +37,19 @@ func TestCompare(t *testing.T) {
 		{"1.0.0rc1", "1.0.0", -1, true},
 		{"1.2.3+build5", "1.2.3", 0, true},
 		{"1.2.3+a", "1.2.3+b", 0, true},
+		// kernel and distribution suffixes are builds, not pre-releases
+		{"6.12.85+", "6.12.85", 0, true},
+		{"6.12.85+", "6.12.86", -1, true},
+		{"6.8.0-45-generic", "6.8.0", 0, true},
+		{"6.8.0-45-generic", "6.8.1", -1, true},
+		{"6.12.86-generic", "6.12.86", 0, true},
+		{"6.12.85-1ubuntu1", "6.12.85", 0, true},
+		{"6.12.85+deb12u1", "6.12.85", 0, true},
+		{"6.12.85-ubuntu1", "6.12.85", 0, true},
+		{"5.14.0-362.el9", "5.14.0", 0, true},
+		{"6.1.0-18-amd64", "6.1.0", 0, true},
+		{"6.12.0-rc3", "6.12.0", -1, true},
+		{"6.12.85-custom", "6.12.85", -1, true},
 		{"", "1.0", 0, false},
 		{"1.0", "", 0, false},
 		{"abc", "1.0", 0, false},
@@ -160,6 +173,16 @@ func TestEvaluate(t *testing.T) {
 		{"patch vs base release", "2.4.7-p1", rs("< 2.4.7"), not},
 		{"base release vs patch", "2.4.7", rs("< 2.4.7-p1"), aff},
 		{"patch at fixed patch", "2.4.7-p2", rs("< 2.4.7-p2"), not},
+
+		// kernel-style versions: the numeric core decides, the suffix never errors
+		{"kernel plus", "6.12.85+", rs(">= 6.12.0, <= 6.12.86"), aff},
+		{"kernel plus below fix", "6.12.85+", rs("< 6.12.86"), aff},
+		{"kernel flavour at fix", "6.12.86-generic", rs("< 6.12.86"), not},
+		{"kernel flavour below fix", "6.8.0-45-generic", rs("< 6.8.1"), aff},
+		{"kernel flavour past range", "6.8.0-45-generic", rs(">= 6.1.0, < 6.8.0"), not},
+		{"kernel debian revision", "6.1.85-1+deb12u1", rs("< 6.1.90"), aff},
+		{"kernel ubuntu revision at fix", "6.12.86-1ubuntu1", rs("< 6.12.86"), not},
+		{"kernel suffix on two parts is a series", "6.12-generic", rs("< 6.12.86"), unk},
 
 		// series
 		{"series partly affected", "8.2", rs("< 8.2.30"), unk},

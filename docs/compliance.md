@@ -56,6 +56,7 @@ Article 20 makes management bodies responsible for oversight. The open-findings 
 | `actor` in the audit log | Yes | Defaults to the OS user name of whoever ran the command. Set `CVEWATCH_ACTOR` to a team name or pseudonym to avoid recording a person |
 | Slack messages | Possibly | Contain vulnerability ids, project names and environments. Slack is a processor for you |
 | Outbound requests | IP address | Feed providers see your server's IP address and the `user_agent` string. The default User-Agent contains no personal data |
+| CVSS lookups (on by default) | No personal data | Sends CVE ids of tracked issues that no feed rated to NVD's public API. Set `enrich.cvss: false` to stop it |
 | EPSS lookups (opt-in) | No personal data | Sends CVE ids of tracked issues to FIRST. This reveals which vulnerabilities you track, so it is off by default |
 | Project files and their backups | Possibly | Project names and technologies are not personal. `project` entries in the audit log carry the actor like every other change |
 | Webhook and email recipients | Yes, for email | Recipient addresses are in your config; messages contain vulnerability ids, project names and environments |

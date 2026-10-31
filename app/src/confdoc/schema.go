@@ -98,11 +98,12 @@ func fields() []Field {
 	f := core("interval", "Interval", TypeDuration, "How often the daemon runs a cycle.")
 	f.Min = num(1)
 	add(f)
-	add(core("lookback", "Lookback", TypeDuration, "How far back a source's first run reaches."))
-	add(core("retention", "Retention", TypeDuration, "Forget items that matched nothing after this long; 0 keeps them. At least twice the lookback."))
+	add(core("lookback", "Lookback", TypeDuration, "How far back a source's first run reaches. A project's since date reaches further, once: after you set or move it, the next fetch goes back to that date."))
+	add(core("retention", "Retention", TypeDuration, "Forget items that matched nothing after this long; 0 keeps them. At least twice the lookback. Until then a new tech or project can pick them up again (cvewatch revalidate)."))
 	add(core("data_dir", "Data directory", TypeString, "Where state, the audit log and backups live; relative to the root folder."))
 	add(core("alerts_dir", "Alerts directory", TypeString, "Where markdown reports and calendar pages are written; relative to the root folder."))
 	add(core("enrich.epss", "EPSS lookups", TypeBool, "Ask FIRST's EPSS service about the CVEs you track. Reveals your stack to that service."))
+	add(core("enrich.cvss", "CVSS lookups", TypeBool, "Rate tracked CVEs that no source gave a score, from NVD's public data (a few per cycle, no key needed). Only the CVE id is sent. Default on."))
 	f = core("storage.backend", "Storage backend", TypeEnum, "Where state is kept.")
 	f.Enum = []string{"file", "sqlite"}
 	add(f)
@@ -114,6 +115,7 @@ func fields() []Field {
 	f = core("tui.fetch", "TUI fetch", TypeDuration, "How often the full-screen interface fetches the feeds itself; 0 only on request. A running daemon already fetches every interval.")
 	f.Min = num(0)
 	add(f)
+	add(core("tui.editor", "TUI editor", TypeString, "The editor the E key opens files in, with its options, such as code --wait. Empty uses $VISUAL, then $EDITOR, then the first of the usual editors found on this machine."))
 	f = core("horizon.window", "Alert horizon", TypeEnum, "Only vulnerabilities published inside this window are judged, alerted and digested; findings that exist stay. unlimited is any time; custom uses from and to. Sources are fetched back to the lookback on a first run, so keep the lookback at least as long.")
 	f.Enum = config.Windows
 	add(f)

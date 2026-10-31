@@ -788,7 +788,8 @@ techs:
     category: os
     vendor: Linux kernel community
     source: open
-    aliases: ["linux kernel"]
+    # only phrases that name the kernel: a bare "linux" or "kernel" would match every advisory that says Linux or Windows kernel
+    aliases: ["linux kernel", "linux-kernel", "ubuntu kernel", "debian kernel", "linux-image", "linux image"]
     cpe: [linux:linux_kernel]
   - name: ubuntu
     title: Ubuntu

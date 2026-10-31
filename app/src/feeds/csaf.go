@@ -59,12 +59,18 @@ type csafProduct struct {
 	} `json:"product_identification_helper"`
 }
 
+type csafScore struct {
+	Version      string  `json:"version"`
+	VectorString string  `json:"vectorString"`
+	BaseScore    float64 `json:"baseScore"`
+}
+
 type csafVuln struct {
 	CVE    string `json:"cve"`
 	Scores []struct {
-		CVSSv3 struct {
-			BaseScore float64 `json:"baseScore"`
-		} `json:"cvss_v3"`
+		CVSSv2 csafScore `json:"cvss_v2"`
+		CVSSv3 csafScore `json:"cvss_v3"`
+		CVSSv4 csafScore `json:"cvss_v4"`
 	} `json:"scores"`
 	ProductStatus struct {
 		KnownAffected []string `json:"known_affected"`
@@ -225,18 +231,19 @@ func (d csafDoc) item(srcID string, base *url.URL, advURL string) (model.Item, b
 	}
 
 	var ids []string
-	var score float64
+	var rs []model.Rating
 	for _, v := range d.Vulnerabilities {
 		ids = append(ids, v.CVE)
 		for _, s := range v.Scores {
-			score = max(score, s.CVSSv3.BaseScore)
+			for _, c := range []struct {
+				s   csafScore
+				ver string
+			}{{s.CVSSv4, model.CVSS40}, {s.CVSSv3, model.CVSS30}, {s.CVSSv2, model.CVSS20}} {
+				rs = append(rs, ratingOf(c.s.BaseScore, c.s.Version, c.s.VectorString, model.ScoreCSAF, c.ver))
+			}
 		}
 	}
 	ids = append(ids, d.Document.Tracking.ID)
-	sev := model.SeverityFromCVSS(score)
-	if score <= 0 {
-		sev = model.ParseSeverity(d.Document.AggregateSeverity.Text)
-	}
 
 	published := parseTime(d.Document.Tracking.InitialReleaseDate)
 	if published.IsZero() {
@@ -250,9 +257,13 @@ func (d csafDoc) item(srcID string, base *url.URL, advURL string) (model.Item, b
 		Affected:  d.affected(),
 		Fixes:     d.fixes(srcID, base, advURL),
 		Published: published,
-		Severity:  sev,
-		CVSS:      score,
 	}
+	r := model.BestRating(rs...)
+	label := d.Document.AggregateSeverity.Text
+	if r.Valid() {
+		label = "" // the score decides, the document's label only fills in when there is none
+	}
+	rate(&it, r, label)
 	return finish(srcID, it, ids...)
 }
 

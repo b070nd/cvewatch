@@ -27,7 +27,7 @@ import (
 type Event struct {
 	Time    time.Time `json:"time"`
 	Actor   string    `json:"actor"`
-	Action  string    `json:"action"` // detected | alerted | status | assign | evidence | inventory | unified | digest | project | settings
+	Action  string    `json:"action"` // detected | alerted | status | assign | evidence | inventory | unified | digest | project | settings | revalidate
 	Vuln    string    `json:"vuln,omitempty"`
 	Project string    `json:"project,omitempty"`
 	Env     string    `json:"env,omitempty"`

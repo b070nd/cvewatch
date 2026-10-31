@@ -36,7 +36,7 @@ Setup tools (read-only unless noted) let an agent configure the monitor with the
 | `get_status` | health of the monitor: daemon, feeds, channels, recent cycles |
 | `get_settings` | the configuration files (`config.yaml`, `techs.yaml`, `sources/*.yaml`) with the values that are set. Secret values read `(set)`. `include_schema` adds every setting with its path, type, allowed values, default and help. Works when a file is broken: that file reports its error |
 | `preview_settings_change` | the diff and problems that edits would produce; writes nothing |
-| `edit_settings` | only with `-allow-write`: save the same edits. Refused when they add an error. Comments are kept, the old files are backed up, and the change is audited by path, never by value. The daemon uses it from its next cycle |
+| `edit_settings` | only with `-allow-write`: save the same edits. Refused when they add an error. Comments are kept, the old files are backed up, and the change is audited by path, never by value. The daemon judges the change within about 15 seconds (see [Changing the configuration](overview.md#changing-the-configuration)) |
 | `manage_project` | only with `-allow-write`: rename, duplicate, delete, disable or enable a whole project. Without `confirm` it returns the consequences and changes nothing; with `confirm: true` it carries the change out |
 
 The settings tools need an actor that may see every project, because the settings name all of them. A restricted actor gets an access refusal.
@@ -60,7 +60,7 @@ Inputs of `manage_project`: `verb` (`rename`, `duplicate`, `delete`, `disable` o
 
 The project edit inputs, for `preview_project_change` and `edit_project`:
 
-- `since`: the first day advisories count from, `YYYY-MM-DD`. An empty value clears it.
+- `since`: the first day advisories count from, `YYYY-MM-DD`. An empty value clears it. The open findings of older advisories are closed or reopened when the change is judged (see [Changing the configuration](overview.md#changing-the-configuration)).
 - `lockfile`: one object with `type`, `path`, `env` (optional) and `dev` (optional, a boolean). `dev: true` counts the lockfile's development-only packages in every environment. The flat fields `lockfile_type`, `lockfile_path`, `lockfile_env` and `lockfile_dev` do the same.
 - `kind`: one of the op kinds in `projectfile.OpTable`, each described in the schema with the inputs it takes. The kinds are `set_envs`, `add_env`, `remove_env`, `rename_env` (with `to`), `set_tech`, `remove_tech`, `set_tech_envs`, `set_env_tech`, `remove_env_tech`, `exclude_env_tech`, `include_env_tech`, `set_image`, `migrate_envs`, `add_lockfile`, `remove_lockfile`, `set_lockfile_dev` and `set_since`. `set_env_tech`, `remove_env_tech`, `exclude_env_tech`, `include_env_tech` and `set_image` write the environment's `when@<env>` block; `migrate_envs` rewrites an old `environments:` block as `when@` blocks.
 

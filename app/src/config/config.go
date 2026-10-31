@@ -99,10 +99,12 @@ type PolicyRule struct {
 	FixWithin   time.Duration  `yaml:"fix_within"`   // the finding must be closed this long after detection
 }
 
-// Enrich switches on lookups that contact outside services. They are off by
-// default because they reveal which CVEs you track.
+// Enrich switches on lookups that contact outside services. EPSS is off by
+// default because it reveals which CVEs you track; CVSS reads only public
+// NVD data and is on.
 type Enrich struct {
 	EPSS bool `yaml:"epss"` // FIRST EPSS exploit probability for tracked CVEs
+	CVSS bool `yaml:"cvss"` // CVSS score and vector from NVD for tracked CVEs that no source rated
 }
 
 // Dashboard switches on the static HTML status page. The page lists findings
@@ -116,6 +118,7 @@ type Dashboard struct {
 type TUI struct {
 	Refresh time.Duration `yaml:"refresh"` // how often it re-reads the state; at least 1s
 	Fetch   time.Duration `yaml:"fetch"`   // how often it fetches the feeds itself; 0 only on request
+	Editor  string        `yaml:"editor"`  // the editor the E key opens files in; empty looks at $VISUAL, $EDITOR, then the usual ones
 }
 
 // Storage selects the state backend.
@@ -189,6 +192,7 @@ func Defaults() Settings {
 			Threshold429: 3,
 			Cooldown429:  2 * time.Minute,
 		},
+		Enrich:  Enrich{CVSS: true},
 		Slack:   Slack{WebhookEnv: "SLACK_WEBHOOK_URL", MinSeverity: model.SevUnknown},
 		TUI:     TUI{Refresh: 30 * time.Second},
 		Horizon: Horizon{Window: WindowUnlimited},
@@ -216,6 +220,7 @@ func LoadTUI(root string) TUI {
 	if doc.TUI.Fetch > 0 {
 		t.Fetch = doc.TUI.Fetch
 	}
+	t.Editor = strings.TrimSpace(doc.TUI.Editor)
 	return t
 }
 
@@ -539,6 +544,9 @@ func (b *Bundle) validate(decoded map[string]bool, og origins) []Issue {
 	}
 	if b.TUI.Fetch < 0 {
 		fail(og.settings, "tui.fetch", "tui.fetch must not be negative (0 fetches only on request)")
+	}
+	if b.TUI.Editor != "" && strings.TrimSpace(b.TUI.Editor) == "" {
+		fail(og.settings, "tui.editor", "tui.editor must not be blank (remove it to use $VISUAL, $EDITOR or the usual editors)")
 	}
 	for _, hp := range b.Horizon.Problems() {
 		fail(og.settings, "horizon."+hp.Field, "%s", hp.Msg)

@@ -28,7 +28,7 @@ What the tool defends against, how, and how to deploy it.
   - CSV cells that spreadsheets could read as formulas (starting with `=`, `+`, `-`, `@`, tab or CR) are prefixed with a quote; markdown and evidence output escape feed and user text.
   - Notes, owners, tickets and evidence links typed by people or agents are cleaned (control characters and line breaks removed, length bounded); evidence links must be plain http(s).
 - **Outside lookups**
-  - The only optional lookup is EPSS (`enrich.epss`), off by default. It sends CVE ids of issues you track, nothing else, to FIRST's public API over https.
+  - Two lookups are optional: CVSS (`enrich.cvss`, on by default) asks NVD's public API for the score of tracked CVEs no feed rated, and EPSS (`enrich.epss`, off by default) asks FIRST's public API. Both send CVE ids of issues you track, nothing else, over https. CVSS vectors from feeds are checked to be plain vector strings before they are stored or shown.
   - `doctor -online` contacts NVD and the configured feeds; it never prints secrets.
 - **Storage**
   - The SQLite file and its sidecar files are created owner-only; writes carry a revision, so a stale writer is refused instead of overwriting newer data.

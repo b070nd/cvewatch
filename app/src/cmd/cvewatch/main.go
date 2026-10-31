@@ -82,7 +82,7 @@ Reports
   digest [-send]                               the "still open" summary, shown or sent now
   inventory [-project P]                       what the tool believes runs in each environment
   calendar [-month YYYY-MM] [-text] [-min S] [-project P] [-all]   month overview, HTML page unless -text
-  rescan [-apply]                              re-judge old items against today's config (dry run unless -apply)
+  revalidate [-apply] [-fetch] [-json]         re-judge every stored item against today's projects, techs, since dates and horizon, offline: new findings, findings before a since date closed (and reopened when it moves), installed versions re-checked; dry run unless -apply; -fetch then reaches back for older items. update and the daemon do this on their own after a change; rescan is the old name
 
 Other
   mcp [-allow-write]                           MCP server on stdio; read-only unless -allow-write
@@ -146,8 +146,12 @@ func dispatch(ctx context.Context, root string, log *slog.Logger, args []string)
 		return read(func(s *ops.Session) error { return searchCmd(s, rest) })
 	case "why":
 		return read(func(s *ops.Session) error { return why(s, rest) })
-	case "rescan":
-		return with(func(s *ops.Session) error { return rescan(s, rest) })
+	case "revalidate", "rescan":
+		run := func(s *ops.Session) error { return revalidateCmd(ctx, s, rest) }
+		if slices.ContainsFunc(rest, func(a string) bool { return strings.TrimLeft(a, "-") == "apply" || strings.TrimLeft(a, "-") == "fetch" }) {
+			return with(run)
+		}
+		return read(run) // a preview changes nothing
 	case "calendar":
 		return read(func(s *ops.Session) error { return showCalendar(s, rest) })
 	case "fix":
@@ -324,7 +328,7 @@ func refresh(ctx context.Context, s *ops.Session, o listOpts) error {
 	res, err := s.Refresh(ctx)
 	s.Log.Info("cycle done", "items", res.Items, "new", res.New, "merged", res.Merged, "pruned", res.Pruned,
 		"findings", res.Findings, "reconciled", res.Reconciled, "enriched", res.Enriched,
-		"alerted", res.Alerted, "digests", res.Digests, "failed_sources", len(res.Failed))
+		"alerted", res.Alerted, "digests", res.Digests, "failed_sources", len(res.Failed), "backfilled", strings.Join(res.Backfilled, ","))
 	if perr := printOpen(s, o, res.Fresh); perr != nil {
 		return perr
 	}
@@ -433,30 +437,6 @@ func why(s *ops.Session, args []string) error {
 	}
 	for _, n := range ex.Notes {
 		fmt.Printf("  not matched: %s\n", n)
-	}
-	return nil
-}
-
-func rescan(s *ops.Session, args []string) error {
-	fs := flag.NewFlagSet("rescan", flag.ContinueOnError)
-	apply := fs.Bool("apply", false, "create the findings; without it only report them")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	r, err := s.Rescan(*apply)
-	if err != nil {
-		return err
-	}
-	for _, c := range r.Candidates {
-		fmt.Printf("%-18s %-30s %s\n", c.ID, strings.Join(c.Projects, ","), c.Title)
-	}
-	switch {
-	case len(r.Candidates) == 0:
-		fmt.Println("Nothing new would match.")
-	case r.Applied:
-		fmt.Printf("%d issue(s) now have findings.\n", len(r.Candidates))
-	default:
-		fmt.Printf("%d issue(s) would get findings. Run again with -apply to create them.\n", len(r.Candidates))
 	}
 	return nil
 }

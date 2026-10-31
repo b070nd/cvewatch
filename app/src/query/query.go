@@ -93,6 +93,9 @@ type Issue struct {
 	Aliases      []string            `json:"aliases,omitempty"`
 	Severity     model.Severity      `json:"severity"`
 	CVSS         float64             `json:"cvss,omitempty"`
+	CVSSVersion  string              `json:"cvss_version,omitempty"` // 2.0, 3.0, 3.1 or 4.0
+	CVSSVector   string              `json:"cvss_vector,omitempty"`  // checked to be a plain vector string
+	CVSSSource   string              `json:"cvss_source,omitempty"`  // who scored: nvd, cna, adp, ghsa, csaf, text ...
 	Published    time.Time           `json:"published"`
 	Age          string              `json:"age"`       // since publication, e.g. "2d 4h"
 	AgeHours     int                 `json:"age_hours"` // the same, for sorting and scripts
@@ -246,7 +249,7 @@ func issue(v *model.Vulnerability, now time.Time) Issue {
 	}
 	return Issue{
 		KEV: kev, EPSS: v.EPSS,
-		ID: v.ID, Aliases: v.Aliases, Severity: v.Severity, CVSS: v.CVSS, Published: v.Published,
+		ID: v.ID, Aliases: v.Aliases, Severity: v.Severity, CVSS: v.CVSS, CVSSVersion: v.CVSSVersion, CVSSVector: v.CVSSVector, CVSSSource: v.CVSSSource, Published: v.Published,
 		Age: Age(v.Published, now), AgeHours: int(now.Sub(v.Published).Hours()),
 		FirstSeen: v.FirstSeen, Techs: v.Techs, ArticleCount: len(arts), Fix: fix,
 		Report: v.ReportPath, Targets: []Target{},

@@ -59,10 +59,43 @@ func parse(s string) (v ver, ok bool) {
 			return ver{}, false
 		}
 		v.patch, v.hasPatch = n, true
-	} else {
+	} else if !isBuild(rest) {
 		v.pre = strings.ToLower(rest)
 	}
 	return v, true
+}
+
+// buildWords are the first words of a distribution's kernel suffix:
+// 6.8.0-45-generic, 6.1.0-18-amd64, 6.12.85-1ubuntu1, 5.15.0-1052-azure.
+var buildWords = map[string]bool{
+	"generic": true, "lowlatency": true, "azure": true, "aws": true, "gcp": true, "gke": true, "oracle": true,
+	"kvm": true, "raspi": true, "oem": true, "amd64": true, "arm64": true, "i386": true, "x86_64": true,
+	"realtime": true, "cloud": true,
+}
+
+// isBuild says whether the suffix after the numbers is a package revision or
+// a kernel flavour, which does not order a version the way rc1 or beta does:
+// 6.12.86-generic is 6.12.86, not a pre-release of it.
+func isBuild(rest string) bool {
+	if rest == "" {
+		return false
+	}
+	if isDigit(rest[0]) {
+		return true // 45-generic, 1ubuntu1
+	}
+	first := strings.ToLower(rest)
+	if i := strings.IndexAny(first, ".-_"); i >= 0 {
+		first = first[:i]
+	}
+	if buildWords[first] {
+		return true
+	}
+	for _, p := range []string{"deb", "ubuntu", "el", "fc", "amzn", "bpo"} { // deb12u1, ubuntu1, el9, fc40
+		if len(first) > len(p) && strings.HasPrefix(first, p) && isDigit(first[len(p)]) {
+			return true
+		}
+	}
+	return false
 }
 
 func isDigit(c byte) bool { return c >= '0' && c <= '9' }

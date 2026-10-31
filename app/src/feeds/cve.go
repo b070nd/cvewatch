@@ -239,10 +239,13 @@ type cveContainer struct {
 		V31 *cveScore `json:"cvssV3_1"`
 		V40 *cveScore `json:"cvssV4_0"`
 		V30 *cveScore `json:"cvssV3_0"`
+		V20 *cveScore `json:"cvssV2_0"`
 	} `json:"metrics"`
 }
 
 type cveScore struct {
+	Version      string  `json:"version"`
+	VectorString string  `json:"vectorString"`
 	BaseScore    float64 `json:"baseScore"`
 	BaseSeverity string  `json:"baseSeverity"`
 }
@@ -287,17 +290,17 @@ func (r cveRecord) item(srcID string) (model.Item, bool) {
 	if len(products) > 0 {
 		summary += "\nAffected: " + strings.Join(products, ", ")
 	}
-	score := r.score()
-	return finish(srcID, model.Item{
+	it := model.Item{
 		Title:     id + ": " + title,
 		URL:       "https://www.cve.org/CVERecord?id=" + id,
 		Summary:   summary,
 		Affected:  r.affected(),
 		Fixes:     r.fixes(srcID),
 		Published: parseTime(r.Meta.Published),
-		Severity:  severityOf(score.BaseSeverity, score.BaseScore),
-		CVSS:      score.BaseScore,
-	}, id)
+	}
+	rt, label := r.rating()
+	rate(&it, rt, label)
+	return finish(srcID, it, id)
 }
 
 func (c cveContainer) description() string {
@@ -333,20 +336,6 @@ func placeholder(s string) bool {
 		return true
 	}
 	return false
-}
-
-// score is the first CVSS score found, the vendor's own before the ADP ones.
-func (r cveRecord) score() cveScore {
-	for _, c := range append([]cveContainer{r.Containers.CNA}, r.Containers.ADP...) {
-		for _, m := range c.Metrics {
-			for _, s := range []*cveScore{m.V31, m.V40, m.V30} {
-				if s != nil && s.BaseScore > 0 {
-					return *s
-				}
-			}
-		}
-	}
-	return cveScore{}
 }
 
 // affected keeps products that carry CPE names, as NVD data does. Vendors

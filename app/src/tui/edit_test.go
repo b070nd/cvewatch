@@ -116,7 +116,7 @@ func TestFieldEditorEditsEveryKindOfFieldAndKeepsComments(t *testing.T) {
 	// since: a text prompt that starts with the current value
 	d.toField(4)
 	d.press("enter")
-	d.want("Since date of shop", "> Since", "2026-01-01", "YYYY-MM-DD")
+	d.want("Since date of shop", "> Since", "2026-01-01", "YYYY-MM-DD", "older advisories are ignored", "reopens them")
 	d.press("ctrl+u")
 	d.typ("2026-03-05")
 	d.press("enter")

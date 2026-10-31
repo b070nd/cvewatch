@@ -124,3 +124,20 @@ func TestRangeText(t *testing.T) {
 		}
 	}
 }
+
+func TestDetailCarriesTheRatingBeyondTheScore(t *testing.T) {
+	v := &model.Vulnerability{ID: "CVE-1", Title: "Bug", Severity: model.SevCritical, Published: day,
+		CVSS: 9.8, CVSSVersion: model.CVSS31, CVSSVector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", CVSSSource: model.ScoreNVD}
+	is := DetailOf(v, nil, day.Add(time.Hour)).Issue
+	if is.CVSSVersion != "3.1" || is.CVSSVector != v.CVSSVector || is.CVSSSource != "nvd" {
+		t.Fatalf("issue = %+v", is)
+	}
+	if is.CVSSText() != "9.8 (v3.1)" || is.CVSSOrigin() != v.CVSSVector+" from nvd" {
+		t.Fatalf("text = %q origin = %q", is.CVSSText(), is.CVSSOrigin())
+	}
+	// scores recorded before versions were kept, and the unrated
+	old := Issue{CVSS: 7.5}
+	if old.CVSSText() != "7.5" || old.CVSSOrigin() != "" || (Issue{}).CVSSText() != "" {
+		t.Fatalf("old = %q %q", old.CVSSText(), old.CVSSOrigin())
+	}
+}

@@ -50,7 +50,11 @@ func (f *File) ValidateCatalog(c *catalog.Catalog) []Issue {
 		if t, ok := c.ForTerm(name); ok && !strings.EqualFold(t.Name, name) {
 			return t.Name, true
 		}
-		return Suggest(name, names)
+		if to, ok := Suggest(name, names); ok {
+			return to, true
+		}
+		t, ok := c.Closest(name) // several words or a misspelt word: "kernal"
+		return t.Name, ok
 	})
 }
 

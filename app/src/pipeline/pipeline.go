@@ -20,6 +20,7 @@ import (
 
 	"github.com/b070nd/cvewatch/app/src/audit"
 	"github.com/b070nd/cvewatch/app/src/config"
+	"github.com/b070nd/cvewatch/app/src/cvss"
 	"github.com/b070nd/cvewatch/app/src/epss"
 	"github.com/b070nd/cvewatch/app/src/feeds"
 	"github.com/b070nd/cvewatch/app/src/inventory"
@@ -50,6 +51,10 @@ type Runner struct {
 	Log      *slog.Logger
 	Now      func() time.Time
 	Progress func(Progress) // optional; see Progress
+	Actor    string         // who acts in the audit trail; default "cvewatch"
+	// BackfillOnly polls just the sources that still owe a back-fill and skips
+	// enrichment, pruning and digests: the quick run after a config change.
+	BackfillOnly bool
 }
 
 // Phase is a step of a cycle, in the order they run.
@@ -74,27 +79,38 @@ type Progress struct {
 	Total  int    // fetch: sources polled
 	Source string // fetch: the source that just finished; empty at the start of the phase
 	Failed bool   // fetch: that source errored
+	// Chunk and Chunks report a long window being fetched piece by piece (or
+	// pages being followed): Source is then the one working, Chunks is 0 when
+	// the number of pieces is not known, and Done does not move.
+	Chunk, Chunks int
 }
 
 // Result summarizes a cycle. The JSON names are part of the MCP contract.
 type Result struct {
-	Items      int             `json:"items"`          // entries fetched
-	New        int             `json:"new"`            // vulnerabilities seen for the first time
-	Merged     int             `json:"merged"`         // items folded into an already tracked issue
-	Pruned     int             `json:"pruned"`         // old irrelevant records forgotten
-	Findings   int             `json:"findings"`       // findings created
-	Reconciled int             `json:"reconciled"`     // findings re-checked because the inventory changed
-	Enriched   int             `json:"enriched"`       // EPSS scores updated
-	Fresh      map[string]bool `json:"-"`              // vulnerabilities that gained findings this cycle
-	Alerted    int             `json:"alerted"`        // findings delivered, summed over channels
-	Digests    int             `json:"digests"`        // digests sent
-	Failed     []string        `json:"failed_sources"` // sources that errored, with the reason
+	Items        int             `json:"items"`                  // entries fetched
+	New          int             `json:"new"`                    // vulnerabilities seen for the first time
+	Merged       int             `json:"merged"`                 // items folded into an already tracked issue
+	Pruned       int             `json:"pruned"`                 // old irrelevant records forgotten
+	Findings     int             `json:"findings"`               // findings created
+	Reconciled   int             `json:"reconciled"`             // findings re-checked because the inventory changed
+	Enriched     int             `json:"enriched"`               // EPSS scores updated
+	Rated        int             `json:"rated"`                  // unrated issues that got a CVSS score from NVD
+	Fresh        map[string]bool `json:"-"`                      // vulnerabilities that gained findings this cycle
+	Alerted      int             `json:"alerted"`                // findings delivered, summed over channels
+	Digests      int             `json:"digests"`                // digests sent
+	Failed       []string        `json:"failed_sources"`         // sources that errored, with the reason
+	Backfilled   []string        `json:"backfilled,omitempty"`   // sources that reached back further than usual
+	Notes        []string        `json:"notes,omitempty"`        // informational lines, such as a source that cannot go back
+	Revalidation *Revalidation   `json:"revalidation,omitempty"` // set when the cycle re-judged everything first
 }
 
 type fetched struct {
 	items []model.Item
 	val   model.Validators
 	err   error
+	from  time.Time // start of the window asked for
+	back  bool
+	note  string
 }
 
 // cycle carries what one run shares between its steps.
@@ -108,20 +124,28 @@ type cycle struct {
 	res    Result
 }
 
+func newCycle(r *Runner) *cycle {
+	now := r.Now()
+	return &cycle{
+		r: r, judge: relevance.New(r.Cfg.Techs), inv: inventory.Load(r.Cfg).Within(r.Cfg.Horizon, now), now: now,
+		dirty: map[string]bool{}, res: Result{Fresh: map[string]bool{}},
+	}
+}
+
 // Run executes one cycle. A failing source never stops the others, and its
 // cursor stays put so the next run retries the same window.
 func (r *Runner) Run(ctx context.Context) (Result, error) {
-	c := &cycle{
-		r: r, judge: relevance.New(r.Cfg.Techs), inv: inventory.Load(r.Cfg).Within(r.Cfg.Horizon, r.Now()), now: r.Now(),
-		dirty: map[string]bool{}, res: Result{Fresh: map[string]bool{}},
-	}
+	c := newCycle(r)
 	for _, p := range c.inv.Problems() {
 		r.Log.Warn("inventory problem", "problem", p.String())
 	}
-	results := r.fetchAll(ctx, c.now)
+	c.revalidateIfStale()
+	srcs := r.polled()
+	var recentOnly []string // back-fill asked of sources that cannot serve history
+	results := r.fetchAll(ctx, srcs, c.now)
 	r.report(Progress{Phase: PhaseProcess})
 
-	for i, src := range r.activeSources() {
+	for i, src := range srcs {
 		f := results[i]
 		if f.err != nil {
 			c.res.Failed = append(c.res.Failed, src.ID+": "+f.err.Error())
@@ -129,18 +153,36 @@ func (r *Runner) Run(ctx context.Context) (Result, error) {
 			r.Ledger.SourceOutcome(src.ID, src.Type, c.now, 0, errors.New(query.Clip(f.err.Error(), 200)))
 			continue
 		}
-		r.Ledger.SetFeed(src.ID, model.FeedState{Validators: f.val, LastRun: c.now})
+		prior := r.Ledger.Feed(src.ID)
+		covered := f.from
+		if !prior.Covered.IsZero() && prior.Covered.Before(covered) {
+			covered = prior.Covered
+		}
+		r.Ledger.SetFeed(src.ID, model.FeedState{Validators: f.val, LastRun: c.now, Covered: covered})
 		r.Ledger.SourceOutcome(src.ID, src.Type, c.now, len(f.items), nil)
+		if f.back {
+			c.res.Backfilled = append(c.res.Backfilled, src.ID)
+		}
+		if f.note != "" {
+			recentOnly = append(recentOnly, src.ID)
+		}
 		for _, it := range f.items {
 			c.res.Items++
 			c.process(it)
 		}
 	}
 
+	if len(recentOnly) > 0 {
+		note := "cannot go back for " + strings.Join(recentOnly, ", ") + ": they only serve recent items"
+		c.res.Notes = append(c.res.Notes, note)
+		r.Log.Info(note)
+	}
 	c.reconcile()
 	r.report(Progress{Phase: PhaseEnrich})
-	c.enrich(ctx)
-	if r.Cfg.Retention > 0 {
+	if !r.BackfillOnly {
+		c.enrich(ctx)
+	}
+	if r.Cfg.Retention > 0 && !r.BackfillOnly {
 		c.res.Pruned = r.Ledger.Prune(c.now.Add(-r.Cfg.Retention))
 	}
 	r.report(Progress{Phase: PhaseSave})
@@ -156,7 +198,9 @@ func (r *Runner) Run(ctx context.Context) (Result, error) {
 	}
 	r.report(Progress{Phase: PhaseAlert})
 	c.res.Alerted = r.alert(ctx, c.now)
-	c.res.Digests = r.digests(ctx, c.now)
+	if !r.BackfillOnly {
+		c.res.Digests = r.digests(ctx, c.now)
+	}
 	r.Ledger.RecordCycle(model.CycleRecord{
 		Started: c.now, Finished: r.Now(), Items: c.res.Items, New: c.res.New, Merged: c.res.Merged,
 		Findings: c.res.Findings, Reconciled: c.res.Reconciled, Alerted: c.res.Alerted, Digests: c.res.Digests,
@@ -175,9 +219,16 @@ func (r *Runner) activeSources() []model.Source {
 	return slices.DeleteFunc(slices.Clone(r.Cfg.Sources), func(s model.Source) bool { return s.Disabled })
 }
 
+// polled lists the sources this run reads: all active ones, or with
+// BackfillOnly just those that owe a back-fill.
+func (r *Runner) polled() []model.Source {
+	return slices.DeleteFunc(r.activeSources(), func(s model.Source) bool {
+		return r.BackfillOnly && r.Ledger.Feed(s.ID).Backfill.IsZero()
+	})
+}
+
 // fetchAll polls sources concurrently; the HTTP client rate-limits per host.
-func (r *Runner) fetchAll(ctx context.Context, now time.Time) []fetched {
-	srcs := r.activeSources()
+func (r *Runner) fetchAll(ctx context.Context, srcs []model.Source, now time.Time) []fetched {
 	out := make([]fetched, len(srcs))
 	r.report(Progress{Phase: PhaseFetch, Total: len(srcs)})
 	var wg sync.WaitGroup
@@ -188,7 +239,13 @@ func (r *Runner) fetchAll(ctx context.Context, now time.Time) []fetched {
 		go func() {
 			defer wg.Done()
 			st := r.Ledger.Feed(src.ID) // read-only here; written after the join
-			out[i].items, out[i].val, out[i].err = feeds.Fetch(ctx, r.Getter, src, st, now, r.Cfg.Lookback)
+			chunk := func(n, total int) {
+				mu.Lock()
+				defer mu.Unlock()
+				r.report(Progress{Phase: PhaseFetch, Done: done, Total: len(srcs), Source: src.ID, Chunk: n, Chunks: total})
+			}
+			o, err := feeds.FetchRange(ctx, r.Getter, src, st, now, r.Cfg.Lookback, chunk)
+			out[i] = fetched{items: o.Items, val: o.Validators, err: err, from: o.From, back: o.Backfilled, note: o.Note}
 			mu.Lock()
 			defer mu.Unlock()
 			done++
@@ -236,7 +293,7 @@ func (c *cycle) process(it model.Item) {
 			if len(known.Techs) == 0 {
 				known.Techs = verdict.Techs
 			}
-			if known.Summary == "" {
+			if it.Summary != "" && (known.Summary == "" || !hadFindings) { // an irrelevant record kept only a short summary
 				known.Summary = it.Summary
 			}
 			c.addFindings(known.ID, verdict.Matches)
@@ -262,7 +319,7 @@ func (c *cycle) process(it model.Item) {
 		c.dirty[v.ID] = true
 		return
 	}
-	v.Summary, v.Affected, v.Fixes = "", nil, nil // irrelevant: keep only what dedup needs
+	v.Summary, v.Affected, v.Fixes = brief(v.Summary, v.Affected) // irrelevant: keep what a later revalidation needs
 }
 
 // reassess re-checks existing findings against affected data that arrived late.
@@ -340,9 +397,55 @@ func prefixed(p string, xs []string) []string {
 	return out
 }
 
-// enrich adds EPSS scores to tracked CVEs when the operator turned it on.
-// Only CVE ids leave the machine, and only for issues that have findings.
 func (c *cycle) enrich(ctx context.Context) {
+	c.enrichCVSS(ctx)
+	c.enrichEPSS(ctx)
+}
+
+// cvssRecheck is how long an issue NVD could not rate is left alone; NVD
+// analyses a CVE days or weeks after it is published.
+const cvssRecheck = 24 * time.Hour
+
+// enrichCVSS rates tracked CVEs that no source scored (news items carry no
+// score). It asks for a few per cycle and remembers the lookup in the ledger,
+// so the same CVE is not asked again before cvssRecheck has passed.
+func (c *cycle) enrichCVSS(ctx context.Context) {
+	if !c.r.Cfg.Enrich.CVSS {
+		return
+	}
+	l := c.r.Ledger
+	vulnOf := map[string]string{} // CVE id -> vulnerability id
+	var cves []string
+	for _, v := range l.Relevant() {
+		if !v.Unrated() || c.now.Sub(v.CVSSChecked) < cvssRecheck {
+			continue
+		}
+		if i := slices.IndexFunc(v.Keys(), func(k string) bool { return strings.HasPrefix(k, "CVE-") }); i >= 0 && len(cves) < cvss.MaxPerCycle {
+			cves = append(cves, v.Keys()[i])
+			vulnOf[v.Keys()[i]] = v.ID
+		}
+	}
+	if len(cves) == 0 {
+		return
+	}
+	found, answered, err := cvss.Lookup(ctx, c.r.Getter, cves)
+	if err != nil {
+		c.r.Log.Warn("cvss lookup incomplete", "err", err)
+	}
+	for _, cve := range answered {
+		l.MarkRated(vulnOf[cve], c.now)
+	}
+	for cve, r := range found {
+		if l.SetRating(vulnOf[cve], r) {
+			c.res.Rated++
+			c.dirty[vulnOf[cve]] = true
+		}
+	}
+}
+
+// enrichEPSS adds EPSS scores to tracked CVEs when the operator turned it on.
+// Only CVE ids leave the machine, and only for issues that have findings.
+func (c *cycle) enrichEPSS(ctx context.Context) {
 	if !c.r.Cfg.Enrich.EPSS {
 		return
 	}

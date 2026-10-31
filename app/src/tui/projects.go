@@ -160,7 +160,7 @@ func renderProjects(rows []projectRow, st *projectsState, w, h int) []string {
 	}
 	nameW := 8
 	for _, p := range rows {
-		nameW = max(nameW, min(width(oneLine(p.Name)), 24))
+		nameW = max(nameW, min(width(projectLabel(p)), 24))
 	}
 	const envW, lockW, probW, hintW = 22, 9, 13, 8
 	techW := max(w-2-nameW-1-envW-1-lockW-1-probW-1-hintW-1, 10)
@@ -178,7 +178,7 @@ func renderProjects(rows []projectRow, st *projectsState, w, h int) []string {
 		if p.Broken != "" {
 			envs, techs = "-", oneLine(p.Broken)
 		}
-		cells := pad(oneLine(p.Name), nameW) + " " + pad(envs, envW) + " " + pad(fmt.Sprint(len(p.Lockfiles)), lockW) + " " + pad(problemBadge(p), probW) + " " + pad(hintBadge(p), hintW) + " " + trunc(techs, techW)
+		cells := pad(projectLabel(p), nameW) + " " + pad(envs, envW) + " " + pad(fmt.Sprint(len(p.Lockfiles)), lockW) + " " + pad(problemBadge(p), probW) + " " + pad(hintBadge(p), hintW) + " " + trunc(techs, techW)
 		if i == st.proj.at() {
 			lines = append(lines, stSel.Render(pad("> "+cells, w)))
 		} else {
@@ -190,6 +190,15 @@ func renderProjects(rows []projectRow, st *projectsState, w, h int) []string {
 		lines = append(lines, detail...)
 	}
 	return lines
+}
+
+// projectLabel is the name in the list, with a star while the project's
+// changes are not judged against the findings yet.
+func projectLabel(p projectRow) string {
+	if p.Unjudged {
+		return oneLine(p.Name) + "*"
+	}
+	return oneLine(p.Name)
 }
 
 // problemBadge is the count of what is wrong with the project file, in words.
@@ -212,6 +221,9 @@ func problemBadge(p projectRow) string {
 
 func projectDetail(p projectRow, st *projectsState, w, room int, deep bool) []string {
 	out := []string{section(oneLine(p.Name))}
+	if p.Unjudged {
+		out[0] += stMuted.Render("  * changes not judged yet: V revalidates")
+	}
 	if !p.HasFile {
 		out[0] += stMuted.Render("  defined in the main config, not editable here")
 	}

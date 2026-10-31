@@ -99,7 +99,7 @@ func TestBrokenProjectFileDoesNotBlockTheTUI(t *testing.T) {
 	root := t.TempDir()
 	writeProjectFile(t, root, "good", "name: good\ntechs:\n  - {name: php}\n")
 	bad := writeProjectFile(t, root, "bad", "name: [\n")
-	t.Setenv("EDITOR", "")
+	noEditor(t)
 	d := start(t, NewBackend(root, nil), Options{})
 	d.want("1 Overview")
 	d.wantNot("refresh failed")
@@ -113,11 +113,11 @@ func TestBrokenProjectFileDoesNotBlockTheTUI(t *testing.T) {
 	d.press("e")
 	d.want("error: the file of bad does not load; press E to edit it")
 	d.press("E")
-	if f := d.m.(*app).flash; !strings.Contains(f, "$EDITOR is not set; the file is "+bad) {
+	if f := d.m.(*app).flash; !strings.Contains(f, "no editor found") || !strings.Contains(f, "tui.editor") || !strings.Contains(f, bad) {
 		t.Fatalf("flash %q", f)
 	}
 
-	t.Setenv("EDITOR", "true")
+	useEditorEnv(t, "linux", map[string]string{"EDITOR": "true"})
 	if cmd := d.m.(*app).openEditor(); cmd == nil {
 		t.Fatal("with $EDITOR set the file is opened")
 	}
@@ -140,6 +140,9 @@ func (failing) Settings(func(*ops.SettingsSession) error) error {
 }
 
 func (failing) Fetch(context.Context, func(ops.RefreshProgress)) (pipeline.Result, error) {
+	return pipeline.Result{}, errors.New("no config here")
+}
+func (failing) Backfill(context.Context, func(ops.RefreshProgress)) (pipeline.Result, error) {
 	return pipeline.Result{}, errors.New("no config here")
 }
 func (failing) TUISettings() config.TUI { return config.Defaults().TUI }

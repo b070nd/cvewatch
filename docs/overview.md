@@ -18,12 +18,12 @@ One binary is enough: the technology catalog and the feeds are built in. `config
 
 ## How a cycle works
 
-1. Load the configuration again from disk and build the **inventory**: what runs in every project environment, from declared techs, per-environment versions, lockfiles and SBOMs.
+1. Load the configuration again from disk and build the **inventory**: what runs in every project environment, from declared techs, per-environment versions, lockfiles and SBOMs. If the inputs of the judgement changed since the last cycle, the stored advisories are judged again first (see [Changing the configuration](#changing-the-configuration)).
 2. Fetch all sources (per-host rate limits, retries, `Retry-After`, 429 cooldowns; unchanged feeds answer `304`).
-3. Judge each item once (`relevance`): which technologies it is about, which environments run them, and whether the installed version falls in the affected range.
+3. Judge each item once, when it is first seen (`relevance`): which technologies it is about, which environments run them, and whether the installed version falls in the affected range.
 4. Fold it into the ledger (`ledger`): the same issue reported again joins the existing record.
 5. Re-check findings whose inventory changed (an upgraded lockfile, a new declared version, a removed package).
-6. Optionally add EPSS scores, write reports, save, then alert every channel and send the daily digest.
+6. Rate tracked issues that no source scored (CVSS), optionally add EPSS scores, write reports, save, then alert every channel and send the daily digest.
 
 A failed source keeps its cursor and is retried next cycle. A finding counts as alerted per channel only after that channel accepted it.
 
@@ -45,7 +45,8 @@ A single Dockerfile, Containerfile, compose file or Kubernetes manifest can be t
 
 A term the catalog does not know gets help instead of a silent miss:
 
-- The catalog ranks what a term most likely means: an exact name or alias first, then names that start with it or contain it, then close spellings (a swapped or missing letter). Unrelated names are never offered. `rabbitMW` finds `rabbitmq`. `algolia` finds nothing, and the message says it is not in the catalog and offers to add it as your own keyword.
+- The catalog ranks what a term most likely means: an exact name or alias first, then names that start with it or contain it, then close spellings (a swapped or missing letter). Unrelated names are never offered. `rabbitMW` finds `rabbitmq`. The words of a longer term count one by one, so `ubuntu kernel` finds `linux-kernel` first, then `ubuntu`. `algolia` finds nothing, and the message says it is not in the catalog and offers to add it as your own keyword.
+- The Linux kernel is `linux-kernel`, with the aliases `linux kernel`, `ubuntu kernel`, `debian kernel`, `linux-image` and `linux image`. A bare `linux` or `kernel` is not an alias, since it would match advisories about other kernels too. A project that names a technology the catalog clearly means something else gets a problem with a fix that renames it, labelled `use technology name "linux-kernel" instead of "ubuntu kernel"`.
 - To keep it, add it as your own keyword: type `+algolia` in setup's technology step; in the TUI add-technologies step press `ctrl+o` for the word under the cursor (or the first one the catalog does not know); on the Technologies field of the project editor press `K`; or on the command line:
 
   ```bash
@@ -87,11 +88,13 @@ The header also shows what is going on. `refreshing...` means the data is being 
 
 The screens re-read the state every `refresh` (`tui.refresh` in `config.yaml`, 30 seconds by default, at least 1s). Reading never waits for the daemon.
 
-A re-read only shows what is stored; it does not fetch. The feeds are fetched when you press `F`, and `tui.fetch` (`0s` by default, which means only on request) makes the TUI fetch once at start and then every so often, while it runs. A running daemon already fetches every `interval`, so `tui.fetch` matters mainly when no daemon runs. Both values are on the Settings screen, under Core, and a change applies at the next re-read.
+A re-read shows what is stored and fetches nothing, except that a change which needs older advisories fetches them (see [Changing the configuration](#changing-the-configuration)). The feeds are fetched when you press `F`, and `tui.fetch` (`0s` by default, which means only on request) makes the TUI fetch once at start and then every so often, while it runs. A running daemon already fetches every `interval`, so `tui.fetch` matters mainly when no daemon runs. Both values are on the Settings screen, under Core, and a change applies at the next re-read.
 
 A fetch runs in the background, one at a time, and the screens keep working. It needs write access to every project, like a daemon cycle. Its progress shows in the header as one small cell: `fetch 3/12` is three of twelve sources done, with a spinner. The matching, enriching, saving and alerting steps show their own word. When the run ends, a note says `fetched: 4 new, 2 findings`, and `, 1 source failed` when a source failed. Click the cell at any time to see the sources that failed.
 
 If another cvewatch holds the data, such as a daemon cycle, the fetch waits for the next period, or for `F`, and the note says so. That is not an error.
+
+When a project, `techs.yaml` or the alert horizon changed (in the TUI, in your editor or by hand), the findings no longer match what they were judged against. The TUI notices on its next read and runs a quiet job: the header cell says `revalidating`, then `back-fill 2/9` while a source reaches back for older advisories, and a note says `revalidated shop: 4 new, 11 closed by since 2024-01-01, 2 reopened`. `V` does the same on request: it first shows what would change, and `y` or enter applies it. Until then the Projects list marks a project whose changes are not judged yet with a `*`, and its page says so. What the revalidation does is described in [Changing the configuration](#changing-the-configuration).
 
 ### Moving around
 
@@ -139,7 +142,7 @@ Lists name environments only where it matters. An issue that is open in every en
 
 The footer at the bottom shows the keys for where you are. Keys in brackets also work, but the footer and the help leave them out.
 
-Everywhere except in forms, the fix preview and text boxes: `:` jump, `r` reload, `F` fetch the feeds, `?` help, Tab and 1 to 5 switch screens.
+Everywhere except in forms, the fix preview and text boxes: `:` jump, `r` reload, `F` fetch the feeds, `V` revalidate, `?` help, Tab and 1 to 5 switch screens.
 
 **Overview**
 
@@ -212,7 +215,7 @@ Below the summary, the list holds every open issue. It is searched and sorted li
 | `N` | new empty project: a name and its environments, no folder needed |
 | `d` | add a project from a folder, or a Dockerfile, through the folder box (see below) |
 | `x` | preview the fix of the selected problem (`f` too) |
-| `E` | open the project file in `$EDITOR`, then reload (`o` too) |
+| `E` | open the project file in your editor, then reload (`o` too) |
 | `p`, `P` | next or previous problem of the selected project |
 | `i` | show this project's issues on Findings |
 | `R`, `D`, `X`, `Z` | rename, duplicate, delete, or disable a project (enable it when it is disabled). See [Creating, renaming, copying, disabling and deleting projects](#creating-renaming-copying-disabling-and-deleting-projects) |
@@ -228,7 +231,7 @@ Below the summary, the list holds every open issue. It is searched and sorted li
 | `c` | open the project's fields and change them directly |
 | `H` | work through the project's hints (see [Hints](#hints)) |
 | `e` | edit the project step by step in the guided form |
-| `E` | open the file in `$EDITOR` at the problem's line (see below) |
+| `E` | open the file in your editor at the problem's line (see below) |
 | `s` | select among the project's security issues; Enter opens the one selected, and back returns here |
 | `i` | show this project's issues on Findings |
 | `+`, `-` | add a project, or remove this one (as on the list) |
@@ -238,7 +241,7 @@ Below the summary, the list holds every open issue. It is searched and sorted li
 
 **Settings** (screen 5)
 
-The section list shows how many values each section of `config.yaml`, `techs.yaml` and `sources/*.yaml` sets, and the problems of the files with their line numbers. Enter opens a section, then a field. Changes are previewed as a change to the file and saved on a yes; comments in the files are kept. The daemon picks them up from its next cycle. It works even when a settings file is broken, and the other screens then show the load error as usual.
+The section list shows how many values each section of `config.yaml`, `techs.yaml` and `sources/*.yaml` sets, and the problems of the files with their line numbers. Enter opens a section, then a field. Changes are previewed as a change to the file and saved on a yes; comments in the files are kept. The daemon picks them up within about 15 seconds. It works even when a settings file is broken, and the other screens then show the load error as usual.
 
 | Key | What it does |
 |---|---|
@@ -249,7 +252,7 @@ The section list shows how many values each section of `config.yaml`, `techs.yam
 | `e` on one of your technologies | change its keywords, category and CPE (Tech catalog section) |
 | `u` | restore the default: the value is removed from the file |
 | `/` | find a setting by label, path or value. On the section list it searches every section |
-| `E` | open the file in `$EDITOR` at the line of the selected problem, then read it again |
+| `E` | open the file in your editor at the line of the selected problem, then read it again |
 | Left, Esc, Backspace, `q` | back one level |
 
 In the preview, Enter or `y` saves and Esc cancels. Secrets (feed URLs and headers) are never shown: a field says `(set)` or `(not set)`, the prompt does not show or prefill the current value, and the preview says `(set, changed)`. Only an actor that may see all projects can open the screen, and only one with write access can change it; the access rules cannot be changed so that the actor loses write access.
@@ -298,7 +301,7 @@ A prompt opens at the bottom of the screen for a note, for an owner, due date an
 
 ### Editing the project file
 
-`E` (or `o`) runs `$EDITOR` on the project file, then reloads when it closes. The file can be broken; it still opens.
+`E` (or `o`) runs your editor on the project file, then reloads when it closes. The file can be broken; it still opens.
 
 Inside a project with a problem selected, the editor opens at the problem's line. The TUI knows these editors:
 
@@ -306,13 +309,13 @@ Inside a project with a problem selected, the editor opens at the problem's line
 - `code`, `code-insiders`, `codium` (VS Code): opened with `-g FILE:LINE`.
 - `subl`, `sublime_text` (Sublime Text): opened with `FILE:LINE`.
 
-Any other editor opens the file at the top. `$EDITOR` may hold options, such as `code --wait`. If it is not set, the TUI says so and shows the file path.
+Any other editor opens the file at the top. The editor is the `tui.editor` setting, else `$VISUAL`, else `$EDITOR`; each may hold options, such as `code --wait`. With none of them set the TUI takes the first usual editor it finds (`sensible-editor`, `editor`, `nano`, `vim`, `vi` on Linux; `nano`, `vim`, `vi`, then TextEdit on macOS; `notepad` on Windows) and says which one it used. If there is none, it says to set `tui.editor` and shows the file path.
 
 ### Issue details
 
 Enter on an issue in Findings opens its page. The page has these parts, in this order:
 
-- **Header:** severity, the CVSS base score, KEV, EPSS, age and "open in prod".
+- **Header:** severity, the CVSS base score with its version, KEV, EPSS, age and "open in prod". A line below the title gives the CVSS vector and who scored it.
 - **Description and priority:** the feed's text, and why the issue ranks where it does.
 - **Environments:** one row per environment of the project, with its status, whether it applies, owner, due date, ticket and notes. Once the page is loaded, the installed versions found in an environment are shown under its row.
 - **Fix evidence:** the fixes the feeds name (official ones are marked), the KEV action, and the reports. Five reports are listed, then the number of the rest.
@@ -330,7 +333,7 @@ Keys on the page:
 - `+` adds evidence to the selected environment: a note, a link, or both. A link must be a plain http or https address.
 - `]` and `[` move to the next or previous issue of the list.
 
-Only plain http and https addresses are listed as links. Long link titles are cut at 200 characters. The model keeps the CVSS base score, not the CVSS vector, so the page shows the score only.
+Only plain http and https addresses are listed as links. Long link titles are cut at 200 characters. The model keeps the CVSS base score with its version (2.0, 3.0, 3.1 or 4.0), its vector and who scored it (see CVSS scores below).
 
 ### Settings
 
@@ -350,7 +353,7 @@ Every change is shown as a diff of the file. Enter or `y` saves it. Esc cancels,
 - **Secrets:** feed URLs and headers are never shown. A field says `(set)` or `(not set)`, the prompt does not show or prefill the current value, and the preview says `(set, changed)`.
 - **Restore the default:** `u` removes the value from the file, so the default applies.
 - **Broken files:** a file that is not valid YAML does not stop the screen. It shows its error, its values are not listed, and it can only be repaired in an editor. `E` opens the file at the line of the problem, then reads it again. The other screens show their load error as usual.
-- **When it applies:** the daemon uses the new settings from its next cycle.
+- **When it applies:** the daemon uses the new settings within about 15 seconds, and judges the stored findings against them (see [Changing the configuration](#changing-the-configuration)).
 - **Who may edit:** the settings name every project and every actor. An actor that an access rule limits to some projects is refused the screen, with "Settings are not available to you". An actor with read access only sees the screen with a `read-only` note in its header and cannot save. A change to the access rules is refused when it would leave the person making it without write access to every project, so nobody can lock themselves out.
 
 ## Setting up and changing projects
@@ -396,7 +399,7 @@ The Projects screen has a PROBLEMS column: `-` for none, or counts such as `2 er
 - Enter opens the project. Its problems are listed, each with its fix underneath. `p` and `P` select the next or previous problem.
 - Inside a project, Enter or `x` shows the fix of the selected problem as a diff. Enter or `y` applies it. Esc cancels, and nothing is saved.
 - A problem with several fixes lists them. `[` and `]` choose one.
-- `E` opens the project file in `$EDITOR` at the problem's line, then reloads. See [Editing the project file](#editing-the-project-file).
+- `E` opens the project file in your editor at the problem's line, then reloads. See [Editing the project file](#editing-the-project-file).
 
 Problems are worked out when the screen loads or refreshes (`r`), not on every key. If loading fails, the screen offers `r` to try again and `q` to quit.
 
@@ -557,7 +560,7 @@ techs: [{name: php, version: "8.2"}]
 - A vulnerability published before `since` creates no findings for that project. The day itself counts, from 00:00 UTC. Other projects are not affected.
 - Items with no publish date are still checked.
 - A later article about an old CVE uses the earliest publish date already known for that CVE. So a new article does not bring an old CVE into a project that starts later.
-- Findings that already exist stay. To close one, use `cvewatch ignore ID -project middleware -env prod -note "before the start date"`.
+- Findings that already exist for older advisories are closed by the next judgement of the configuration (see [Changing the configuration](#changing-the-configuration)): as not affected, with the note `published before this project's since date (2026-01-01); closed automatically`. Moving the date earlier, or removing it, reopens the ones cvewatch closed. A status you set yourself is never changed. To decide one yourself, use `cvewatch ignore ID -project middleware -env prod -note "..."` or `cvewatch not-affected`.
 - `cvewatch why ID` shows each project that skipped the item for this reason:
 
   ```text
@@ -565,8 +568,8 @@ techs: [{name: php, version: "8.2"}]
   ```
 
 - `cvewatch check` warns when `since` is in the future. Until that day, the project gets only items that have no publish date.
-- `cvewatch rescan` applies the same rule.
-- An item that every project skips is kept as a bare record: its title and IDs, with no summary, no findings and no report.
+- `cvewatch revalidate` applies the same rule to what is stored.
+- An item that every project skips is kept as a record with its title, IDs, a short summary and up to 20 product names, but no findings and no report. That lets a project or technology added later pick it up without a new download.
 - A value that is not a `YYYY-MM-DD` date stops the configuration from loading.
 
 ## Alert horizon
@@ -586,9 +589,43 @@ horizon:
 - An item without a publication date is always inside.
 - It works with `since`: an item has to pass both, so the later start wins.
 - A source's first run reaches back only as far as `lookback` (7 days by default). A window that reaches further back gives a warning in `cvewatch check`: the older items are not seen until you raise `lookback`. Keep `lookback` at least as long as the window.
-- The Settings screen shows the windows with Google's names (Any time, Past hour, Past 24 hours, Past week, Past month, Past year, Custom range) and says the change applies from the next fetch or cycle. On the command line: `cvewatch settings set horizon.window week -yes`.
+- A wider window, or a `since` date that moves earlier, makes the sources reach back for the older advisories (see [Back-fill](#back-fill)).
+- The Settings screen shows the windows with Google's names (Any time, Past hour, Past 24 hours, Past week, Past month, Past year, Custom range). The change is judged the next time the configuration is read (see [Changing the configuration](#changing-the-configuration)). On the command line: `cvewatch settings set horizon.window week -yes`.
 - Overview and Status show `alert horizon: past week (only vulnerabilities published then are judged and alerted)` when the window is not unlimited.
 - Lists and search are not limited by it. To narrow what you look at, use the time filter (`t`) or `published:` (see [search.md](search.md)).
+
+## Changing the configuration
+
+The judgement depends on the projects (their environments, technologies with their versions per environment, lockfile packages and `since` date), on the `techs.yaml` entries those projects use, and on the alert horizon. cvewatch keeps a fingerprint of these inputs, per project and for the horizon, with the time the findings were judged against them. A comment, the order of keys, or a setting that does not feed the judgement (such as `http`) changes nothing.
+
+When the fingerprint differs from the recorded one, the stored advisories are judged again, offline, in this order:
+
+1. Every stored advisory is judged against the current configuration, including the ones that matched nothing before. A match creates its finding. Nothing that is stored is removed. An advisory that matched nothing kept only a short summary and up to 20 product names, so it is judged on those; its fix details come with the next sighting from a source.
+2. Open findings whose advisory was published before their project's `since` date are closed as not affected, with a note saying why and a mark that cvewatch set it. When the date moves earlier or is removed, the findings it closed reopen. A status a person set is never touched.
+3. Open findings are checked against the installed versions again, as after a lockfile upgrade. If a technology was removed from a project, its open findings stay open but stop applying: they are hidden from the lists (`-all` shows them), are not alerted, their reasons say `no longer installed`, and their history records the removal.
+4. The sources are asked to reach back if the change starts earlier than what they have covered (see [Back-fill](#back-fill)).
+5. The new fingerprint is recorded, and the run leaves one audit entry with the counts.
+
+It runs in these places:
+
+- At the start of every cycle, so `cvewatch update` and the daemon's cycles do it when the fingerprint differs.
+- Between cycles the daemon looks at `config.yaml`, `techs.yaml`, the project files and the source files every 15 seconds. It reads their sizes and times, not their content. When one changes, it waits 2 seconds for a save made in several steps, then revalidates and back-fills at once instead of waiting for the next `interval`.
+- On the command line, `cvewatch revalidate` lists what would change and writes nothing. `-apply` makes the changes. `-fetch` also fetches the older advisories the change needs, and implies `-apply`. `-json` prints the counts and the changes. `rescan` is the old name and still works.
+- In the TUI, when a read finds the findings out of date, the same work runs as a quiet job, and `V` shows the preview first (see [Refresh and fetch](#refresh-and-fetch)).
+
+A ledger written before this version has no record of its judgement yet, so every project counts as changed. The first cycle judges the stored advisories once, which can add findings for advisories stored earlier, and asks the sources to reach back to the earliest start of any project (its `since` date or the horizon, whichever is later). The TUI leaves that to the cycle, or to `V`.
+
+### Back-fill
+
+A project's start is the later of its `since` date and the start of the alert horizon. When a change moves that start earlier than what the sources have covered, the sources reach back on their next fetch. Examples: a `since` date set or moved earlier, a wider horizon, or a technology added to a project that has a start. A project with neither asks for nothing older than what the sources serve. The sources do this:
+
+- **NVD** is asked in windows of 119 days, the most NVD accepts per query, and each window is followed page by page. A span of 300 days takes three windows. Each request waits for the host rate in `http.host_rates` (0.1 a second for NVD by default), so a long back-fill takes a while. The TUI header shows its progress as `back-fill 2/3`; the command line and the daemon log each part.
+- **GitHub advisories** are followed page by page through their `Link` headers.
+- **CISA KEV** serves its full list every time; the entries added since the date are kept.
+- **CSAF** advisories follow the date as far as their index lists them.
+- **Vendor records (`cve-records`), RSS and Hacker News** serve only recent items. They cannot go back, and the cycle notes say `cannot go back for ...: they only serve recent items`.
+
+A back-fill that fails, or is cancelled, stays owed and is tried again at the next fetch. Advisories it finds that are already tracked join their records, so nothing is duplicated. A back-fill can add many findings at once. Each alert channel gets at most 50 advisories per cycle, and the rest go out in later cycles.
 
 ## Is it working?
 
@@ -641,10 +678,11 @@ An item matches an environment when it is about a technology it runs, or names a
 - **By structured data, which wins when present.** NVD names affected products as CPE names. A technology with `cpe: [php:php]` then matches only when the advisory names that product, so "a Moodle plugin written in PHP" no longer matches PHP. GitHub advisories list packages with ecosystem and ranges; those match installed packages exactly and the word "PHP" in them is ignored.
 - **By text, when there is no structured data.** An alias as a whole word in the title or summary (`excludes` veto it; `match_title_only` limits a source to the title; `match_structured` on the NVD source makes technologies with CPE names wait for NVD's product data).
 - **Versions.** When the feed gives affected ranges, the installed version is compared: `affected`, `not affected`, or `unchecked` when no range or version is available, or a declared series such as `8.2` cannot be decided against a patch-level bound. Findings known to be `not affected` are kept but hidden and never alerted (`-all` shows them). News and Hacker News carry no versions, so those findings stay `unchecked`.
+- **Kernel and distribution versions.** `6.12.85+`, `6.8.0-45-generic`, `6.12.85-1ubuntu1` and `6.12.85+deb12u1` order by their numbers (`6.12.85`, `6.8.0`). The build suffix is ignored for ordering and does not make a pre-release, so `6.12.86-generic` is not before a fix at `6.12.86`, and a range below `6.12.86` covers `6.12.85+`.
 - **Late data.** If ranges arrive later (a CVE first seen in the news, then analysed by NVD), existing findings are re-checked. If your inventory changes, open findings are re-checked too, and the finding's history says what changed.
 - **Check the CPE names** in `techs.yaml`. The repository's CI compares them with an independent list of NVD product names, and `cvewatch doctor -online` asks NVD. A wrong name hides real advisories.
 
-`techs.yaml` can change at any time. A change affects items first seen from the next cycle on; earlier decisions are never rewritten. To look back on purpose, `cvewatch rescan` (a dry run), then `cvewatch rescan -apply`. `cvewatch why ID` shows the recorded reasons next to what today's config says.
+`techs.yaml` can change at any time. Saving a change judges the stored advisories again (see [Changing the configuration](#changing-the-configuration)): a new keyword or CPE name creates the findings it now matches, and nothing is removed. `cvewatch why ID` shows the recorded reasons next to what today's config says.
 
 ## Same issue, one record
 
@@ -694,7 +732,7 @@ Channels switch on when their secret is in the environment, so one config file i
 
 | Path | Purpose |
 |---|---|
-| `config/config.yaml` | interval, HTTP limits, Slack, notify, policy, enrich, storage, access, horizon, tui (refresh and fetch periods) |
+| `config/config.yaml` | interval, HTTP limits, Slack, notify, policy, enrich, storage, access, horizon, tui (refresh, fetch and editor) |
 | `config/techs.yaml` | your additions to the built-in technology catalog, including your own keywords (`cvewatch tech`) |
 | `config/projects/*.yaml` | one file per project |
 | `sources/*.yaml` | your additions to the built-in feeds (same `id` replaces; `disabled: true` switches one off) |
@@ -705,7 +743,23 @@ Channels switch on when their secret is in the environment, so one config file i
 
 State is one JSON file by default (diffable; one process at a time, enforced by a lock). Set `storage: {backend: sqlite}` for a SQLite file: several processes can use it, and a stale write is refused instead of overwriting newer data. Both sit behind the same `store.Storage` interface.
 
+## CVSS scores
+
+Every source type is read for all the CVSS versions it carries: NVD (`cvssMetricV2`, V30, V31, V40), CVE records (`cvssV2_0` to `cvssV4_0`, in the CNA container and in ADP containers), GitHub advisories (`cvss`, `cvss_severities.cvss_v3` and `cvss_v4`) and CSAF advisories (`cvss_v2`, `cvss_v3`, `cvss_v4`). A score quoted in an article ("CVSS 9.8", "CVSS v4.0 base score 9.3") is read too, but only when the article names at most one CVE.
+
+An issue keeps one score, chosen like this:
+
+1. The party that issued or analysed the record comes first: NVD's own (Primary) metric, the CNA's, GitHub's, the vendor's CSAF. Secondary metrics (a CNA's score inside an NVD record, ADP containers) come next, a score quoted in an article last. A newer version from a lower group never replaces a score from a higher group.
+2. Inside a group the newer version wins: 4.0, 3.1, 3.0, 2.0.
+3. On a tie the score already kept stays, so it does not change between sightings.
+
+Severity bands follow the version: 2.0 has no critical band (0-3.9 low, 4-6.9 medium, 7-10 high); 3.x and 4.0 use 0.1-3.9 low, 4-6.9 medium, 7-8.9 high, 9-10 critical. NVD's own severity word is used as given; otherwise the band of the score decides, and CSAF always uses the band of its score.
+
+The JSON export and `show` carry `cvss`, `cvss_version`, `cvss_vector` and `cvss_source` (`nvd`, `nvd-secondary`, `cna`, `adp`, `ghsa`, `csaf` or `text`). The last three are absent for scores recorded before versions were kept.
+
 ## Enrichment and privacy
+
+`enrich: {cvss: true}` (the default) rates tracked CVEs that no source scored, which is every issue that arrived only as a news item. Each cycle it asks NVD's public CVE API for up to 5 of them, by CVE id, at the pace of `http.host_rates` for `services.nvd.nist.gov`. A CVE NVD has not analysed yet is asked again after a day. A score quoted in an article counts as unrated, so NVD's replaces it. A failed lookup is a warning in the log and is tried again next cycle. Only the CVE id is sent, and no key is needed.
 
 `enrich: {epss: true}` asks FIRST's public EPSS service for the CVE ids you track. It is off by default because the list of CVEs you care about reveals your stack. Nothing else leaves the machine except the configured feeds and channels.
 

@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -47,7 +46,10 @@ type (
 		prev ops.ProjectPreview
 		err  error
 	}
-	editedMsg struct{ err error }
+	editedMsg struct {
+		err  error
+		note string // which editor ran, when the user had not chosen one
+	}
 )
 
 // The commands get plain values, never the fixState: Update owns that.
@@ -257,7 +259,7 @@ func (fx *fixState) view(w, h int) []string {
 	return append(out, "", stBold.Render("Apply this fix?")+"  y or enter = apply, esc = cancel")
 }
 
-// editorArgv is the command that opens file in the user's $EDITOR, at line
+// editorArgv is the command that opens file in the chosen editor, at line
 // when the editor is known to take one and line is known.
 func editorArgv(editor, file string, line int) []string {
 	argv := strings.Fields(editor)
@@ -286,7 +288,7 @@ func (m *app) editorLine(p projectRow) int {
 	return 0
 }
 
-// openEditor runs $EDITOR on the selected project's file; the TUI reloads when
+// openEditor runs the editor on the selected project's file; the TUI reloads when
 // it returns. Inside a project it opens the file at the line of the problem.
 func (m *app) openEditor() tea.Cmd {
 	p, ok := m.selectedProject()
@@ -300,19 +302,21 @@ func (m *app) openEditor() tea.Cmd {
 	return m.launchEditor(p.File, m.editorLine(p), "editing "+oneLine(p.Name)+"...", reList|reDetail)
 }
 
-// launchEditor runs $EDITOR on file, at line where the editor takes one; the
+// launchEditor runs the editor (see resolveEditor) on file, at line where it takes one; the
 // TUI reads again what after names when it returns.
 func (m *app) launchEditor(file string, line int, label string, after reloadSet) tea.Cmd {
-	editor := os.Getenv("EDITOR")
-	if len(strings.Fields(editor)) == 0 {
-		m.fail("$EDITOR is not set; the file is " + file)
+	choice, ok := resolveEditor(m.b.TUISettings().Editor, editorSys)
+	if !ok {
+		m.fail(noEditorText(file))
 		return nil
 	}
 	id, ok := m.begin(label, "editor", after, nil)
 	if !ok {
 		return nil
 	}
-	argv := editorArgv(editor, file, line)
+	argv := editorArgv(choice.Command, file, line)
 	cmd := exec.Command(argv[0], argv[1:]...)
-	return tea.ExecProcess(cmd, func(err error) tea.Msg { return opMsg{id: id, msg: editedMsg{err: err}} })
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return opMsg{id: id, msg: editedMsg{err: err, note: choice.note()}}
+	})
 }

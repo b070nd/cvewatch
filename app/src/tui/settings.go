@@ -290,7 +290,7 @@ func settingsBody(m *app, w, h int) []string {
 
 func setTitle(s *settingsState, lv *setLevel) (title, hint string, heads [3]string) {
 	if lv == nil {
-		hint = "enter opens a section or goes to a problem; / finds a setting; E opens its file in $EDITOR"
+		hint = "enter opens a section or goes to a problem; / finds a setting; E opens its file in your editor"
 		heads = [3]string{"SECTION", "SET", "PROBLEMS"}
 		if s.text != "" {
 			hint = "settings that match, from every section; enter goes to one"
@@ -708,7 +708,7 @@ func init() {
 	findBinds := func() []binding {
 		return []binding{
 			{keys: ks("/"), help: "find a setting by label, path or value; on the section list, in every section", short: "find", prio: 3, do: plain((*app).setStartFilter)},
-			{keys: ks("E"), help: "open the file that holds the setting in $EDITOR, at the line of its problem, then read it again", short: "editor", prio: 4, do: plain((*app).openSettingsEditor)},
+			{keys: ks("E"), help: "open the file that holds the setting in your editor, at the line of its problem, then read it again", short: "editor", prio: 4, do: plain((*app).openSettingsEditor)},
 		}
 	}
 	mo.settings = &mode{name: "settings", title: "Keys on the settings screen", level: true,
@@ -733,7 +733,7 @@ func init() {
 			{keys: ks("esc"), help: "clear the filter", short: "clear filter", prio: 2, when: setHasText, do: plain((*app).setClearFilter)},
 		}, findBinds()...), []binding{
 			bindBack("back one level", (*app).setBack),
-			bindJump(), bindRefresh(), bindFetch(), bindTabs(), bindHelp(),
+			bindJump(), bindRefresh(), bindFetch(), bindRevalidate(), bindTabs(), bindHelp(),
 		}...),
 	}
 	mo.setFilter = &mode{name: "settings filter", title: "Keys while typing a filter of the settings", modal: true,

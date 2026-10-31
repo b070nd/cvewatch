@@ -8,6 +8,7 @@
 package ledger
 
 import (
+	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -28,6 +29,8 @@ type State struct {
 	Feeds    map[string]model.FeedState      `json:"feeds"`
 	// Digests remembers when each channel last got its periodic digest.
 	Digests map[string]time.Time `json:"digests,omitempty"`
+	// Judged is what the findings were last judged against; see Revalidate.
+	Judged *model.Judging `json:"judged,omitempty"`
 
 	// Health of the tool itself, for the status command, dashboard and TUI.
 	Cycles    []model.CycleRecord            `json:"cycles,omitempty"` // newest last, capped
@@ -81,6 +84,19 @@ func New(s State) *Ledger {
 // State returns what should be persisted.
 func (l *Ledger) State() State { return l.d }
 
+// Clone returns an independent copy, for trying a change without making it.
+func (l *Ledger) Clone() (*Ledger, error) {
+	raw, err := json.Marshal(l.d)
+	if err != nil {
+		return nil, err
+	}
+	var s State
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return nil, err
+	}
+	return New(s), nil
+}
+
 func (l *Ledger) index(v *model.Vulnerability) {
 	for _, k := range v.Keys() {
 		l.byKey[k] = v.ID
@@ -105,7 +121,8 @@ func (l *Ledger) Create(it model.Item, now time.Time, techs []string) *model.Vul
 	keys := it.Keys()
 	v := &model.Vulnerability{
 		ID: keys[0], Aliases: slices.Clone(keys[1:]), Title: it.Title, Summary: it.Summary,
-		Severity: it.Severity, CVSS: it.CVSS, Published: it.Published, FirstSeen: now,
+		Severity: it.Severity, CVSS: it.CVSS, CVSSVersion: it.CVSSVersion, CVSSVector: it.CVSSVector, CVSSSource: it.CVSSSource,
+		Published: it.Published, FirstSeen: now,
 		Refs: []model.Ref{refOf(it)}, Affected: slices.Clone(it.Affected), Fixes: slices.Clone(it.Fixes),
 		KEV: it.KEV, Techs: techs,
 	}
@@ -267,7 +284,7 @@ func (l *Ledger) Update(vulnID, project string, env model.Env, u Update, now tim
 		n++
 		f.Updated = now
 		if u.Status != nil {
-			f.Status = *u.Status
+			f.Status, f.Auto = *u.Status, false
 			if u.Note != nil {
 				f.Note = *u.Note
 			}
@@ -336,6 +353,28 @@ func (l *Ledger) SetEPSS(id string, e model.EPSS) bool {
 	return true
 }
 
+// SetRating records a CVSS rating found by a lookup. It applies the same
+// precedence as a repeat sighting (model.Rating) and lifts the severity to the
+// band of the score. It reports whether the record changed.
+func (l *Ledger) SetRating(id string, r model.Rating) bool {
+	v := l.d.Vulns[id]
+	if v == nil || !r.Better(v.Rating()) {
+		return false
+	}
+	v.SetRating(r)
+	if s := r.Severity(); s.Rank() > v.Severity.Rank() {
+		v.Severity = s
+	}
+	return true
+}
+
+// MarkRated notes that the rating of id was looked up at the time, found or not.
+func (l *Ledger) MarkRated(id string, at time.Time) {
+	if v := l.d.Vulns[id]; v != nil {
+		v.CVSSChecked = at
+	}
+}
+
 // Prune forgets vulnerabilities that never produced a finding and were first
 // seen before the cutoff. Findings and what they refer to are kept for good.
 // It returns how many records were dropped.
@@ -357,6 +396,11 @@ func (l *Ledger) Prune(before time.Time) int {
 	}
 	return n
 }
+
+// Judged returns what the findings were last judged against, nil if never.
+func (l *Ledger) Judged() *model.Judging { return l.d.Judged }
+
+func (l *Ledger) SetJudged(j model.Judging) { l.d.Judged = &j }
 
 func (l *Ledger) Feed(id string) model.FeedState       { return l.d.Feeds[id] }
 func (l *Ledger) SetFeed(id string, f model.FeedState) { l.d.Feeds[id] = f }

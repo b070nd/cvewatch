@@ -24,6 +24,14 @@ slack:
   webhook_env: SLACK_WEBHOOK_URL  # the webhook itself stays in the environment
   min_severity: unknown           # unknown | low | medium | high | critical
 
+# Lookups at outside services. cvss reads only public NVD data: it rates tracked
+# CVEs that no feed gave a score (RSS and news items carry none), a few per cycle,
+# and sends only the CVE id. epss asks FIRST for the exploit probability and
+# reveals which CVEs you track, so it is off.
+# enrich:
+#   cvss: true       # default
+#   epss: false      # default
+
 # Optional access rules by actor name (CVEWATCH_ACTOR, else the OS user).
 # Leave the section out for a single operator: everyone may do everything.
 # This is authorization on top of a local identity, not authentication.
@@ -42,6 +50,8 @@ slack:
 #   refresh: 30s     # how often it re-reads the state; at least 1s
 #   fetch: 0s        # how often it fetches the feeds itself; 0 only on request.
 #                    # A running daemon already fetches every interval.
+#   editor: nano     # the editor E opens files in, with options (code --wait).
+#                    # Empty uses $VISUAL, $EDITOR, then the usual editors found.
 
 # Alert horizon: only vulnerabilities published inside the window are judged,
 # alerted and put in digests, like Google's time filter. Findings that exist

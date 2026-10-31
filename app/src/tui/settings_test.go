@@ -351,7 +351,7 @@ func lastLine(d *driver) string {
 }
 
 func TestSettingsOpensWithABrokenConfiguration(t *testing.T) {
-	t.Setenv("EDITOR", "")
+	noEditor(t)
 	d, root := setStart(t, map[string]string{"config/config.yaml": setBroken})
 	d.want("5 Settings (!)", "error config.yaml line 3: http.retries", "error config.yaml line 5: intervall")
 	d.wantLine("Core", "1 err")
@@ -370,7 +370,7 @@ func TestSettingsOpensWithABrokenConfiguration(t *testing.T) {
 	d.want("error config.yaml line 3: http.retries")
 	// E says what it cannot do without an editor, then opens the file at the line
 	d.press("E")
-	d.want("$EDITOR is not set; the file is")
+	d.want("no editor found", "set tui.editor", "the file is")
 	a := d.m.(*app)
 	id, file, line, why := a.set.editorTarget()
 	if why != "" || id != "config" || line != 3 || file != filepath.Join(root, "config", "config.yaml") {
@@ -379,7 +379,7 @@ func TestSettingsOpensWithABrokenConfiguration(t *testing.T) {
 	if got := editorArgv("vim", file, line); strings.Join(got, " ") != "vim +3 "+file {
 		t.Fatalf("argv %v", got)
 	}
-	t.Setenv("EDITOR", "true")
+	useEditorEnv(t, "linux", map[string]string{"EDITOR": "true"})
 	before := d.b.(*fake).settings
 	cmd := a.openSettingsEditor()
 	if cmd == nil {
