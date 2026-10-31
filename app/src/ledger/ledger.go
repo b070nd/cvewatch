@@ -448,8 +448,11 @@ func (l *Ledger) SourceOutcome(id, typ string, now time.Time, items int, err err
 	h := l.d.Sources[id]
 	h.Type, h.LastAttempt = typ, now
 	if err == nil {
-		h.LastSuccess, h.Failures, h.LastError, h.Items = now, 0, "", items
+		h.LastSuccess, h.Failures, h.LastError, h.Items, h.FailingSince = now, 0, "", items, time.Time{}
 	} else {
+		if h.Failures == 0 {
+			h.FailingSince = now
+		}
 		h.Failures++
 		h.LastError = err.Error()
 	}
@@ -461,8 +464,11 @@ func (l *Ledger) ChannelOutcome(name string, now time.Time, err error) {
 	h := l.d.Channels[name]
 	h.LastAttempt = now
 	if err == nil {
-		h.LastSuccess, h.Failures, h.LastError = now, 0, ""
+		h.LastSuccess, h.Failures, h.LastError, h.FailingSince = now, 0, "", time.Time{}
 	} else {
+		if h.Failures == 0 {
+			h.FailingSince = now
+		}
 		h.Failures++
 		h.LastError = err.Error()
 	}

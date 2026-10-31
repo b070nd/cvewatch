@@ -85,6 +85,9 @@ func (f *File) validate(known func(tech string) bool, suggest func(name string) 
 	if strings.TrimSpace(p.Name) == "" {
 		add("error", "name", "the project needs a name")
 	}
+	if !model.ValidVendor(p.Vendor) {
+		add("error", "vendor", "invalid vendor %q (use lowercase letters, digits, - and _, at most 63 characters)", p.Vendor)
+	}
 	if p.Since.After(time.Now()) {
 		add("warning", "since", "since %s is in the future, so every dated vulnerability is skipped for now", p.Since.Format(SinceLayout))
 	}

@@ -47,10 +47,9 @@ var (
 		0: lipgloss.NewStyle().Foreground(ac("59", "252")),             // unrated
 	}
 	lvlStyles = map[status.Level]lipgloss.Style{
-		status.OK:      stGood,
-		status.Warn:    sevStyles[2].Bold(true),
-		status.Fail:    stErr,
-		status.Unknown: sevStyles[0].Bold(true),
+		status.Green:  stGood,
+		status.Yellow: sevStyles[2].Bold(true),
+		status.Red:    stErr,
 	}
 )
 
@@ -73,15 +72,13 @@ func sevText(s model.Severity, w int) string {
 func levelText(l status.Level) string {
 	var t string
 	switch l {
-	case status.OK:
-		t = "✔ OK"
-	case status.Warn:
-		t = "! WARN"
-	case status.Fail:
-		t = "✖ FAIL"
+	case status.Green:
+		t = "● GREEN"
+	case status.Red:
+		t = "✖ RED"
 	default:
-		t = "? UNKNOWN"
-		l = status.Unknown
+		t = "▲ YELLOW"
+		l = status.Yellow
 	}
 	return lvlStyles[l].Render(t)
 }

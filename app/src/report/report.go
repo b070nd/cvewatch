@@ -166,7 +166,7 @@ func RenderDetail(d query.Detail) string {
 				due += " (overdue)"
 			}
 		}
-		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", cell(t.Project), t.Env, t.Status, applies(t.Applies),
+		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", cell(named(t)), t.Env, t.Status, applies(t.Applies),
 			cell(t.Owner), due, cell(t.Ticket), cell(strings.Join(t.Matched, ", ")), cell(t.Note))
 	}
 	var installed, attached []string
@@ -239,7 +239,7 @@ func cell(s string) string { return strings.ReplaceAll(md(s), "|", "\\|") }
 func plan(id string, ts []query.Target) string {
 	var b strings.Builder
 	project := ts[0].Project
-	fmt.Fprintf(&b, "\n### %s\n\n", project)
+	fmt.Fprintf(&b, "\n### %s\n\n", named(ts[0]))
 	fmt.Fprintf(&b, "1. %s (matched: %s).\n", check(ts[0]), md(strings.Join(ts[0].Matched, ", ")))
 	for _, r := range ts[0].Reasons {
 		fmt.Fprintf(&b, "   - %s\n", md(r))
@@ -275,6 +275,14 @@ func box(s model.Status) string {
 		return "[-]"
 	}
 	return "[ ]"
+}
+
+// named is the project as people read it: with its vendor, when it has one.
+func named(t query.Target) string {
+	if t.Vendor == "" {
+		return t.Project
+	}
+	return t.Project + " (" + t.Vendor + ")"
 }
 
 // byProject splits sorted targets into one slice per project.
@@ -395,18 +403,27 @@ func label(s model.Severity) string {
 // count of related ids.
 func where(is query.Issue) string {
 	var projects []string
-	envs := map[string][]string{}
+	envs, names, verdict := map[string][]string{}, map[string]string{}, map[string]model.Applicability{}
 	for _, t := range is.Targets {
 		if _, seen := envs[t.Project]; !seen {
 			projects = append(projects, t.Project)
+			names[t.Project] = named(t)
+			verdict[t.Project] = t.Applies
 		}
 		envs[t.Project] = append(envs[t.Project], string(t.Env))
+		verdict[t.Project] = verdict[t.Project].Worse(t.Applies)
 	}
 	parts := make([]string, len(projects))
 	for i, p := range projects {
-		parts[i] = p + ": " + strings.Join(envs[p], ",")
+		parts[i] = names[p] + ": " + strings.Join(envs[p], ",")
+		if len(projects) > 1 { // a verdict over several projects would merge their rows
+			parts[i] += " [" + applies(verdict[p]) + "]"
+		}
 	}
-	out := strings.Join(parts, "; ") + "  [" + applies(is.Applies) + "]"
+	out := strings.Join(parts, "; ")
+	if len(projects) <= 1 {
+		out += "  [" + applies(is.Applies) + "]"
+	}
 	if n := len(is.Aliases); n > 0 {
 		out += fmt.Sprintf("  (+%d ids)", n)
 	}

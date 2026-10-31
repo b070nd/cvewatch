@@ -135,7 +135,8 @@ type Storage struct {
 	Backend string `yaml:"backend"` // file (default) or sqlite
 }
 
-// Grant is what one actor may do. "*" in Projects means every project.
+// Grant is what one actor may do. "*" in Projects means every project, and
+// "vendor:acme" every project of that vendor, also one added later.
 type Grant struct {
 	Projects []string `yaml:"projects"`
 	Write    bool     `yaml:"write"`
@@ -484,6 +485,12 @@ func (b *Bundle) validate(decoded map[string]bool, og origins) []Issue {
 	for _, actor := range slices.Sorted(maps.Keys(b.Access)) {
 		g := b.Access[actor]
 		for _, name := range g.Projects {
+			if vendor, ok := VendorGrant(name); ok {
+				if vendor == "" || !model.ValidVendor(vendor) {
+					fail(og.settings, "access."+actor+".projects", "access for %q names the vendor %q, which is not a valid vendor name", actor, vendor)
+				}
+				continue
+			}
 			if name != "*" && !decoded[name] {
 				fail(og.settings, "access."+actor+".projects", "access for %q names unknown project %q", actor, name)
 			}
@@ -613,6 +620,9 @@ func projectErrors(p model.Project, seen map[string]bool) []fieldErr {
 		fail("name", "project name %q is empty or duplicated", p.Name)
 	}
 	seen[p.Name] = true
+	if !model.ValidVendor(p.Vendor) {
+		fail("vendor", "project %s: vendor %q is not valid (lowercase letters, digits, - and _, at most 63 characters)", p.Name, p.Vendor)
+	}
 	for _, e := range p.Envs {
 		if !e.Valid() {
 			fail("envs", "project %s: %q is not a valid environment name (lowercase letters, digits, - and _)", p.Name, e)
@@ -794,10 +804,31 @@ func (r reader) each(dir string, fn func(path string) error) error {
 // open is true when no access rules exist, so everything is allowed. A nil
 // projects slice with open false means the actor has no access at all.
 func (b *Bundle) Allowed(actor string) (projects []string, write, open bool) {
-	return AllowedBy(b.Access, actor)
+	projects, write, open = AllowedBy(b.Access, actor)
+	if open || !slices.ContainsFunc(projects, func(p string) bool { _, ok := VendorGrant(p); return ok }) {
+		return projects, write, open
+	}
+	var out []string
+	for _, name := range projects {
+		if vendor, ok := VendorGrant(name); ok {
+			for _, p := range b.Projects {
+				if p.Vendor == vendor && !slices.Contains(out, p.Name) {
+					out = append(out, p.Name)
+				}
+			}
+		} else if !slices.Contains(out, name) {
+			out = append(out, name)
+		}
+	}
+	return out, write, open
 }
 
-// AllowedBy is Allowed for a bare list of access rules.
+// VendorGrant reads an entry of a grant's Projects that names a vendor
+// ("vendor:acme"), as the vendor it names.
+func VendorGrant(entry string) (vendor string, ok bool) { return strings.CutPrefix(entry, "vendor:") }
+
+// AllowedBy is Allowed for a bare list of access rules. Vendor entries are
+// returned as they are written: only Bundle.Allowed knows the projects.
 func AllowedBy(access map[string]Grant, actor string) (projects []string, write, open bool) {
 	if len(access) == 0 {
 		return nil, true, true

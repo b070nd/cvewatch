@@ -24,6 +24,10 @@ func (d Document) WriteSARIF(w io.Writer) error {
 			"properties":           obj{"severity": string(is.Severity), "kev": is.KEV != nil, "aliases": nonNil(is.Aliases)},
 		})
 		for _, t := range is.Targets {
+			props := obj{"project": t.Project, "env": string(t.Env), "status": string(t.Status), "owner": t.Owner}
+			if t.Vendor != "" {
+				props["vendor"] = t.Vendor
+			}
 			results = append(results, obj{
 				"ruleId": is.ID, "level": level,
 				"message": obj{"text": is.Untrusted.Title + " (" + t.Project + "/" + string(t.Env) + ", " + string(t.Status) + ")"},
@@ -31,7 +35,7 @@ func (d Document) WriteSARIF(w io.Writer) error {
 					"physicalLocation": obj{"artifactLocation": obj{"uri": "config/projects/" + t.Project + ".yaml"}, "region": obj{"startLine": 1}},
 					"logicalLocations": []obj{{"name": string(t.Env), "kind": "namespace"}},
 				}},
-				"properties": obj{"project": t.Project, "env": string(t.Env), "status": string(t.Status), "owner": t.Owner},
+				"properties": props,
 			})
 		}
 	}

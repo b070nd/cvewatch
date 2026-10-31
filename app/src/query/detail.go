@@ -108,12 +108,17 @@ type Detail struct {
 
 // DetailOf builds the detail of one vulnerability and the findings to show.
 func DetailOf(v *model.Vulnerability, fs []model.Finding, now time.Time) Detail {
+	return DetailIn(v, fs, nil, now)
+}
+
+// DetailIn is DetailOf with the vendor of each project (see Filter.Vendors).
+func DetailIn(v *model.Vulnerability, fs []model.Finding, vendors map[string]string, now time.Time) Detail {
 	d := Detail{Issue: issue(v, now), Affected: slices.Clone(v.Affected)}
 	for _, fd := range fs {
-		d.Issue.addTarget(fd, now)
+		d.Issue.addTarget(fd, now, vendors[fd.Project])
 		d.Targets = append(d.Targets, TargetDetail{Project: fd.Project, Env: fd.Env, Installed: slices.Clone(fd.Installed), Evidence: slices.Clone(fd.Evidence)})
 	}
-	d.Why = priority.Reasons(factsOf(v, d.Issue.ProdOpen), now)
+	d.Why = prodWhere(priority.Reasons(factsOf(v, d.Issue.ProdOpen), now), d.Issue.Targets)
 	d.Links = linksOf(v, fs)
 	return d
 }

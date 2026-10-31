@@ -44,11 +44,11 @@ Getting started
   doctor [-online] [-json]                     check configuration, lockfiles, state, channels; -online also checks CPE names and feeds
 
 Everyday
-  update [-min S] [-project P] [-env E] [-published T] [-all] [-json] [-fail-on S]   refresh all sources now, then show open findings (run is the same)
-  list   [-min S] [-project P] [-env E] [-published T] [-all] [-json] [-fail-on S]   open findings, most urgent first; -fail-on exits 1 for a CI gate
-  show   ID [-json]                            description, fix, articles, status and plan
-  why    ID [-json]                            why it matched, judged again with today's config
-  search [-open] [-min S] [-project P] [-env E] [-published T] [-json] QUERY...   find issues by id, words or fields such as severity:high; for a query starting with -, put -- before it
+  update [-min S] [-vendor V] [-project P] [-env E] [-published T] [-all] [-json] [-fail-on S]   refresh all sources now, then show open findings (run is the same)
+  list   [-min S] [-vendor V] [-project P] [-env E] [-published T] [-all] [-json] [-fail-on S]   open findings, most urgent first; -fail-on exits 1 for a CI gate
+  show   ID [-vendor V] [-project P] [-json]                            description, fix, articles, status and plan
+  why    ID [-vendor V] [-project P] [-json]                            why it matched, judged again with today's config
+  search [-open] [-min S] [-vendor V] [-project P] [-env E] [-published T] [-json] QUERY...   find issues by id, words or fields such as severity:high; for a query starting with -, put -- before it
   daemon                                       refresh every configured interval
   status [-json]                               is it working: daemon, feeds, channels, recent cycles
   dashboard [-out FILE]                        write the static status page now
@@ -73,15 +73,15 @@ Tracking
   not-affected ID -project P [-env E] -note WHY   assert it does not apply here (reason required)
   reopen ID -project P [-env E] [-note N]      put a finding back to open
   assign ID -project P [-env E] [-owner O] [-due YYYY-MM-DD] [-ticket T]   owner, deadline, ticket ("-" clears)
-  evidence ID [-json]                          evidence pack: timeline, per-environment status, audit trail
+  evidence ID [-vendor V] [-project P] [-json] evidence pack: timeline, per-environment status, audit trail
   evidence add ID -project P [-env E] [-note N] [-url U]   attach a note and link as evidence
 
 Reports
-  export [-format json|csv|md|sarif] [-min S] [-project P] [-env E] [-published T] [-all]   open findings with every environment's status
+  export [-format json|csv|md|sarif] [-min S] [-vendor V] [-project P] [-env E] [-published T] [-all]   open findings with every environment's status
   policy                                       findings that break a policy rule or their due date
   digest [-send]                               the "still open" summary, shown or sent now
   inventory [-project P]                       what the tool believes runs in each environment
-  calendar [-month YYYY-MM] [-text] [-min S] [-project P] [-all]   month overview, HTML page unless -text
+  calendar [-month YYYY-MM] [-text] [-min S] [-vendor V] [-project P] [-all]   month overview, HTML page unless -text
   revalidate [-apply] [-fetch] [-json]         re-judge every stored item against today's projects, techs, since dates and horizon, offline: new findings, findings before a since date closed (and reopened when it moves), installed versions re-checked; dry run unless -apply; -fetch then reaches back for older items. update and the daemon do this on their own after a change; rescan is the old name
 
 Other
@@ -254,6 +254,7 @@ type listOpts struct {
 func parseList(name string, args []string) (listOpts, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	min := fs.String("min", "", "lowest severity to show: low, medium, high, critical")
+	vendor := fs.String("vendor", "", vendorHelp)
 	project := fs.String("project", "", "only this project")
 	env := fs.String("env", "", "only this environment")
 	all := fs.Bool("all", false, "include versions known to be unaffected")
@@ -263,7 +264,7 @@ func parseList(name string, args []string) (listOpts, error) {
 	if err := fs.Parse(args); err != nil {
 		return listOpts{}, err
 	}
-	f, err := ops.ParseFilter(*min, *project, *env)
+	f, err := ops.ParseTenantFilter(*min, *vendor, *project, *env)
 	f.All = *all
 	if perr := setPublished(&f, *published); err == nil {
 		err = perr
@@ -276,6 +277,8 @@ func parseList(name string, args []string) (listOpts, error) {
 	}
 	return o, err
 }
+
+const vendorHelp = "only the projects of this vendor (- for projects without one)"
 
 const publishedHelp = "only issues published in this time: hour, day, week, month, year, a span like 24h or 7d, or a range like 2026-01-01..2026-03-01"
 
@@ -364,18 +367,23 @@ func idAndFlags(fs *flag.FlagSet, args []string) (string, error) {
 func show(s *ops.Session, args []string) error {
 	fs := flag.NewFlagSet("show", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "print JSON instead of markdown")
+	vendor, project := fs.String("vendor", "", vendorHelp), fs.String("project", "", "only this project")
 	id, err := idAndFlags(fs, args)
 	if err != nil {
 		return err
 	}
-	is, md, err := s.Show(id)
+	f, err := ops.ParseTenantFilter("", *vendor, *project, "")
+	if err != nil {
+		return err
+	}
+	d, err := s.IssueDetailIn(id, f)
 	if err != nil {
 		return withSuggestions(s, id, err)
 	}
 	if *asJSON {
-		return export.New([]query.Issue{is}, s.Now()).WriteJSON(os.Stdout)
+		return export.New([]query.Issue{d.Issue}, s.Now()).WriteJSON(os.Stdout)
 	}
-	fmt.Print(md)
+	fmt.Print(d.Markdown)
 	return nil
 }
 
@@ -398,6 +406,7 @@ func searchCmd(s *ops.Session, args []string) error {
 	fs := flag.NewFlagSet("search", flag.ContinueOnError)
 	openOnly := fs.Bool("open", false, "only findings that are still open")
 	min := fs.String("min", "", "lowest severity to show: low, medium, high, critical")
+	vendor := fs.String("vendor", "", vendorHelp)
 	project := fs.String("project", "", "only this project")
 	env := fs.String("env", "", "only this environment")
 	asJSON := fs.Bool("json", false, "print JSON instead of text")
@@ -409,7 +418,7 @@ func searchCmd(s *ops.Session, args []string) error {
 	if strings.TrimSpace(text) == "" {
 		return errors.New("give a search text, for example: cvewatch search cve-2026-1234")
 	}
-	f, err := ops.ParseFilter(*min, *project, *env)
+	f, err := ops.ParseTenantFilter(*min, *vendor, *project, *env)
 	if err != nil {
 		return err
 	}
@@ -434,11 +443,16 @@ func searchCmd(s *ops.Session, args []string) error {
 func why(s *ops.Session, args []string) error {
 	fs := flag.NewFlagSet("why", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "print JSON")
+	vendor, project := fs.String("vendor", "", vendorHelp), fs.String("project", "", "only this project")
 	id, err := idAndFlags(fs, args)
 	if err != nil {
 		return err
 	}
-	ex, err := s.Explain(id)
+	f, err := ops.ParseTenantFilter("", *vendor, *project, "")
+	if err != nil {
+		return err
+	}
+	ex, err := s.ExplainIn(id, f)
 	if err != nil {
 		return err
 	}
@@ -464,12 +478,13 @@ func showCalendar(s *ops.Session, args []string) error {
 	monthFlag := fs.String("month", "", "month as YYYY-MM (default: this month)")
 	text := fs.Bool("text", false, "print to the terminal instead of writing an HTML page")
 	min := fs.String("min", "", "lowest severity to show")
+	vendor := fs.String("vendor", "", vendorHelp)
 	project := fs.String("project", "", "only this project")
 	all := fs.Bool("all", false, "include versions known to be unaffected")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	f, err := ops.ParseFilter(*min, *project, "")
+	f, err := ops.ParseTenantFilter(*min, *vendor, *project, "")
 	if err != nil {
 		return err
 	}
@@ -552,11 +567,16 @@ func evidenceCmd(s *ops.Session, args []string) error {
 	}
 	fs := flag.NewFlagSet("evidence", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "print JSON instead of markdown")
+	vendor, project := fs.String("vendor", "", vendorHelp), fs.String("project", "", "only this project")
 	id, err := idAndFlags(fs, args)
 	if err != nil {
 		return err
 	}
-	pack, err := s.Evidence(id)
+	f, err := ops.ParseTenantFilter("", *vendor, *project, "")
+	if err != nil {
+		return err
+	}
+	pack, err := s.EvidenceIn(id, f)
 	if err != nil {
 		return err
 	}
@@ -570,6 +590,7 @@ func exportCmd(s *ops.Session, args []string) error {
 	fs := flag.NewFlagSet("export", flag.ContinueOnError)
 	format := fs.String("format", "json", "one of: "+strings.Join(export.Formats(), ", "))
 	min := fs.String("min", "", "lowest severity to include")
+	vendor := fs.String("vendor", "", vendorHelp)
 	project := fs.String("project", "", "only this project")
 	env := fs.String("env", "", "only this environment")
 	all := fs.Bool("all", false, "include versions known to be unaffected")
@@ -577,7 +598,7 @@ func exportCmd(s *ops.Session, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	f, err := ops.ParseFilter(*min, *project, *env)
+	f, err := ops.ParseTenantFilter(*min, *vendor, *project, *env)
 	if err != nil {
 		return err
 	}

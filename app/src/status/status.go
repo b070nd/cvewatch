@@ -13,33 +13,48 @@ import (
 	"github.com/b070nd/cvewatch/app/src/model"
 )
 
-// Level is a traffic-light judgement.
+// Level is a traffic-light judgement, as in an Elasticsearch cluster: green
+// when nothing needs attention, yellow when something does, red when the
+// monitor cannot be relied on.
 type Level string
 
 const (
-	OK      Level = "ok"
-	Warn    Level = "warn"
-	Fail    Level = "fail"
-	Unknown Level = "unknown"
+	Green  Level = "green"
+	Yellow Level = "yellow"
+	Red    Level = "red"
 )
 
-// Worse returns the more serious of two levels (fail, warn, unknown, ok).
+// Worse returns the more serious of two levels (red, yellow, green).
 func (l Level) Worse(o Level) Level {
-	rank := func(x Level) int {
-		switch x {
-		case Fail:
-			return 3
-		case Warn:
-			return 2
-		case Unknown:
-			return 1
-		}
-		return 0
-	}
-	if rank(o) > rank(l) {
+	if o.rank() > l.rank() {
 		return o
 	}
 	return l
+}
+
+func (l Level) rank() int {
+	switch l {
+	case Red:
+		return 2
+	case Yellow:
+		return 1
+	}
+	return 0
+}
+
+// Label is the level as a header says it: GREEN, YELLOW, RED.
+func (l Level) Label() string { return strings.ToUpper(string(l)) }
+
+// Problem is something that needs a person, listed until its cause is gone.
+// There is no way to dismiss one. Key is stable between reports, so a view can
+// keep its cursor on the same problem.
+type Problem struct {
+	Key    string    `json:"key"`
+	Level  Level     `json:"level"` // yellow or red
+	Title  string    `json:"title"`
+	Detail string    `json:"detail,omitempty"`
+	Hint   string    `json:"hint,omitempty"`
+	Since  time.Time `json:"since,omitempty"`
 }
 
 type SourceRow struct {
@@ -130,14 +145,46 @@ type Report struct {
 	Projects    []ProjectRow `json:"projects"`
 	Scheduled   bool         `json:"scheduled"` // false when update.auto in config.yaml switched the schedule off
 	Warnings    []string     `json:"warnings"`
+	Problems    []Problem    `json:"problems"` // red first, then yellow, then oldest first; the overall level is the worst
 }
 
-// Reason explains an overall level of unknown, and is empty for any other.
+// KeyCycle is the key of the problem that no cycle has read a feed yet.
+const KeyCycle = "cycle"
+
+// Reason says why a monitor that has not proven itself is not green, and is
+// empty once a cycle has read a feed.
 func (r Report) Reason() string {
-	if r.Level == Unknown {
-		return "no cycle has read a feed yet"
+	for _, p := range r.Problems {
+		if p.Key == KeyCycle {
+			return p.Title
+		}
 	}
 	return ""
+}
+
+// Summary is the one line a header shows. Green says when the last check was,
+// yellow and red count the problems the views list.
+func (r Report) Summary(now time.Time) string {
+	if r.Level == Green {
+		last := r.Daemon.LastCycle
+		if len(r.Cycles) > 0 {
+			last = r.Cycles[0].Finished
+		}
+		if last.IsZero() {
+			return r.Level.Label()
+		}
+		at := last.In(now.Location())
+		stamp := at.Format("15:04")
+		if at.YearDay() != now.YearDay() || at.Year() != now.Year() {
+			stamp = at.Format("01-02 15:04")
+		}
+		return fmt.Sprintf("%s · last check %s (%s ago)", r.Level.Label(), stamp, ago(now.Sub(last)))
+	}
+	noun := "problems"
+	if len(r.Problems) == 1 {
+		noun = "problem"
+	}
+	return fmt.Sprintf("%s · %d %s", r.Level.Label(), len(r.Problems), noun)
 }
 
 // Ref names a configured feed or channel, so health can be reported even for
@@ -157,59 +204,71 @@ type Input struct {
 	Projects []ProjectRow
 	// Unscheduled is set when update.auto in config.yaml switched the schedule off.
 	Unscheduled bool
+	// Problems are the ones only the caller can see: project files, the audit log.
+	Problems []Problem
 }
 
 // Build turns stored records into the report every health view shows.
 //
-// A feed fails after three attempts in a row and warns after one. A feed or
-// channel that never ran is unknown, not broken. The daemon is overdue when
-// it is more than half an interval (at least ten minutes) past its next run.
-// The overall level is unknown, never ok, until a cycle has read a feed, and
-// warn when no feed is enabled.
+// A feed or channel is red after three failed attempts in a row and yellow
+// after one. The daemon is overdue (red) when it is more than half an interval
+// (at least ten minutes) past its next run. Each cause is a problem, and the
+// overall level is the worst problem: green only when there are none. Until a
+// cycle has read a feed the monitor has not proven itself, which is a problem
+// too, as is having no enabled feed.
 func Build(in Input) Report {
-	r := Report{GeneratedAt: in.Now, Level: OK, Projects: in.Projects, Scheduled: !in.Unscheduled}
+	r := Report{GeneratedAt: in.Now, Projects: in.Projects, Scheduled: !in.Unscheduled}
 	stale := in.Interval * 2
 	if stale < 12*time.Hour {
 		stale = 12 * time.Hour
 	}
+	hint := "cvewatch doctor -online fetches every feed once and shows what fails"
 
 	for _, ref := range in.Sources {
 		h, seen := in.Health[ref.ID]
-		row := SourceRow{ID: ref.ID, Type: ref.Type, Level: Unknown, LastSuccess: h.LastSuccess, LastAttempt: h.LastAttempt,
+		row := SourceRow{ID: ref.ID, Type: ref.Type, Level: Yellow, LastSuccess: h.LastSuccess, LastAttempt: h.LastAttempt,
 			Failures: h.Failures, LastError: h.LastError, Items: h.Items}
+		key := "feed:" + ref.ID
 		switch {
-		case !seen:
+		case !seen: // a feed added since the last cycle is read in the next one
 		case h.Failures >= 3:
-			row.Level = Fail
+			row.Level = Red
 			r.Warnings = append(r.Warnings, fmt.Sprintf("feed %s has failed %d times in a row: %s", ref.ID, h.Failures, h.LastError))
+			r.Problems = append(r.Problems, Problem{Key: key, Level: Red, Title: "feed " + ref.ID + " is failing",
+				Detail: fmt.Sprintf("failed %d times in a row: %s", h.Failures, h.LastError), Hint: hint, Since: failingSince(h.FailingSince, h.LastSuccess, h.LastAttempt)})
 		case h.Failures > 0:
-			row.Level = Warn
+			row.Level = Yellow
+			r.Problems = append(r.Problems, Problem{Key: key, Level: Yellow, Title: "feed " + ref.ID + " had a failed fetch",
+				Detail: fmt.Sprintf("failed %d in a row: %s", h.Failures, h.LastError), Hint: hint, Since: failingSince(h.FailingSince, h.LastSuccess, h.LastAttempt)})
 		case in.Now.Sub(h.LastSuccess) > stale:
-			row.Level = Warn
+			row.Level = Yellow
 			r.Warnings = append(r.Warnings, fmt.Sprintf("feed %s was last read %s ago", ref.ID, ago(in.Now.Sub(h.LastSuccess))))
+			r.Problems = append(r.Problems, Problem{Key: key, Level: Yellow, Title: "feed " + ref.ID + " is stale",
+				Detail: "last read " + ago(in.Now.Sub(h.LastSuccess)) + " ago", Hint: "is the daemon running? cvewatch update reads the feeds now", Since: h.LastSuccess})
 		default:
-			row.Level = OK
+			row.Level = Green
 		}
 		r.Sources = append(r.Sources, row)
-		r.Level = r.Level.Worse(row.Level.floor())
 	}
 	slices.SortFunc(r.Sources, func(a, b SourceRow) int { return strings.Compare(a.ID, b.ID) })
 
 	for _, name := range in.Channels {
-		h, seen := in.Delivery[name]
-		row := ChannelRow{Name: name, Level: Unknown, LastSuccess: h.LastSuccess, LastAttempt: h.LastAttempt, Failures: h.Failures, LastError: h.LastError}
+		h := in.Delivery[name]
+		row := ChannelRow{Name: name, Level: Green, LastSuccess: h.LastSuccess, LastAttempt: h.LastAttempt, Failures: h.Failures, LastError: h.LastError}
+		key := "channel:" + name
+		since := failingSince(h.FailingSince, h.LastSuccess, h.LastAttempt)
 		switch {
-		case !seen:
 		case h.Failures >= 3:
-			row.Level = Fail
+			row.Level = Red
 			r.Warnings = append(r.Warnings, fmt.Sprintf("channel %s has failed %d times in a row: %s", name, h.Failures, h.LastError))
+			r.Problems = append(r.Problems, Problem{Key: key, Level: Red, Title: "channel " + name + " is failing",
+				Detail: fmt.Sprintf("failed %d times in a row: %s", h.Failures, h.LastError), Hint: "check the channel's settings; alerts are not delivered through it", Since: since})
 		case h.Failures > 0:
-			row.Level = Warn
-		default:
-			row.Level = OK
+			row.Level = Yellow
+			r.Problems = append(r.Problems, Problem{Key: key, Level: Yellow, Title: "channel " + name + " had a failed delivery",
+				Detail: fmt.Sprintf("failed %d in a row: %s", h.Failures, h.LastError), Hint: "check the channel's settings; the next alert tries again", Since: since})
 		}
 		r.Channels = append(r.Channels, row)
-		r.Level = r.Level.Worse(row.Level.floor())
 	}
 	slices.SortFunc(r.Channels, func(a, b ChannelRow) int { return strings.Compare(a.Name, b.Name) })
 
@@ -220,18 +279,66 @@ func Build(in Input) Report {
 	}
 
 	r.Daemon = daemon(in)
-	r.Level = r.Level.Worse(r.Daemon.Level.floor())
-	if r.Daemon.Level == Fail {
+	if r.Daemon.Level == Red {
 		r.Warnings = append(r.Warnings, r.Daemon.Message)
+		r.Problems = append(r.Problems, Problem{Key: "daemon", Level: Red, Title: "the daemon is overdue", Detail: r.Daemon.Message,
+			Hint: "start it again with cvewatch daemon, or check the service that runs it", Since: r.Daemon.NextRun})
 	}
 	switch {
 	case len(in.Sources) == 0:
-		r.Level = r.Level.Worse(Warn)
 		r.Warnings = append(r.Warnings, "no enabled sources: nothing will be fetched")
-	case r.Level == OK && !succeeded(in):
-		r.Level = Unknown // no evidence yet is not good news
+		r.Problems = append(r.Problems, Problem{Key: "sources", Level: Yellow, Title: "no enabled sources",
+			Detail: "nothing will be fetched", Hint: "enable a feed in config/sources/ or remove its disabled flag"})
+	case !succeeded(in) && !slices.ContainsFunc(r.Problems, func(p Problem) bool { return strings.HasPrefix(p.Key, "feed:") }):
+		title := "no cycle has run yet"
+		if len(in.Cycles) > 0 {
+			title = "no cycle has read a feed yet"
+		}
+		r.Problems = append(r.Problems, Problem{Key: KeyCycle, Level: Yellow, Title: title,
+			Hint: "cvewatch update runs one now; a daemon runs them on its own"})
+	}
+	r.Problems = append(r.Problems, in.Problems...)
+	sortProblems(r.Problems)
+
+	r.Level = Green
+	for _, p := range r.Problems {
+		r.Level = r.Level.Worse(p.Level)
+	}
+	if r.Problems == nil {
+		r.Problems = []Problem{}
 	}
 	return r
+}
+
+// sortProblems puts red before yellow, then the oldest first, then by key.
+func sortProblems(ps []Problem) {
+	slices.SortStableFunc(ps, func(a, b Problem) int {
+		if a.Level != b.Level {
+			return b.Level.rank() - a.Level.rank()
+		}
+		switch {
+		case a.Since.IsZero() != b.Since.IsZero():
+			if a.Since.IsZero() {
+				return 1
+			}
+			return -1
+		case !a.Since.Equal(b.Since):
+			return a.Since.Compare(b.Since)
+		}
+		return strings.Compare(a.Key, b.Key)
+	})
+}
+
+// failingSince is when a failure streak began: recorded when it started, else
+// the last success (the streak began after it), else the last attempt.
+func failingSince(recorded, lastSuccess, lastAttempt time.Time) time.Time {
+	switch {
+	case !recorded.IsZero():
+		return recorded
+	case !lastSuccess.IsZero():
+		return lastSuccess
+	}
+	return lastAttempt
 }
 
 // succeeded is whether a cycle has finished with at least one feed read.
@@ -239,21 +346,11 @@ func succeeded(in Input) bool {
 	return slices.ContainsFunc(in.Cycles, func(c model.CycleRecord) bool { return c.Err == "" && c.Failed < len(in.Sources) })
 }
 
-// floor treats "never ran" as healthy for the parts: unknown parts are shown
-// but do not make the whole tool look broken. The overall level is unknown, not
-// ok, until a cycle has succeeded (see Build).
-func (l Level) floor() Level {
-	if l == Unknown {
-		return OK
-	}
-	return l
-}
-
 // Alive is whether a daemon runs: it recorded a heartbeat and is not overdue.
-func (d Daemon) Alive() bool { return d.Mode == "daemon" && d.Level == OK }
+func (d Daemon) Alive() bool { return d.Mode == "daemon" && d.Level == Green }
 
 func daemon(in Input) Daemon {
-	d := Daemon{Level: Unknown, Interval: in.Interval}
+	d := Daemon{Level: Yellow, Interval: in.Interval}
 	if in.Beat != nil {
 		d.Mode, d.LastCycle, d.NextRun, d.Interval = in.Beat.Mode, in.Beat.LastCycle, in.Beat.NextRun, in.Beat.Interval
 		grace := d.Interval / 2
@@ -261,16 +358,17 @@ func daemon(in Input) Daemon {
 			grace = 10 * time.Minute
 		}
 		if in.Now.After(d.NextRun.Add(grace)) {
-			d.Level = Fail
+			d.Level = Red
 			d.Message = fmt.Sprintf("the daemon is overdue: it should have run at %s and last ran %s ago; is it still running?",
 				d.NextRun.UTC().Format("2006-01-02 15:04"), ago(in.Now.Sub(d.LastCycle)))
 		} else {
-			d.Level = OK
+			d.Level = Green
 			d.Message = "running; next cycle " + d.NextRun.UTC().Format("2006-01-02 15:04") + " UTC"
 		}
 		return d
 	}
 	if n := len(in.Cycles); n > 0 {
+		d.Level = Green
 		d.Mode, d.LastCycle = "cli", in.Cycles[n-1].Finished
 		d.Message = "no daemon seen; cycles are run by hand, the last " + ago(in.Now.Sub(d.LastCycle)) + " ago"
 		return d

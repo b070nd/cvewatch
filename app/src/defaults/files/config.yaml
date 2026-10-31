@@ -45,6 +45,7 @@ slack:
 # access:
 #   alice: {projects: [shop], write: true}
 #   bob:   {projects: ["*"], write: false}
+#   carol: {projects: ["vendor:acme"], write: false}   # every project whose file says vendor: acme
 
 # A static status page (no scripts, no external requests) the daemon rewrites
 # after every cycle. It lists your exposure: keep it where only your team reads.

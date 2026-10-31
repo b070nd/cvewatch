@@ -57,6 +57,10 @@ func TestLoadRejectsMistakes(t *testing.T) {
 		"both":        {"config/projects/a.yaml", "name: a\nenvs: [prod]\nenvironments: {prod: {image: a}}\nwhen@prod: {image: b}\n"},
 		"tech envs":   {"config/projects/a.yaml", "name: a\ntechs: [{name: php, envs: [Prod]}]\n"},
 		"top key":     {"config/projects/a.yaml", "name: a\nwhens@prod: {}\n"},
+		"vendor":      {"config/projects/a.yaml", "name: a\nvendor: Acme Corp\n"},
+		"vendor long": {"config/projects/a.yaml", "name: a\nvendor: " + strings.Repeat("a", 64) + "\n"},
+		"grant":       {"config/config.yaml", "access:\n  alice: {projects: ['vendor:Acme Corp']}\n"},
+		"grant empty": {"config/config.yaml", "access:\n  alice: {projects: ['vendor:']}\n"},
 	}
 	for name, c := range cases {
 		root := t.TempDir()
@@ -494,5 +498,48 @@ func TestSourceEntryCanOverrideAVendorFeedOfATechnology(t *testing.T) {
 	b, issues := Check(root, nil)
 	if s, ok := sourceByID(b, feed); len(issues) != 0 || !ok || !s.Disabled || s.URL == "" {
 		t.Fatalf("%+v %+v", issues, s)
+	}
+}
+
+func TestVendorGrantCoversEveryProjectOfTheVendorAtRequestTime(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, "config/config.yaml", "access:\n  alice: {projects: ['vendor:acme', blog]}\n  carol: {projects: ['vendor:acme'], write: true}\n  bob: {projects: ['*']}\n")
+	put(t, root, "config/projects/shop.yaml", "name: shop\nvendor: acme\n")
+	put(t, root, "config/projects/crm.yaml", "name: crm\nvendor: acme\n")
+	put(t, root, "config/projects/blog.yaml", "name: blog\n")
+	put(t, root, "config/projects/other.yaml", "name: other\nvendor: globex\n")
+	b, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, write, open := b.Allowed("alice"); open || write || !slices.Equal(slices.Sorted(slices.Values(got)), []string{"blog", "crm", "shop"}) {
+		t.Fatalf("alice: %v write=%v open=%v", got, write, open)
+	}
+	if got, write, _ := b.Allowed("carol"); !write || !slices.Equal(slices.Sorted(slices.Values(got)), []string{"crm", "shop"}) {
+		t.Fatalf("carol: %v write=%v", got, write)
+	}
+	if got, _, open := b.Allowed("bob"); !open || got != nil {
+		t.Fatalf("bob: %v open=%v", got, open)
+	}
+
+	// a project added later is covered by the next request, and one that left the vendor is not
+	put(t, root, "config/projects/erp.yaml", "name: erp\nvendor: acme\n")
+	put(t, root, "config/projects/crm.yaml", "name: crm\nvendor: globex\n")
+	b, err = Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := b.Allowed("carol"); !slices.Equal(slices.Sorted(slices.Values(got)), []string{"erp", "shop"}) {
+		t.Fatalf("carol after the change: %v", got)
+	}
+
+	// a vendor without projects grants nothing, and is no error: its last project may be deleted
+	put(t, root, "config/config.yaml", "access:\n  dave: {projects: ['vendor:nobody']}\n")
+	b, err = Load(root)
+	if err != nil {
+		t.Fatalf("a vendor without projects must stay valid: %v", err)
+	}
+	if got, _, open := b.Allowed("dave"); open || len(got) != 0 {
+		t.Fatalf("dave: %v open=%v", got, open)
 	}
 }

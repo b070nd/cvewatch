@@ -197,7 +197,7 @@ func fields() []Field {
 	f = Field{Path: "access", Doc: KindSettings, Section: SecAccess, Label: "Access rules", Type: TypeMap, Elem: TypeRecord, Key: "",
 		Help: "Who may see and change which projects, by actor name. Empty means everyone may do everything. Authorization on a local identity, not authentication."}
 	add(f)
-	f = Field{Path: "access.*.projects", Doc: KindSettings, Section: SecAccess, Label: "Projects", Type: TypeList, Elem: TypeString, Help: `Project names; "*" means every project.`}
+	f = Field{Path: "access.*.projects", Doc: KindSettings, Section: SecAccess, Label: "Projects", Type: TypeList, Elem: TypeString, Help: `Project names; vendor:NAME means every project of that vendor, also one added later; "*" means every project.`}
 	add(f)
 	add(Field{Path: "access.*.write", Doc: KindSettings, Section: SecAccess, Label: "Write", Type: TypeBool, Help: "May change what the projects hold."})
 

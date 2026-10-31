@@ -33,7 +33,7 @@ func TestOverviewShowsCounts(t *testing.T) {
 			t.Errorf("overview lacks %q:\n%s", re, v)
 		}
 	}
-	d.want("cvewatch", "[1 Overview]", "2 Findings (3)", "3 Projects", "4 Status", "OK", "updated")
+	d.want("cvewatch", "[1 Overview]", "2 Findings (3)", "3 Projects", "4 Status", "GREEN", "updated")
 }
 
 func TestFindingsListAndSeverityFilter(t *testing.T) {

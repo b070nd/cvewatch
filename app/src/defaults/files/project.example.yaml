@@ -1,5 +1,6 @@
 # Copy to <name>.yaml (any *.yaml in this folder is loaded and stays untracked).
 name: shop
+# vendor: acme                      # optional: the customer or organisation that owns it; findings, filters and access rules group by it
 envs: [local, prod]               # free names, e.g. local, dev, qa, prod; without envs: dev, int, staging, prod
 techs:                            # generic: every environment runs these; names must exist in techs.yaml
   - {name: php, version: "8.2"}

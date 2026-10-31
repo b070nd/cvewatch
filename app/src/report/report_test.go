@@ -138,3 +138,18 @@ func TestRenderDetailNamesTheScoreVersionAndVector(t *testing.T) {
 		t.Errorf("an old score prints as before:\n%s", out)
 	}
 }
+
+func TestDigestAndReportNameTheVendorOfAProject(t *testing.T) {
+	is := query.Issue{ID: "CVE-1", Severity: model.SevHigh, Untrusted: query.Untrusted{Title: "t"}, Targets: []query.Target{
+		{Vendor: "acme", Project: "shop", Env: model.EnvProd, Applies: model.AppAffected}, {Vendor: "acme", Project: "shop", Env: model.EnvDev, Applies: model.AppNotAffected}, {Project: "blog", Env: model.EnvProd, Applies: model.AppNotAffected}}}
+	out := Digest([]query.Issue{is}, nil)
+	if !strings.Contains(out, "shop (acme): prod,dev [affected]; blog: prod [not affected]") {
+		t.Errorf("digest:\n%s", out)
+	}
+	md := RenderDetail(query.Detail{Issue: is})
+	for _, want := range []string{"| shop (acme) | prod |", "\n### shop (acme)\n", "\n### blog\n", "--project shop --env prod"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("missing %q in\n%s", want, md)
+		}
+	}
+}

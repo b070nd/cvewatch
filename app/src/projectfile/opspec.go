@@ -172,6 +172,12 @@ var OpTable = []OpSpec{
 		Flag:    "-since DATE", Args: []string{"-since", "2026-01-31"},
 	},
 	{
+		Kind: "set_vendor", Summary: "set the vendor (customer or organisation) that owns the project; findings and access rules group by it",
+		Params:  []Param{{"vendor", "string", false, "lowercase letters, digits, - and _, at most 63 characters; empty clears, so the project has no vendor"}},
+		Example: Op{Kind: "set_vendor", Vendor: "acme"},
+		Flag:    "-vendor NAME", Args: []string{"-vendor", "acme"},
+	},
+	{
 		Kind: "set_update", Summary: "set how often the project is refreshed, or take it out of scheduled runs",
 		Params: []Param{
 			{"every", "string", false, "a period such as 30m, 1h or 2d, at least 5m; default removes it, so the interval of config.yaml applies; empty leaves it"},

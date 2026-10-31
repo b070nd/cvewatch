@@ -20,7 +20,7 @@ import (
 func TestStatusScreen(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
 	d.press("4")
-	d.want("[4 Status]", "Feeds (1)", "hn", "UNKNOWN", "never", "Channels (0)", "none active", "Recent cycles (1)", "30s", "daemon")
+	d.want("[4 Status]", "Feeds (1)", "hn", "YELLOW", "never", "Channels (0)", "none active", "Recent cycles (1)", "30s", "daemon")
 }
 
 func TestStatusShowsFailingFeed(t *testing.T) {
@@ -31,7 +31,7 @@ func TestStatusShowsFailingFeed(t *testing.T) {
 	})
 	d := start(t, newFake(t, st), Options{})
 	d.press("4")
-	d.want("FAIL", "error: boom red")
+	d.want("RED", "error: boom red")
 	d.wantNot("\x1b")
 	d.press("1")
 	d.want("! feed hn has failed 3 times in a row")

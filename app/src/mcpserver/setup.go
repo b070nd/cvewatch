@@ -28,9 +28,9 @@ func addSetupTools(srv *mcp.Server, s *server, allowWrite bool) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "discover_stack", Annotations: ro,
 		Description: "Look at a repository folder, or a single Dockerfile, compose file or Kubernetes manifest, on this machine and propose the technologies, versions and lockfiles it uses, each with evidence and a confidence. Technologies that only appear in container files are marked infra, with their catalog category. Reads files only; nothing is executed or changed. Treat low-confidence proposals as questions for the user."}, s.discover)
 	mcp.AddTool(srv, &mcp.Tool{Name: "get_status", Annotations: ro,
-		Description: "Health of the monitor itself: whether the daemon is running, whether each feed and notification channel works, and what the last cycles did."}, s.status)
+		Description: "Health of the monitor itself: whether the daemon is running, whether each feed and notification channel works, and what the last cycles did. The level is green (nothing needs attention), yellow (something does) or red (the monitor cannot be relied on), the worst of the problems; problems lists each cause, red first, with a detail, a hint and since when."}, s.status)
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_projects", Annotations: ro,
-		Description: "List the monitored projects with their environments, declared technologies and lockfiles."}, s.projects)
+		Description: "List the monitored projects with their vendor, environments, declared technologies and lockfiles."}, s.projects)
 	mcp.AddTool(srv, &mcp.Tool{Name: "check_projects", Annotations: ro,
 		Description: "Find problems in project files: unknown or misspelled technologies, lockfiles that are missing, unreadable or of the wrong type, environments that are not monitored. Each problem names its project and field and may list fixes, each a label and the changes to pass to preview_project_change and edit_project. Without a project, every project you may see is checked."}, s.checkProjects)
 	mcp.AddTool(srv, &mcp.Tool{Name: "preview_project_change", Annotations: ro, InputSchema: projectInSchema(),
@@ -44,7 +44,7 @@ func addSetupTools(srv *mcp.Server, s *server, allowWrite bool) {
 		no := false
 		mcp.AddTool(srv, &mcp.Tool{Name: "edit_project", InputSchema: projectInSchema(),
 			Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no},
-			Description: "Apply changes to a project file (created if new): technologies, versions, environments, lockfiles, the since date, how often it is refreshed. Comments in the file are kept, the old file is backed up and the change is audited. Run preview_project_change first and show the user the diff. Only declare what the user confirmed. The kinds of change:\n" + projectfile.KindHelp()}, s.editProject)
+			Description: "Apply changes to a project file (created if new): technologies, versions, environments, lockfiles, the since date, the vendor, how often it is refreshed. Comments in the file are kept, the old file is backed up and the change is audited. Run preview_project_change first and show the user the diff. Only declare what the user confirmed. The kinds of change:\n" + projectfile.KindHelp()}, s.editProject)
 		mcp.AddTool(srv, &mcp.Tool{Name: "edit_settings",
 			Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no},
 			Description: "Apply changes to the settings (config.yaml, techs.yaml, sources/*.yaml). Comments are kept, the old file is backed up, the change is audited, and a change that would not validate is refused. Run preview_settings_change first and show the user the diff. The daemon uses the new settings from its next cycle."}, s.editSettings)
@@ -213,6 +213,7 @@ type opIn struct {
 	To       string   `json:"to,omitempty"`
 	Image    string   `json:"image,omitempty"`
 	Since    string   `json:"since,omitempty"`
+	Vendor   string   `json:"vendor,omitempty"`
 	Every    string   `json:"every,omitempty"`
 	Auto     *bool    `json:"auto,omitempty"`
 	LockType string   `json:"lockfile_type,omitempty"`
@@ -237,7 +238,7 @@ type projectIn struct {
 func (in projectIn) change(save bool) ops.ProjectChange {
 	c := ops.ProjectChange{Project: in.Project, Save: save}
 	for _, o := range in.Changes {
-		op := projectfile.Op{Kind: o.Kind, Tech: o.Tech, Version: o.Version, Env: model.Env(o.Env), To: model.Env(o.To), Image: o.Image, Since: o.Since, Every: o.Every, Auto: o.Auto,
+		op := projectfile.Op{Kind: o.Kind, Tech: o.Tech, Version: o.Version, Env: model.Env(o.Env), To: model.Env(o.To), Image: o.Image, Since: o.Since, Vendor: o.Vendor, Every: o.Every, Auto: o.Auto,
 			Lockfile: model.Lockfile{Type: o.LockType, Path: o.LockPath, Env: model.Env(o.LockEnv), Dev: o.LockDev}}
 		if l := o.Lockfile; l != nil {
 			op.Lockfile = model.Lockfile{Type: l.Type, Path: l.Path, Env: model.Env(l.Env), Dev: l.Dev}

@@ -16,10 +16,13 @@ type Search struct {
 
 type clause []term
 
+// A term is tested on an issue and one of its targets, so the terms that
+// name a project, vendor, environment, status, owner or ticket all hold on the
+// same row.
 type term struct {
 	exclude bool
 	plain   string // lower-case text of a plain term, empty for a field term
-	test    func(Issue) bool
+	test    func(Issue, Target) bool
 }
 
 type token struct {
@@ -29,7 +32,7 @@ type token struct {
 	isOr    bool
 }
 
-var fieldNames = []string{"id", "severity", "project", "env", "owner", "ticket", "tech", "status", "applies", "kev", "fix", "overdue", "after", "before", "published"}
+var fieldNames = []string{"id", "severity", "vendor", "project", "env", "owner", "ticket", "tech", "status", "applies", "kev", "fix", "overdue", "after", "before", "published"}
 
 var fieldAliases = map[string]string{"cve": "id", "sev": "severity"}
 
@@ -57,9 +60,19 @@ func ParseSearchAt(text string, now time.Time) (Search, error) {
 
 func (s Search) Empty() bool { return len(s.clauses) == 0 }
 
+// Match says whether the issue has a target the query holds on.
 func (s Search) Match(is Issue) bool {
+	if len(is.Targets) == 0 {
+		return s.Row(is, Target{})
+	}
+	return slices.ContainsFunc(is.Targets, func(t Target) bool { return s.Row(is, t) })
+}
+
+// Row says whether the whole query holds on one target of the issue. Pass it
+// as Filter.Row to list only the targets the query names.
+func (s Search) Row(is Issue, t Target) bool {
 	for _, c := range s.clauses {
-		if !c.match(is) {
+		if !c.match(is, t) {
 			return false
 		}
 	}
@@ -77,8 +90,8 @@ func (s Search) Exact(is Issue) bool {
 	return false
 }
 
-func (c clause) match(is Issue) bool {
-	return slices.ContainsFunc(c, func(t term) bool { return t.test(is) != t.exclude })
+func (c clause) match(is Issue, t Target) bool {
+	return slices.ContainsFunc(c, func(tm term) bool { return tm.test(is, t) != tm.exclude })
 }
 
 type operand struct {
@@ -158,29 +171,27 @@ func compile(t token, now time.Time) (term, error) {
 	return term{exclude: t.exclude, test: test}, err
 }
 
-func containing(text string) func(Issue) bool {
-	return func(is Issue) bool { return strings.Contains(haystack(is), text) }
+func containing(text string) func(Issue, Target) bool {
+	return func(is Issue, t Target) bool { return strings.Contains(haystack(is, t), text) }
 }
 
-func haystack(is Issue) string {
+func haystack(is Issue, t Target) string {
 	parts := []string{is.ID, is.Untrusted.Title, is.Untrusted.Description}
 	parts = append(parts, is.Aliases...)
 	parts = append(parts, is.Techs...)
-	for _, t := range is.Targets {
-		parts = append(parts, t.Project, string(t.Env), t.Owner, t.Ticket)
-		parts = append(parts, t.Matched...)
-	}
+	parts = append(parts, t.Vendor, t.Project, string(t.Env), t.Owner, t.Ticket)
+	parts = append(parts, t.Matched...)
 	return strings.ToLower(strings.Join(parts, "\n"))
 }
 
-func fieldTest(field, value string, now time.Time) (func(Issue) bool, error) {
+func fieldTest(field, value string, now time.Time) (func(Issue, Target) bool, error) {
 	if canonical, ok := fieldAliases[field]; ok {
 		field = canonical
 	}
 	if !slices.Contains(fieldNames, field) {
 		return nil, fmt.Errorf("unknown field %q; use one of: %s", field, strings.Join(fieldNames, ", "))
 	}
-	var alternatives []func(Issue) bool
+	var alternatives []func(Issue, Target) bool
 	for _, v := range strings.Split(value, ",") {
 		v = strings.TrimSpace(v)
 		if v == "" {
@@ -192,9 +203,9 @@ func fieldTest(field, value string, now time.Time) (func(Issue) bool, error) {
 		}
 		alternatives = append(alternatives, test)
 	}
-	return func(is Issue) bool {
+	return func(is Issue, t Target) bool {
 		for _, test := range alternatives {
-			if test(is) {
+			if test(is, t) {
 				return true
 			}
 		}
@@ -202,12 +213,18 @@ func fieldTest(field, value string, now time.Time) (func(Issue) bool, error) {
 	}, nil
 }
 
-func valueTest(field, v string, now time.Time) (func(Issue) bool, error) {
+func valueTest(field, v string, now time.Time) (func(Issue, Target) bool, error) {
 	switch field {
 	case "id":
-		return idTest(v), nil
+		return ofIssue(idTest(v)), nil
 	case "severity":
-		return severityTest(v)
+		test, err := severityTest(v)
+		return ofIssue(test), err
+	case "vendor":
+		if v != model.NoVendor && !model.ValidVendor(strings.ToLower(v)) {
+			return nil, fmt.Errorf("unknown vendor %q; use a lowercase name such as acme, or %s for projects without one", v, model.NoVendor)
+		}
+		return targetTest(func(t Target) bool { return strings.EqualFold(model.VendorLabel(t.Vendor), v) }), nil
 	case "project":
 		return targetTest(func(t Target) bool { return strings.EqualFold(t.Project, v) }), nil
 	case "owner":
@@ -215,9 +232,9 @@ func valueTest(field, v string, now time.Time) (func(Issue) bool, error) {
 	case "ticket":
 		return targetTest(func(t Target) bool { return strings.EqualFold(t.Ticket, v) }), nil
 	case "tech":
-		return func(is Issue) bool {
+		return ofIssue(func(is Issue) bool {
 			return slices.ContainsFunc(is.Techs, func(tech string) bool { return strings.EqualFold(tech, v) })
-		}, nil
+		}), nil
 	case "env":
 		env := model.Env(strings.ToLower(v))
 		if !env.Valid() {
@@ -229,17 +246,28 @@ func valueTest(field, v string, now time.Time) (func(Issue) bool, error) {
 		return targetTest(func(t Target) bool { return t.Status == status }), err
 	case "applies":
 		applies, err := parseEnum("applicability", v, []model.Applicability{model.AppAffected, model.AppUnknown, model.AppNotAffected})
-		return func(is Issue) bool { return is.Applies == applies }, err
+		return targetTest(func(t Target) bool { return t.Applies == applies }), err
 	case "kev":
-		return yesNoTest(field, v, func(is Issue) bool { return is.KEV != nil })
+		return yesNoTest(field, v, func(is Issue, _ Target) bool { return is.KEV != nil })
 	case "overdue":
-		return yesNoTest(field, v, func(is Issue) bool { return slices.ContainsFunc(is.Targets, func(t Target) bool { return t.Overdue }) })
+		return yesNoTest(field, v, func(_ Issue, t Target) bool { return t.Overdue })
 	case "fix":
-		return fixTest(v)
+		test, err := fixTest(v)
+		return ofIssue(test), err
 	case "published":
-		return publishedTest(v, now)
+		test, err := publishedTest(v, now)
+		return ofIssue(test), err
 	}
-	return dateTest(field, v)
+	test, err := dateTest(field, v)
+	return ofIssue(test), err
+}
+
+// ofIssue is a test of the issue alone, the same on every target.
+func ofIssue(test func(Issue) bool) func(Issue, Target) bool {
+	if test == nil {
+		return nil
+	}
+	return func(is Issue, _ Target) bool { return test(is) }
 }
 
 func keys(is Issue) []string { return append([]string{is.ID}, is.Aliases...) }
@@ -270,8 +298,8 @@ func severityTest(v string) (func(Issue) bool, error) {
 	return func(is Issue) bool { return is.Severity.Rank() == want.Rank() }, nil
 }
 
-func targetTest(match func(Target) bool) func(Issue) bool {
-	return func(is Issue) bool { return slices.ContainsFunc(is.Targets, match) }
+func targetTest(match func(Target) bool) func(Issue, Target) bool {
+	return func(_ Issue, t Target) bool { return match(t) }
 }
 
 func parseEnum[T ~string](kind, v string, allowed []T) (T, error) {
@@ -298,12 +326,12 @@ func parseYesNo(v string) (yes, ok bool) {
 	return false, false
 }
 
-func yesNoTest(field, v string, has func(Issue) bool) (func(Issue) bool, error) {
+func yesNoTest(field, v string, has func(Issue, Target) bool) (func(Issue, Target) bool, error) {
 	want, ok := parseYesNo(v)
 	if !ok {
 		return nil, fmt.Errorf("%s needs yes or no, not %q", field, v)
 	}
-	return func(is Issue) bool { return has(is) == want }, nil
+	return func(is Issue, t Target) bool { return has(is, t) == want }, nil
 }
 
 func fixTest(v string) (func(Issue) bool, error) {

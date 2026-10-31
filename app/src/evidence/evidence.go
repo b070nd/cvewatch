@@ -49,6 +49,7 @@ type Entry struct {
 
 // Row is the current truth for one project environment.
 type Row struct {
+	Vendor    string              `json:"vendor,omitempty"` // the project's vendor, empty for none
 	Project   string              `json:"project"`
 	Env       string              `json:"env"`
 	Status    model.Status        `json:"status"`

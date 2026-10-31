@@ -1,6 +1,7 @@
 package ledger
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -325,5 +326,28 @@ func TestLastUpdateSurvivesTheStateAndFollowsARename(t *testing.T) {
 	}
 	if !again.LastUpdate("webshop").Equal(day) || !again.LastUpdate("shop").IsZero() || !again.LastUpdate("blog").Equal(day.Add(time.Hour)) {
 		t.Fatalf("the rename moves the time: %+v", again.State().Updated)
+	}
+}
+
+func TestFailureStreakRemembersWhereItBegan(t *testing.T) {
+	l := New(State{})
+	t0 := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	l.SourceOutcome("a", "rss", t0, 1, nil)
+	l.SourceOutcome("a", "rss", t0.Add(time.Hour), 0, errors.New("x"))
+	l.SourceOutcome("a", "rss", t0.Add(2*time.Hour), 0, errors.New("x"))
+	l.ChannelOutcome("c", t0.Add(time.Hour), errors.New("y"))
+	l.ChannelOutcome("c", t0.Add(2*time.Hour), errors.New("y"))
+	_, sources, channels, _ := l.Health()
+	if got := sources["a"]; got.Failures != 2 || !got.FailingSince.Equal(t0.Add(time.Hour)) {
+		t.Errorf("source: %+v", got)
+	}
+	if got := channels["c"]; got.Failures != 2 || !got.FailingSince.Equal(t0.Add(time.Hour)) {
+		t.Errorf("channel: %+v", got)
+	}
+	l.SourceOutcome("a", "rss", t0.Add(3*time.Hour), 1, nil)
+	l.ChannelOutcome("c", t0.Add(3*time.Hour), nil)
+	_, sources, channels, _ = l.Health()
+	if !sources["a"].FailingSince.IsZero() || !channels["c"].FailingSince.IsZero() {
+		t.Error("a success ends the streak")
 	}
 }

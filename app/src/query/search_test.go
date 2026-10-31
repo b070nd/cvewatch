@@ -15,21 +15,21 @@ func searchIssues() []Issue {
 		Fix:       FixInfo{Available: true},
 		Untrusted: Untrusted{Title: "PHP memory corruption: Use After Free in zend", Description: "Heap flaw in the engine"},
 		Targets: []Target{
-			{Project: "shop", Env: model.EnvProd, Status: model.StatusOpen, Owner: "Jane Doe", Ticket: "OPS-12", Matched: []string{"php@8.2"}, Overdue: true},
-			{Project: "shop", Env: model.EnvDev, Status: model.StatusFixed},
+			{Project: "shop", Env: model.EnvProd, Status: model.StatusOpen, Applies: model.AppAffected, Owner: "Jane Doe", Ticket: "OPS-12", Matched: []string{"php@8.2"}, Overdue: true},
+			{Project: "shop", Env: model.EnvDev, Status: model.StatusFixed, Applies: model.AppAffected},
 		},
 	}
 	openssl := Issue{
 		ID: "CVE-2026-5678", Severity: model.SevCritical, Published: time.Date(2026, 10, 2, 8, 0, 0, 0, time.UTC),
 		Techs: []string{"openssl"}, Applies: model.AppUnknown, KEV: &KEVInfo{}, Fix: FixInfo{Available: true, Official: true},
 		Untrusted: Untrusted{Title: "OpenSSL overflow", Description: "Affects the WordPress plugin"},
-		Targets:   []Target{{Project: "blog", Env: model.EnvStaging, Status: model.StatusOpen, Owner: "Bob", Matched: []string{"libssl@3.0.1"}}},
+		Targets:   []Target{{Project: "blog", Env: model.EnvStaging, Status: model.StatusOpen, Applies: model.AppUnknown, Owner: "Bob", Matched: []string{"libssl@3.0.1"}}},
 	}
 	nginx := Issue{
 		ID: "CVE-2025-0001", Severity: model.SevLow, Published: time.Date(2026, 1, 1, 0, 30, 0, 0, time.FixedZone("plus2", 2*3600)),
 		Techs: []string{"nginx"}, Applies: model.AppNotAffected,
 		Untrusted: Untrusted{Title: "Nginx note"},
-		Targets:   []Target{{Project: "shop", Env: model.EnvProd, Status: model.StatusIgnored}},
+		Targets:   []Target{{Project: "shop", Env: model.EnvProd, Status: model.StatusIgnored, Applies: model.AppNotAffected}},
 	}
 	return []Issue{php, openssl, nginx}
 }
@@ -71,7 +71,7 @@ func TestSearchMatches(t *testing.T) {
 		{"memory -wordpress", php},
 		{"-severity:critical", php + "," + nginx},
 		{`-"use after free"`, openssl + "," + nginx},
-		{`-owner:"Jane Doe"`, openssl + "," + nginx},
+		{`-owner:"Jane Doe"`, php + "," + openssl + "," + nginx}, // php has a second row nobody Jane owns
 		{"-php", openssl + "," + nginx},
 		{"- php", php},
 
@@ -132,7 +132,7 @@ func TestSearchMatches(t *testing.T) {
 		{"fix:no", nginx},
 		{"fix:official", openssl},
 		{"overdue:yes", php},
-		{"overdue:no", openssl + "," + nginx},
+		{"overdue:no", all}, // php has a second row that is not overdue
 		{"after:2026-09-15", php + "," + openssl},
 		{"after:2026-09-16", openssl},
 		{"before:2026-09-15", nginx},
@@ -195,7 +195,7 @@ func TestSearchExact(t *testing.T) {
 
 func TestSearchErrors(t *testing.T) {
 	cases := []struct{ text, want string }{
-		{"foo:bar", `unknown field "foo"; use one of: id, severity, project`},
+		{"foo:bar", `unknown field "foo"; use one of: id, severity, vendor, project`},
 		{"http://example.test", `unknown field "http"`},
 		{"-foo:bar", `unknown field "foo"`},
 		{"owner:", "missing value after owner:"},
