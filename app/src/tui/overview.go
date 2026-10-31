@@ -57,7 +57,7 @@ func (m *app) overviewHead(w, h int) []string {
 	const listMin = 7 // count line, column heads and a few rows
 	var blocks []summaryBlock
 
-	state := section("Status") + "  " + levelText(rep.Level)
+	state := section("Status") + "  " + levelText(rep.Level) + reasonText(rep)
 	blocks = append(blocks, summaryBlock{0, []string{state + trunc("  daemon: "+orDash(oneLine(rep.Daemon.Message)), max(w-width(state), 0))}})
 
 	cycle := []string{"last cycle: none yet"}

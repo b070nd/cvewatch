@@ -429,3 +429,70 @@ func TestWarningsNameTheSpellingOfTheFile(t *testing.T) {
 		t.Errorf("warnings:\n%s", all)
 	}
 }
+
+func sourceByID(b *Bundle, id string) (model.Source, bool) {
+	i := slices.IndexFunc(b.Sources, func(s model.Source) bool { return s.ID == id })
+	if i < 0 {
+		return model.Source{}, false
+	}
+	return b.Sources[i], true
+}
+
+func TestSourceEntryForAShippedIDOverridesOnlyItsFields(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, "sources/a.yaml", "sources:\n  - {id: cve-records, disabled: true}\n  - {id: nvd, url: 'https://nvd.test/?s={since}'}\n")
+	b, issues := Check(root, nil)
+	if len(issues) != 0 {
+		t.Fatalf("shorthand rejected: %+v", issues)
+	}
+	if s, ok := sourceByID(b, "cve-records"); !ok || !s.Disabled || s.Type != "cve" || s.URL == "" || !s.MatchTitleOnly {
+		t.Fatalf("cve-records = %+v", s)
+	}
+	if s, _ := sourceByID(b, "nvd"); s.Disabled || s.Type != "nvd" || s.URL != "https://nvd.test/?s={since}" || !s.MatchStructured || !s.MatchTitleOnly {
+		t.Fatalf("nvd = %+v", s)
+	}
+	if s, _ := sourceByID(b, "kev"); s.Disabled {
+		t.Fatalf("an untouched feed changed: %+v", s)
+	}
+	if b.DefaultSources {
+		t.Error("a user file is present")
+	}
+
+	put(t, root, "sources/b.yaml", "sources: [{id: cve-records, disabled: false}]\n")
+	b, issues = Check(root, nil)
+	if s, _ := sourceByID(b, "cve-records"); len(issues) != 0 || s.Disabled {
+		t.Fatalf("a later file did not switch it back on: %+v %+v", issues, s)
+	}
+}
+
+func TestSourceEntryForAnUnknownIDStillNeedsATypeAndURL(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, "sources/a.yaml", "sources: [{id: nope, disabled: true}]\n")
+	if _, issues := Check(root, nil); len(issues) == 0 || issues[0].Field != "sources.[id=nope].type" {
+		t.Fatalf("%+v", issues)
+	}
+	put(t, root, "sources/a.yaml", "sources: [{id: cve-records, disable: true}]\n")
+	if _, issues := Check(root, nil); len(issues) == 0 || issues[0].Line != 1 || !strings.Contains(issues[0].Msg, "disable") {
+		t.Fatalf("a mistyped key must fail: %+v", issues)
+	}
+}
+
+func TestSourceEntryCanOverrideAVendorFeedOfATechnology(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, "config/projects/a.yaml", "name: a\ntechs: [{name: fortios}]\n")
+	b, _ := Check(root, nil)
+	var feed string
+	for _, tc := range b.Techs {
+		if tc.Name == "fortios" && len(tc.Feeds) > 0 {
+			feed = tc.Feeds[0].ID
+		}
+	}
+	if feed == "" {
+		t.Skip("fortios has no shipped feed")
+	}
+	put(t, root, "sources/a.yaml", "sources: [{id: "+feed+", disabled: true}]\n")
+	b, issues := Check(root, nil)
+	if s, ok := sourceByID(b, feed); len(issues) != 0 || !ok || !s.Disabled || s.URL == "" {
+		t.Fatalf("%+v %+v", issues, s)
+	}
+}

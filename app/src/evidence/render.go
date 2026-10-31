@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/b070nd/cvewatch/app/src/model"
+	"github.com/b070nd/cvewatch/app/src/query"
 )
 
 // WriteJSON writes the pack as indented JSON.
@@ -66,7 +67,7 @@ func (p Pack) WriteMarkdown(w io.Writer) error {
 	for _, e := range p.Timeline {
 		line := fmt.Sprintf("- %s **%s** %s", ts(e.Time), esc(e.Kind), esc(e.Detail))
 		if e.Actor != "" {
-			line += " (by " + esc(e.Actor) + ")"
+			line += " (by " + esc(query.ActorLabel(e.Actor)) + ")"
 		}
 		if e.URL != "" {
 			line += " " + code(e.URL)
@@ -129,6 +130,9 @@ func fixText(fs []model.Fix) string {
 
 func auditText(p Pack) string {
 	if p.AuditIntact {
+		if p.AuditNote != "" {
+			return "yes (" + esc(p.AuditNote) + ")"
+		}
 		return "yes"
 	}
 	if p.AuditNote != "" {

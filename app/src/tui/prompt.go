@@ -149,7 +149,19 @@ func (m *app) startStatus(st model.Status, whole bool) {
 		label = "Reason (required)"
 	}
 	title := fmt.Sprintf("%s: %s", changeWords[st], where(c.Project, c.Env))
-	m.prm = &prompt{kind: pkStatus, title: oneLine(c.ID + " " + title), change: c, fields: []field{{label: label}}, hint: noteHint(st)}
+	m.prm = &prompt{kind: pkStatus, title: oneLine(c.ID + " " + title + m.scopeNote(c.Project)), change: c, fields: []field{{label: label}}, hint: noteHint(st)}
+}
+
+// scopeNote names the project a prompt acts on when a scope is set, and says
+// when that project is not the scope.
+func (m *app) scopeNote(project string) string {
+	switch {
+	case m.scope == "":
+		return ""
+	case project != m.scope:
+		return " (project " + project + ", outside scope)"
+	}
+	return " (project " + project + ")"
 }
 
 // noteHint is what the prompt says about the note: enter saves at once unless
@@ -205,7 +217,7 @@ func (m *app) startEvidence() {
 	}
 	t := d.is.Targets[d.sel.at()]
 	a := ops.Attachment{ID: d.is.ID, Project: t.Project, Env: t.Env}
-	m.prm = &prompt{kind: pkEvidence, attach: a, title: oneLine("Add evidence to " + a.ID + " in " + where(a.Project, a.Env)),
+	m.prm = &prompt{kind: pkEvidence, attach: a, title: oneLine("Add evidence to " + a.ID + " in " + where(a.Project, a.Env) + m.scopeNote(a.Project)),
 		hint:   "a note, a link or both; the link must be a plain http(s) address",
 		fields: []field{{label: "Note"}, {label: "Link"}}}
 }
@@ -221,7 +233,7 @@ func (m *app) startAssign(whole bool) {
 	if whole {
 		a.Env = ""
 	}
-	p := &prompt{kind: pkAssign, assign: a, title: oneLine("Assign " + a.ID + " in " + where(a.Project, a.Env)),
+	p := &prompt{kind: pkAssign, assign: a, title: oneLine("Assign " + a.ID + " in " + where(a.Project, a.Env) + m.scopeNote(a.Project)),
 		hint:   "empty keeps a value, - clears it; due is YYYY-MM-DD",
 		fields: []field{{label: "Owner"}, {label: "Due"}, {label: "Ticket"}}}
 	p.fields[0].in.set(t.Owner)

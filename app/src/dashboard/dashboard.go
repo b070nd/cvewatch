@@ -300,7 +300,11 @@ func HTML(d Data, now time.Time) string {
 
 	// 1. header
 	p("<header><h1>cvewatch dashboard</h1>\n<p class=\"muted\">Generated %s</p>\n", utc(now))
-	p("<p>Overall health: %s</p></header>\n", levelBadge(d.Status.Level))
+	p("<p>Overall health: %s", levelBadge(d.Status.Level))
+	if why := d.Status.Reason(); why != "" {
+		p(" <span class=\"muted\">%s</span>", esc(why))
+	}
+	p("</p></header>\n")
 	if len(d.Issues) == 0 {
 		p("<p class=\"empty\">Nothing open. No open vulnerabilities to act on.</p>\n")
 	}

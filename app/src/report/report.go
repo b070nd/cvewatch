@@ -47,7 +47,7 @@ func Write(alertsDir string, v *model.Vulnerability, fs []model.Finding, now tim
 // history is the one the ledger keeps, since no audit log is at hand here.
 func Render(v *model.Vulnerability, fs []model.Finding, now time.Time) string {
 	d := query.DetailOf(v, fs, now)
-	d.History = evidence.Build(v, fs, nil, nil, now).History()
+	d.History = evidence.Build(v, fs, nil, nil, false, now).History()
 	return RenderDetail(d)
 }
 
@@ -195,7 +195,7 @@ func RenderDetail(d query.Detail) string {
 		for _, h := range d.History {
 			line := fmt.Sprintf("- %s **%s** %s", h.Time.UTC().Format("2006-01-02 15:04"), md(h.Kind), md(h.Detail))
 			if h.Actor != "" {
-				line += " (by " + md(h.Actor) + ")"
+				line += " (by " + md(query.ActorLabel(h.Actor)) + ")"
 			}
 			if h.URL != "" {
 				line += " " + md(h.URL)

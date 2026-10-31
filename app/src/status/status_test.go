@@ -37,8 +37,41 @@ func TestChannelsAndNeverRan(t *testing.T) {
 		t.Fatalf("channels: %+v", r.Channels)
 	}
 	empty := Build(Input{Now: now, Interval: time.Hour, Sources: []Ref{{"a", "rss"}}, Channels: []string{"slack"}})
-	if empty.Level != OK || empty.Sources[0].Level != Unknown || empty.Daemon.Level != Unknown {
-		t.Fatalf("nothing ran yet is unknown, not broken: %+v", empty)
+	if empty.Level != Unknown || empty.Sources[0].Level != Unknown || empty.Daemon.Level != Unknown || empty.Reason() == "" {
+		t.Fatalf("nothing ran yet is unknown, not ok and not broken: %+v", empty)
+	}
+}
+
+func TestOverallIsUnknownUntilACycleSucceeded(t *testing.T) {
+	src := []Ref{{"a", "rss"}, {"b", "rss"}}
+	ok := map[string]model.SourceHealth{"a": {LastAttempt: now, LastSuccess: now}, "b": {LastAttempt: now, LastSuccess: now}}
+	beat := &model.Heartbeat{Mode: "daemon", LastCycle: now, NextRun: now.Add(time.Hour), Interval: 4 * time.Hour}
+	cycle := func(c model.CycleRecord) []model.CycleRecord { return []model.CycleRecord{c} }
+
+	if r := Build(Input{Now: now, Interval: time.Hour, Sources: src, Beat: beat}); r.Level != Unknown {
+		t.Errorf("a heartbeat without a cycle: %s", r.Level)
+	}
+	if r := Build(Input{Now: now, Interval: time.Hour, Sources: src, Health: ok, Beat: beat, Cycles: cycle(model.CycleRecord{Finished: now})}); r.Level != OK || r.Reason() != "" {
+		t.Errorf("a cycle that read the feeds: %s", r.Level)
+	}
+	if r := Build(Input{Now: now, Interval: time.Hour, Sources: src, Health: ok, Beat: beat, Cycles: cycle(model.CycleRecord{Finished: now, Failed: 2})}); r.Level != Unknown {
+		t.Errorf("a cycle in which every feed failed: %s", r.Level)
+	}
+	if r := Build(Input{Now: now, Interval: time.Hour, Sources: src, Health: ok, Beat: beat, Cycles: cycle(model.CycleRecord{Finished: now, Failed: 1})}); r.Level != OK {
+		t.Errorf("a cycle in which one feed failed: %s", r.Level)
+	}
+	if r := Build(Input{Now: now, Interval: time.Hour, Sources: src, Health: ok, Beat: beat, Cycles: cycle(model.CycleRecord{Finished: now, Err: "disk full"})}); r.Level != Unknown {
+		t.Errorf("a cycle that errored: %s", r.Level)
+	}
+}
+
+func TestNoEnabledSourcesWarns(t *testing.T) {
+	r := Build(Input{Now: now, Interval: time.Hour, Cycles: []model.CycleRecord{{Finished: now}}})
+	if r.Level != Warn || !strings.Contains(strings.Join(r.Warnings, "|"), "no enabled sources: nothing will be fetched") {
+		t.Fatalf("%s %v", r.Level, r.Warnings)
+	}
+	if r := Build(Input{Now: now, Interval: time.Hour}); r.Level != Warn {
+		t.Errorf("never run and nothing enabled: %s", r.Level)
 	}
 }
 

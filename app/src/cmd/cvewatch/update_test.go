@@ -65,7 +65,10 @@ func TestProjectUpdateFlagsErrors(t *testing.T) {
 
 func TestStatusListsTheUpdateScheduleOfEveryProject(t *testing.T) {
 	root := fixtureRoot(t)
-	out := runStatus(t, root)
+	out := runStatus(t, root) // a monitor that never ran is unknown and still exits 0
+	if !strings.Contains(out, "Overall: unknown") {
+		t.Fatalf("a fresh monitor must not say ok:\n%s", out)
+	}
 	if !strings.Contains(out, "\nProjects\n") || !strings.Contains(out, "shop") || !strings.Contains(out, "due now") || !strings.Contains(out, "last update never") {
 		t.Fatalf("a project never updated is due:\n%s", out)
 	}

@@ -23,7 +23,7 @@ func renderStatus(rep status.Report, now time.Time, w int, projects []string, ho
 		rows = append(rows, r)
 	}
 
-	add(section("Overall")+"  "+levelText(rep.Level), "")
+	add(section("Overall")+"  "+levelText(rep.Level)+reasonText(rep), "")
 	add("  daemon  " + levelText(rep.Daemon.Level) + "  " + orDash(oneLine(rep.Daemon.Mode)))
 	add(indentWrap("          ", orDash(oneLine(rep.Daemon.Message)), w)...)
 	if !rep.Daemon.LastCycle.IsZero() {
@@ -151,4 +151,12 @@ func agoText(t time.Time) string {
 		return "never"
 	}
 	return t.UTC().Format("2006-01-02 15:04") + "Z"
+}
+
+// reasonText is the muted note after an overall level that needs one.
+func reasonText(rep status.Report) string {
+	if why := rep.Reason(); why != "" {
+		return stMuted.Render("  " + why)
+	}
+	return ""
 }

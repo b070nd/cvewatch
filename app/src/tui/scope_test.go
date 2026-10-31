@@ -224,3 +224,87 @@ func TestScopeKeepsTheCursorOnItsIssueAndPrunesTheSelection(t *testing.T) {
 	d.press("2")
 	d.want("3 of 3 open issues")
 }
+
+func lineWith(d *driver, part string) string {
+	for _, l := range strings.Split(d.view(), "\n") {
+		if strings.Contains(l, part) {
+			return l
+		}
+	}
+	return ""
+}
+
+func TestScopedIssuePageStartsOnTheScopedProject(t *testing.T) {
+	d := start(t, newFake(t, nil), Options{})
+	scopeTo(d, "shop")
+	d.press("down", "enter")
+	d.want("Overview", "CVE-2026-1", "shop:prod")
+	d.wantNot("mw:prod")
+	if a, b := strings.Index(d.view(), "shop "), strings.Index(d.view(), "other projects"); a < 0 || b < a {
+		t.Fatalf("the scoped project comes first, then the separator:\n%s", d.view())
+	}
+	if a, b := strings.Index(d.view(), "other projects"), strings.Index(d.view(), "mw "); b < a {
+		t.Fatalf("the other projects come below the separator:\n%s", d.view())
+	}
+	d.press("a")
+	d.want("Assign CVE-2026-1 in shop/prod (project shop)")
+	d.wantNot("outside scope")
+	d.press("esc")
+
+	d.press("down", "a") // into the other project: still reachable, and said to be outside
+	d.want("mw:prod", "Assign CVE-2026-1 in mw/prod (project mw, outside scope)")
+}
+
+func TestScopedIssuePagePrefersAProdLikeEnvironment(t *testing.T) {
+	st := seed(t, func(l *ledger.Ledger) {
+		id := l.Lookup([]string{"CVE-2026-1"}).ID
+		l.AddFinding(model.Finding{VulnID: id, Project: "shop", Env: model.EnvDev, Status: model.StatusOpen, Applies: model.AppUnknown})
+		l.AddFinding(model.Finding{VulnID: id, Project: "shop", Env: model.EnvStaging, Status: model.StatusOpen, Applies: model.AppUnknown})
+	})
+	d := start(t, newFake(t, st), Options{})
+	scopeTo(d, "shop")
+	d.press("down", "enter")
+	d.want("shop:prod")
+	d.press("a")
+	d.want("Assign CVE-2026-1 in shop/prod (project shop)")
+}
+
+func TestScopedIssueOpenedFromFindingsBehavesTheSame(t *testing.T) {
+	d := start(t, newFake(t, nil), Options{})
+	scopeTo(d, "shop")
+	d.press("2", "down", "enter")
+	d.want("Findings", "CVE-2026-1", "shop:prod")
+	d.wantNot("mw:prod")
+	d.press("a")
+	d.want("Assign CVE-2026-1 in shop/prod (project shop)")
+}
+
+func TestUnscopedIssuePageKeepsItsOrderAndPrompts(t *testing.T) {
+	d := start(t, newFake(t, nil), Options{})
+	d.press("2", "down", "enter")
+	d.want("mw:prod")
+	d.wantNot("other projects")
+	d.press("a")
+	d.want("Assign CVE-2026-1 in mw/prod")
+	d.wantNot("outside scope", "(project")
+}
+
+func TestMidTruncKeepsTheTail(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		w    int
+		want string
+	}{
+		{"shop", 14, "shop"},
+		{"astra-low-php-exact", 14, "astr…php-exact"},
+		{"astra", 3, "as…"},
+	} {
+		if got := midTrunc(tc.in, tc.w); got != tc.want || width(got) > tc.w {
+			t.Errorf("midTrunc(%q, %d) = %q, want %q", tc.in, tc.w, got, tc.want)
+		}
+	}
+	a, b := midTrunc("astra-low-php-exact", 14), midTrunc("astra-low-php-loose", 14)
+	if a == b {
+		t.Errorf("names that differ in the tail stay different: %q %q", a, b)
+	}
+}

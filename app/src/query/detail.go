@@ -85,6 +85,15 @@ type HistoryEntry struct {
 	Source  string    `json:"source"` // ledger or audit
 }
 
+// ActorLabel is how an actor is shown to people: the monitor's own changes,
+// made without a person, are marked as automatic.
+func ActorLabel(actor string) string {
+	if actor == "cvewatch" {
+		return "cvewatch (automatic)"
+	}
+	return actor
+}
+
 // Detail is everything shown about one issue: the Issue, which the JSON
 // exports carry, and the facts only a full page needs. The markdown report
 // and the terminal page both draw from it.

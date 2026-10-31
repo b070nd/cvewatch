@@ -132,6 +132,14 @@ type Report struct {
 	Warnings    []string     `json:"warnings"`
 }
 
+// Reason explains an overall level of unknown, and is empty for any other.
+func (r Report) Reason() string {
+	if r.Level == Unknown {
+		return "no cycle has read a feed yet"
+	}
+	return ""
+}
+
 // Ref names a configured feed or channel, so health can be reported even for
 // ones that never ran.
 type Ref struct{ ID, Type string }
@@ -156,6 +164,8 @@ type Input struct {
 // A feed fails after three attempts in a row and warns after one. A feed or
 // channel that never ran is unknown, not broken. The daemon is overdue when
 // it is more than half an interval (at least ten minutes) past its next run.
+// The overall level is unknown, never ok, until a cycle has read a feed, and
+// warn when no feed is enabled.
 func Build(in Input) Report {
 	r := Report{GeneratedAt: in.Now, Level: OK, Projects: in.Projects, Scheduled: !in.Unscheduled}
 	stale := in.Interval * 2
@@ -214,11 +224,24 @@ func Build(in Input) Report {
 	if r.Daemon.Level == Fail {
 		r.Warnings = append(r.Warnings, r.Daemon.Message)
 	}
+	switch {
+	case len(in.Sources) == 0:
+		r.Level = r.Level.Worse(Warn)
+		r.Warnings = append(r.Warnings, "no enabled sources: nothing will be fetched")
+	case r.Level == OK && !succeeded(in):
+		r.Level = Unknown // no evidence yet is not good news
+	}
 	return r
 }
 
-// floor treats "never ran" as healthy for the overall level: unknown parts
-// are shown but do not make the whole tool look broken.
+// succeeded is whether a cycle has finished with at least one feed read.
+func succeeded(in Input) bool {
+	return slices.ContainsFunc(in.Cycles, func(c model.CycleRecord) bool { return c.Err == "" && c.Failed < len(in.Sources) })
+}
+
+// floor treats "never ran" as healthy for the parts: unknown parts are shown
+// but do not make the whole tool look broken. The overall level is unknown, not
+// ok, until a cycle has succeeded (see Build).
 func (l Level) floor() Level {
 	if l == Unknown {
 		return OK

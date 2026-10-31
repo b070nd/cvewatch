@@ -23,6 +23,36 @@ func statusStyle(st model.Status) lipgloss.Style {
 	return lipgloss.NewStyle()
 }
 
+// midTrunc cuts plain text to w cells by leaving out its middle, so that the
+// distinguishing tail of a name stays; it keeps a third of the room for the head.
+func midTrunc(s string, w int) string {
+	if width(s) <= w || w < 5 {
+		return trunc(s, w)
+	}
+	rs := []rune(s)
+	head, tail := (w-1)/3, w-1-(w-1)/3
+	var h, t strings.Builder
+	n := 0
+	for _, r := range rs {
+		if n+rw(r) > head {
+			break
+		}
+		h.WriteRune(r)
+		n += rw(r)
+	}
+	var tr []rune
+	n = 0
+	for i := len(rs) - 1; i >= 0; i-- {
+		if n+rw(rs[i]) > tail {
+			break
+		}
+		tr = append([]rune{rs[i]}, tr...)
+		n += rw(rs[i])
+	}
+	t.WriteString(string(tr))
+	return h.String() + "…" + t.String()
+}
+
 func orDash(s string) string {
 	if s == "" {
 		return "-"
@@ -120,7 +150,10 @@ func (d *detail) build(w int) *detailLayout {
 	if len(is.Targets) == 0 {
 		add("  (no environment is tracked for this issue)")
 	}
-	for _, t := range is.Targets {
+	for i, t := range is.Targets {
+		if d.scope != "" && t.Project != d.scope && (i == 0 || is.Targets[i-1].Project == d.scope) {
+			add(stMuted.Render("  other projects"))
+		}
 		due := "-"
 		if !t.Due.IsZero() {
 			due = day(t.Due)
@@ -128,7 +161,7 @@ func (d *detail) build(w int) *detailLayout {
 				due += " OVERDUE"
 			}
 		}
-		core := pad(oneLine(t.Project), 14) + " " + pad(string(t.Env), 8) + " " + pad(strings.ReplaceAll(string(t.Status), "_", " "), 12) + " " + pad(string(t.Applies), 12)
+		core := pad(midTrunc(oneLine(t.Project), 14), 14) + " " + pad(string(t.Env), 8) + " " + pad(strings.ReplaceAll(string(t.Status), "_", " "), 12) + " " + pad(string(t.Applies), 12)
 		rest := "owner " + orDash(oneLine(t.Owner)) + "  due " + due
 		if t.Ticket != "" {
 			rest += "  ticket " + oneLine(t.Ticket)
@@ -304,7 +337,7 @@ func (d *detail) buildEvidence(w int, out *[]string) {
 	for _, t := range d.det.Targets {
 		for _, e := range t.Evidence {
 			n++
-			s := day(e.Time) + " " + orDash(oneLine(e.Actor))
+			s := day(e.Time) + " " + orDash(oneLine(query.ActorLabel(e.Actor)))
 			if e.Note != "" {
 				s += ": " + oneLine(e.Note)
 			}
@@ -327,7 +360,7 @@ func (d *detail) buildHistory(w int, out *[]string) {
 	for _, h := range d.det.History {
 		s := h.Time.UTC().Format("2006-01-02 15:04") + " " + oneLine(h.Detail)
 		if h.Actor != "" {
-			s += " (by " + oneLine(h.Actor) + ")"
+			s += " (by " + oneLine(query.ActorLabel(h.Actor)) + ")"
 		}
 		if h.URL != "" {
 			s += " " + oneLine(h.URL)

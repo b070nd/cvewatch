@@ -39,6 +39,9 @@ type issueParts struct {
 	fs     []model.Finding
 	events []audit.Event
 	aerr   error
+	// restricted is set when the session sees only some projects, so the
+	// events were narrowed to theirs.
+	restricted bool
 }
 
 func (s *Session) issueParts(id string) (issueParts, error) {
@@ -58,11 +61,12 @@ func (s *Session) issueParts(id string) (issueParts, error) {
 	}
 	p.events, p.aerr = s.Audit.Events()
 	if len(f.Projects) > 0 {
+		p.restricted = true
 		p.events = slices.DeleteFunc(p.events, func(e audit.Event) bool { return !visibleTo(f.Projects, e.Project) })
 	}
 	return p, nil
 }
 
 func (p issueParts) pack(now time.Time) evidence.Pack {
-	return evidence.Build(p.v, p.fs, p.events, p.aerr, now)
+	return evidence.Build(p.v, p.fs, p.events, p.aerr, p.restricted, now)
 }

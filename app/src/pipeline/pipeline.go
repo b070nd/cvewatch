@@ -10,7 +10,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"maps"
 	"net/url"
 	"os"
 	"slices"
@@ -191,6 +190,7 @@ func (r *Runner) Run(ctx context.Context) (Result, error) {
 	}
 	c.catchUp()
 	c.reconcile(r.Only)
+	c.applyEnvs(&Revalidation{}, r.Only) // also repairs data from before a revalidation saw the change
 	r.report(Progress{Phase: PhaseEnrich})
 	if !r.BackfillOnly {
 		c.enrich(ctx)
@@ -202,7 +202,6 @@ func (r *Runner) Run(ctx context.Context) (Result, error) {
 	if err := c.writeReports(); err != nil {
 		return c.res, err
 	}
-	c.auditDetected()
 	if err := r.Audit.Append(c.events...); err != nil {
 		return c.res, err
 	}
@@ -398,11 +397,12 @@ func (c *cycle) reassess(v *model.Vulnerability) {
 // lockfile, a new declared version, a package that is gone, for the projects
 // of only (nil: all). It only changes
 // what the finding records about the installed version and the verdict that
-// follows from it; status, owner and notes are left alone.
+// follows from it; status, owner and notes are left alone. A package whose
+// lockfile cannot be read is not gone, it is unknown, and stays as it was.
 func (c *cycle) reconcile(only map[string]bool) {
 	l := c.r.Ledger
 	for _, f := range l.Findings() {
-		if f.Status != model.StatusOpen || len(f.Installed) == 0 || !has(only, f.Project) {
+		if f.Status != model.StatusOpen || !has(only, f.Project) {
 			continue
 		}
 		tg, ok := c.inv.Target(f.Project, f.Env)
@@ -410,11 +410,18 @@ func (c *cycle) reconcile(only map[string]bool) {
 		if !ok || v == nil {
 			continue
 		}
+		if len(f.Installed) == 0 {
+			c.reinstalled(f, tg, v)
+			continue
+		}
+		unreadable := len(c.inv.Unreadable(f.Project, f.Env)) > 0
 		var now []model.Installed
 		var changes, gone []string
 		for _, old := range f.Installed {
 			cur, found := tg.Find(old)
 			switch {
+			case !found && old.Via == "package" && unreadable:
+				now = append(now, old)
 			case !found:
 				gone = append(gone, old.Label())
 			case cur.Version != old.Version:
@@ -437,15 +444,36 @@ func (c *cycle) reconcile(only map[string]bool) {
 		for i, in := range now {
 			labels[i] = in.Label()
 		}
-		l.Mutate(f.Key(), func(m *model.Finding) {
-			m.Installed, m.Matched, m.Applies, m.Reasons, m.Updated = now, labels, applies, reasons, c.now
-			m.History = append(m.History, model.Disposition{Time: c.now, Actor: "cvewatch", Action: "inventory", Note: note})
-		})
-		c.events = append(c.events, audit.Event{Time: c.now, Actor: "cvewatch", Action: "inventory", Vuln: f.VulnID,
-			Project: f.Project, Env: string(f.Env), Note: note})
-		c.dirty[f.VulnID] = true
-		c.res.Reconciled++
+		c.inventoryChange(f, now, labels, applies, reasons, note)
 	}
+}
+
+// reinstalled judges a finding again that was left with nothing installed
+// ("no longer installed") when what it matched is back in the target, or was
+// wrongly given up on. The advisory ranges decide; it is judged like a new match.
+func (c *cycle) reinstalled(f model.Finding, tg relevance.Target, v *model.Vulnerability) {
+	if f.Applies != model.AppNotAffected || len(f.Reasons) == 0 || !strings.HasPrefix(f.Reasons[0], "no longer installed") {
+		return
+	}
+	for _, m := range c.judge.Judge(ItemOf(v, c.r.Cfg.Sources), []relevance.Target{tg}).Matches {
+		labels := make([]string, len(m.Installed))
+		for i, in := range m.Installed {
+			labels[i] = in.Label()
+		}
+		c.inventoryChange(f, m.Installed, labels, m.Applies, m.Reasons, "installed again: "+strings.Join(labels, ", ")+"; now "+string(m.Applies))
+	}
+}
+
+// inventoryChange records a new installed state on a finding, in its history and in the audit trail.
+func (c *cycle) inventoryChange(f model.Finding, now []model.Installed, labels []string, applies model.Applicability, reasons []string, note string) {
+	c.r.Ledger.Mutate(f.Key(), func(m *model.Finding) {
+		m.Installed, m.Matched, m.Applies, m.Reasons, m.Updated = now, labels, applies, reasons, c.now
+		m.History = append(m.History, model.Disposition{Time: c.now, Actor: "cvewatch", Action: "inventory", Note: note})
+	})
+	c.events = append(c.events, audit.Event{Time: c.now, Actor: "cvewatch", Action: "inventory", Vuln: f.VulnID,
+		Project: f.Project, Env: string(f.Env), Note: note})
+	c.dirty[f.VulnID] = true
+	c.res.Reconciled++
 }
 
 func prefixed(p string, xs []string) []string {
@@ -528,17 +556,27 @@ func (c *cycle) enrichEPSS(ctx context.Context) {
 
 func (c *cycle) addFindings(vulnID string, ms []relevance.Match) {
 	ms = slices.DeleteFunc(slices.Clone(ms), func(m relevance.Match) bool { return !has(c.r.Only, m.Project) })
-	n := AddFindings(c.r.Ledger, vulnID, ms, c.now)
-	c.res.Findings += n
-	if n > 0 {
+	made := AddFindings(c.r.Ledger, vulnID, ms, c.now)
+	c.res.Findings += len(made)
+	if len(made) > 0 {
 		c.res.Fresh[vulnID] = true
+	}
+	c.detected(made, "")
+}
+
+// detected records in the audit trail that findings came to be, whichever path
+// made them: a fetch, a revalidation or a catch-up.
+func (c *cycle) detected(made []model.Finding, note string) {
+	for _, f := range made {
+		c.events = append(c.events, audit.Event{Time: c.now, Actor: "cvewatch", Action: "detected", Vuln: f.VulnID,
+			Project: f.Project, Env: string(f.Env), Note: note})
 	}
 }
 
 // AddFindings creates one finding per matched project environment. It never
-// touches existing findings, so statuses survive. It returns how many were created.
-func AddFindings(l *ledger.Ledger, vulnID string, ms []relevance.Match, now time.Time) int {
-	created := 0
+// touches existing findings, so statuses survive. It returns the ones it created.
+func AddFindings(l *ledger.Ledger, vulnID string, ms []relevance.Match, now time.Time) []model.Finding {
+	var made []model.Finding
 	for _, m := range ms {
 		labels := make([]string, len(m.Installed))
 		for k, in := range m.Installed {
@@ -549,10 +587,10 @@ func AddFindings(l *ledger.Ledger, vulnID string, ms []relevance.Match, now time
 			Installed: m.Installed, Applies: m.Applies, Reasons: m.Reasons, Updated: now,
 		}
 		if l.AddFinding(f) {
-			created++
+			made = append(made, f)
 		}
 	}
-	return created
+	return made
 }
 
 // safeURL accepts only plain http(s) links. Feed links end up in markdown and
@@ -577,20 +615,6 @@ func (c *cycle) writeReports() error {
 		v.ReportPath = path
 	}
 	return nil
-}
-
-// auditDetected records when each new finding set was first seen.
-func (c *cycle) auditDetected() {
-	for _, id := range slices.Sorted(maps.Keys(c.res.Fresh)) {
-		var projects []string
-		for _, f := range c.r.Ledger.FindingsOf(id) {
-			if !slices.Contains(projects, f.Project) {
-				projects = append(projects, f.Project)
-			}
-		}
-		c.events = append(c.events, audit.Event{Time: c.now, Actor: "cvewatch", Action: "detected", Vuln: id,
-			Project: strings.Join(projects, ",")})
-	}
 }
 
 // alert sends every open finding that a channel has not been told about yet,

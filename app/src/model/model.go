@@ -39,12 +39,36 @@ var envSlug = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 // Valid says whether e is a usable name: a lowercase slug of 1 to 32 characters.
 func (e Env) Valid() bool { return envSlug.MatchString(string(e)) }
 
-// IsProd says whether e is a production environment.
-func IsProd(e Env) bool { return e == EnvProd || e == "production" }
+// IsProd says whether e is a production environment: prod or production, also
+// with a region or similar around it (prod-eu, eu_prod, production-us). A
+// leading non or pre (non-prod, pre-prod) makes it the opposite.
+func IsProd(e Env) bool {
+	s := string(e)
+	if s == "prod" || s == "production" {
+		return true
+	}
+	for _, w := range []string{"prod", "production"} {
+		for _, sep := range []string{"-", "_"} {
+			if strings.HasPrefix(s, w+sep) {
+				return true
+			}
+			if head, ok := strings.CutSuffix(s, sep+w); ok {
+				last := head[strings.LastIndexAny(head, "-_")+1:]
+				if last != "non" && last != "pre" && last != "not" && last != "no" {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
 
 // IsDevLike says whether e is a development environment, where
 // development-only packages count by default.
 func IsDevLike(e Env) bool {
+	if IsProd(e) {
+		return false
+	}
 	switch e {
 	case EnvLocal, EnvDev, EnvInt, "development", "test":
 		return true

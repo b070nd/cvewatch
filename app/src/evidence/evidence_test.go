@@ -34,7 +34,7 @@ func TestTimelineOrderingAcrossSources(t *testing.T) {
 		{Time: at(5), Actor: "cvewatch", Action: "detected", Vuln: "CVE-2026-0001"},
 		{Time: at(6), Actor: "other", Action: "status", Vuln: "CVE-2099-1", Project: "x", Env: "dev", Status: "fixed"},
 	}
-	p := Build(vuln(), nil, events, nil, at(9))
+	p := Build(vuln(), nil, events, nil, false, at(9))
 
 	var times []time.Time
 	for _, e := range p.Timeline {
@@ -74,7 +74,7 @@ func TestAuditAliasMatching(t *testing.T) {
 		{Time: at(7), Actor: "a", Action: "unified", Vuln: "cve-2026-0001"},
 		{Time: at(8), Actor: "a", Action: "digest"},
 	}
-	p := Build(vuln(), nil, events, nil, at(9))
+	p := Build(vuln(), nil, events, nil, false, at(9))
 	n := 0
 	for _, e := range p.Timeline {
 		if e.Source == SourceAudit {
@@ -96,7 +96,7 @@ func TestFallbackToHistory(t *testing.T) {
 	}
 	// Events read before the chain broke must not be trusted.
 	events := []audit.Event{{Time: at(7), Actor: "x", Action: "status", Vuln: "CVE-2026-0001"}}
-	p := Build(vuln(), []model.Finding{f}, events, errors.New("line 3: chain broken"), at(9))
+	p := Build(vuln(), []model.Finding{f}, events, errors.New("line 3: chain broken"), false, at(9))
 	if p.AuditIntact {
 		t.Fatal("audit must not be intact")
 	}
@@ -117,7 +117,7 @@ func TestFallbackToHistory(t *testing.T) {
 	}
 
 	// No error but no records either.
-	p = Build(vuln(), []model.Finding{f}, nil, nil, at(9))
+	p = Build(vuln(), []model.Finding{f}, nil, nil, false, at(9))
 	if p.AuditIntact || !strings.Contains(p.AuditNote, "no audit records found") || len(p.Timeline) < 6 {
 		t.Fatalf("intact=%v note=%q timeline=%d", p.AuditIntact, p.AuditNote, len(p.Timeline))
 	}
@@ -131,7 +131,7 @@ func TestMatrixOrder(t *testing.T) {
 		mk("shop", model.EnvProd), mk("api", model.EnvStaging), mk("shop", model.EnvDev),
 		mk("api", model.EnvDev), mk("shop", model.EnvStaging), mk("api", model.EnvInt), mk("api", model.EnvProd),
 	}
-	p := Build(vuln(), fs, nil, nil, at(9))
+	p := Build(vuln(), fs, nil, nil, false, at(9))
 	var got []string
 	for _, r := range p.Matrix {
 		got = append(got, r.Project+"/"+r.Env)
@@ -146,7 +146,7 @@ func TestMatrixOrder(t *testing.T) {
 }
 
 func TestKEVWithoutActionText(t *testing.T) {
-	p := Build(vuln(), nil, nil, nil, at(9))
+	p := Build(vuln(), nil, nil, nil, false, at(9))
 	var md, js bytes.Buffer
 	if err := p.WriteMarkdown(&md); err != nil {
 		t.Fatal(err)
@@ -189,7 +189,7 @@ func TestMarkdownEscapesHostileText(t *testing.T) {
 		},
 	}
 	events := []audit.Event{{Time: at(7), Actor: "a|b", Action: "evidence", Vuln: "CVE-2026-0001", Note: "<svg onload=1>\nline2"}}
-	p := Build(v, []model.Finding{f}, events, nil, at(9))
+	p := Build(v, []model.Finding{f}, events, nil, false, at(9))
 	var md bytes.Buffer
 	if err := p.WriteMarkdown(&md); err != nil {
 		t.Fatal(err)
@@ -235,7 +235,7 @@ func TestJSONRoundTrip(t *testing.T) {
 	}
 	v := vuln()
 	v.Fixes = []model.Fix{{Kind: model.FixVersion, Detail: "2.1.0", Source: "ghsa", Official: true}}
-	p := Build(v, []model.Finding{f}, nil, nil, at(9))
+	p := Build(v, []model.Finding{f}, nil, nil, false, at(9))
 	var buf bytes.Buffer
 	if err := p.WriteJSON(&buf); err != nil {
 		t.Fatal(err)
@@ -265,7 +265,7 @@ func TestJSONRoundTrip(t *testing.T) {
 }
 
 func TestEmptyFindings(t *testing.T) {
-	p := Build(&model.Vulnerability{ID: "CVE-2026-9"}, nil, nil, nil, at(9))
+	p := Build(&model.Vulnerability{ID: "CVE-2026-9"}, nil, nil, nil, false, at(9))
 	if p.Matrix == nil || p.Timeline == nil || len(p.Matrix) != 0 || len(p.Timeline) != 0 {
 		t.Fatalf("pack = %+v", p)
 	}
@@ -288,7 +288,7 @@ func TestEmptyFindings(t *testing.T) {
 
 func TestHistoryIsTheTimelineWithoutTheFeedsEvents(t *testing.T) {
 	events := []audit.Event{{Time: at(7), Actor: "ann", Action: "status", Vuln: "CVE-2026-0001", Project: "shop", Env: "prod", Status: "fixed", Note: "MR 12", URL: "https://git.example/mr/12"}}
-	h := Build(vuln(), nil, events, nil, at(9)).History()
+	h := Build(vuln(), nil, events, nil, false, at(9)).History()
 	var kinds []string
 	for _, e := range h {
 		kinds = append(kinds, e.Kind+"/"+e.Source)
@@ -299,7 +299,7 @@ func TestHistoryIsTheTimelineWithoutTheFeedsEvents(t *testing.T) {
 	if last := h[len(h)-1]; last.Actor != "ann" || last.URL != "https://git.example/mr/12" || !strings.Contains(last.Detail, "MR 12") {
 		t.Fatalf("history entry: %+v", last)
 	}
-	if len(Build(&model.Vulnerability{ID: "X"}, nil, nil, nil, at(9)).History()) != 0 {
+	if len(Build(&model.Vulnerability{ID: "X"}, nil, nil, nil, false, at(9)).History()) != 0 {
 		t.Fatal("nothing happened, so there is no history")
 	}
 }
@@ -308,7 +308,7 @@ func TestMatrixOrderWithOwnEnvironmentNames(t *testing.T) {
 	mk := func(e model.Env) model.Finding {
 		return model.Finding{Project: "shop", Env: e, Status: model.StatusOpen}
 	}
-	p := Build(vuln(), []model.Finding{mk("zeta"), mk("prod"), mk("qa"), mk("local"), mk("dev")}, nil, nil, at(9))
+	p := Build(vuln(), []model.Finding{mk("zeta"), mk("prod"), mk("qa"), mk("local"), mk("dev")}, nil, nil, false, at(9))
 	var got []string
 	for _, r := range p.Matrix {
 		got = append(got, r.Env)
@@ -316,4 +316,54 @@ func TestMatrixOrderWithOwnEnvironmentNames(t *testing.T) {
 	if want := []string{"local", "dev", "prod", "qa", "zeta"}; !slices.Equal(got, want) {
 		t.Fatalf("matrix = %v, want %v", got, want)
 	}
+}
+
+func TestRestrictedReaderWithNoVisibleRecords(t *testing.T) {
+	f := model.Finding{
+		Project: "mw", Env: model.EnvProd, Status: model.StatusOpen,
+		History: []model.Disposition{{Time: at(6), Actor: "cvewatch", Action: "detected"}},
+	}
+	p := Build(vuln(), []model.Finding{f}, nil, nil, true, at(9))
+	if !p.AuditIntact || !strings.Contains(p.AuditNote, "no audit records visible to you") {
+		t.Fatalf("intact=%v note=%q", p.AuditIntact, p.AuditNote)
+	}
+	if got := timelineKinds(p, SourceLedger); !slices.Contains(got, "detected") {
+		t.Fatalf("the ledger history stays: %v", got)
+	}
+	p = Build(vuln(), []model.Finding{f}, nil, errors.New("line 2: chain broken"), true, at(9))
+	if p.AuditIntact || !strings.Contains(p.AuditNote, "chain broken") {
+		t.Fatalf("a broken chain is an integrity failure for everyone: intact=%v note=%q", p.AuditIntact, p.AuditNote)
+	}
+	var md bytes.Buffer
+	if err := Build(vuln(), []model.Finding{f}, nil, nil, true, at(9)).WriteMarkdown(&md); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(md.String(), "| Audit trail intact | yes (no audit records visible to you") {
+		t.Fatalf("markdown:\n%s", md.String())
+	}
+}
+
+func TestAutomaticChangesAreLabelled(t *testing.T) {
+	events := []audit.Event{{Time: at(7), Actor: "cvewatch", Action: "status", Vuln: "CVE-2026-0001", Project: "shop", Env: "stage", Status: "ignored", Note: "environment removed from project"}}
+	p := Build(vuln(), nil, events, nil, false, at(9))
+	var md bytes.Buffer
+	if err := p.WriteMarkdown(&md); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(md.String(), "shop/stage set to ignored: environment removed from project (by cvewatch (automatic))") {
+		t.Fatalf("markdown:\n%s", md.String())
+	}
+	if p.Timeline[len(p.Timeline)-2].Actor != "cvewatch" && p.Timeline[len(p.Timeline)-1].Actor != "cvewatch" {
+		t.Fatalf("the JSON actor stays the plain name: %+v", p.Timeline)
+	}
+}
+
+func timelineKinds(p Pack, source string) []string {
+	var out []string
+	for _, e := range p.Timeline {
+		if e.Source == source {
+			out = append(out, e.Kind)
+		}
+	}
+	return out
 }

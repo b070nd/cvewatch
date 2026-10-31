@@ -332,7 +332,25 @@ func refresh(ctx context.Context, s *ops.Session, o listOpts) error {
 	if perr := printOpen(s, o, res.Fresh); perr != nil {
 		return perr
 	}
+	if err == nil {
+		err = allFailed(s.Cfg.Sources, res.Failed)
+	}
 	return err
+}
+
+// allFailed is the error of a run in which every polled source failed, so a
+// script notices that nothing new was read. One source failing is not an error.
+func allFailed(sources []model.Source, failed []string) error {
+	n := 0
+	for _, src := range sources {
+		if !src.Disabled {
+			n++
+		}
+	}
+	if n == 0 || len(failed) < n {
+		return nil
+	}
+	return fmt.Errorf("all %d sources failed; findings shown are from earlier runs", n)
 }
 
 // idAndFlags splits "ID -flag ..." because Go's flag package stops at the first non-flag.

@@ -1,5 +1,6 @@
-# Your own feeds, added to the shipped ones (a feed here with the same id
-# replaces the shipped feed). Technology-specific vendor feeds switch on by
+# Your own feeds, added to the shipped ones. An entry with the id of a shipped
+# feed changes only the fields it gives, so `- {id: cve-records, disabled: true}`
+# switches that feed off. Technology-specific vendor feeds switch on by
 # themselves when a project declares that technology.
 #
 # sources:

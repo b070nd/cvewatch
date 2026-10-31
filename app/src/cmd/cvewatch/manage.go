@@ -44,7 +44,11 @@ func statusCmd(s *ops.Session, args []string) error {
 }
 
 func printStatus(r status.Report) {
-	fmt.Printf("Overall: %s\n\nDaemon:  %-8s %s\n", r.Level, r.Daemon.Level, r.Daemon.Message)
+	overall := string(r.Level)
+	if why := r.Reason(); why != "" {
+		overall += " (" + why + ")"
+	}
+	fmt.Printf("Overall: %s\n\nDaemon:  %-8s %s\n", overall, r.Daemon.Level, r.Daemon.Message)
 	fmt.Println("\nFeeds")
 	for _, x := range r.Sources {
 		fmt.Printf("  %-8s %-22s %s\n", x.Level, x.ID, detail(x.LastSuccess, x.Failures, x.LastError, x.Items))

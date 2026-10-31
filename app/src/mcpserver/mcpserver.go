@@ -60,7 +60,7 @@ func build(root string, log *slog.Logger, allowWrite bool) *mcp.Server {
 		Description: "List vulnerabilities published in a month (default: this month) for a calendar view, with severity, techs, article count and fix availability."}, s.calendar)
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "get_evidence", Annotations: ro,
-		Description: "Evidence pack for one vulnerability: facts, per-environment status, and the timeline of detection, alerts, status changes, owners and attached evidence."}, s.evidence)
+		Description: "Evidence pack for one vulnerability: facts, per-environment status, and the timeline of detection (also of projects added later), alerts, status changes (automatic ones by cvewatch included), owners and attached evidence. For an actor limited to some projects the timeline holds only those projects' records. audit_intact is true when the audit chain verified, even if audit_note says no records are visible to you; it is false when the chain is broken or there are no audit records at all."}, s.evidence)
 	mcp.AddTool(srv, &mcp.Tool{Name: "policy_violations", Annotations: ro,
 		Description: "List open findings that break a configured policy rule (for example no owner within 24h for a KEV issue in prod) or their own due date."}, s.violations)
 

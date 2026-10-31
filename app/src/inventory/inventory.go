@@ -19,8 +19,9 @@ type Problem struct {
 	Project string
 	Path    string
 	Type    string
-	Err     string   // the source could not be read at all
-	Skipped []string // entries that were read but could not be used
+	Env     model.Env // the environment the source is for; empty for all
+	Err     string    // the source could not be read at all
+	Skipped []string  // entries that were read but could not be used
 }
 
 func (p Problem) String() string {
@@ -59,10 +60,10 @@ func Load(cfg *config.Bundle) *Inventory {
 			res, err := matrix.LoadResult(lf)
 			switch {
 			case err != nil:
-				inv.problems = append(inv.problems, Problem{Project: p.Name, Path: lf.Path, Type: lf.Type, Err: err.Error()})
+				inv.problems = append(inv.problems, Problem{Project: p.Name, Path: lf.Path, Type: lf.Type, Env: lf.Env, Err: err.Error()})
 				continue
 			case len(res.Skipped) > 0:
-				inv.problems = append(inv.problems, Problem{Project: p.Name, Path: lf.Path, Type: lf.Type, Skipped: res.Skipped})
+				inv.problems = append(inv.problems, Problem{Project: p.Name, Path: lf.Path, Type: lf.Type, Env: lf.Env, Skipped: res.Skipped})
 			}
 			files = append(files, loaded{lf, res.Packages})
 			inv.sources = append(inv.sources, Source{Project: p.Name, Type: lf.Type, Path: lf.Path, Env: lf.Env, Packages: len(res.Packages)})
@@ -116,6 +117,19 @@ func (i *Inventory) Target(project string, env model.Env) (relevance.Target, boo
 
 // Problems lists sources that failed or were only partly usable.
 func (i *Inventory) Problems() []Problem { return i.problems }
+
+// Unreadable lists the paths of the lockfiles and SBOMs of a project
+// environment that could not be read at all. What they hold is then unknown,
+// which is not the same as absent.
+func (i *Inventory) Unreadable(project string, env model.Env) []string {
+	var out []string
+	for _, p := range i.problems {
+		if p.Project == project && p.Err != "" && (p.Env == "" || p.Env == env) {
+			out = append(out, p.Path)
+		}
+	}
+	return out
+}
 
 // Sources lists what was read and how many packages each gave.
 func (i *Inventory) Sources() []Source { return i.sources }

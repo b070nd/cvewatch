@@ -254,7 +254,7 @@ func sourceFields(fs *[]Field, prefix, doc, section string) {
 		*fs = append(*fs, Field{Path: "sources", Doc: doc, Section: section, Label: "Feeds", Type: TypeList, Elem: TypeRecord, Key: "id",
 			Help: "Your own feeds, added to the shipped ones. A feed with a shipped id replaces it."})
 	}
-	*fs = append(*fs, row("id", "Id", TypeString, "Unique; the same id as a shipped feed replaces it."))
+	*fs = append(*fs, row("id", "Id", TypeString, "Unique; the same id as an existing feed changes only the fields given here."))
 	t := row("type", "Type", TypeEnum, "")
 	t.Enum = feeds.Types()
 	u := row("url", "URL", TypeString, "May contain {since}, {since_unix}, {since_date}, {now}. Never put credentials in it.")

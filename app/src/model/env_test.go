@@ -35,12 +35,12 @@ func TestSortEnvs(t *testing.T) {
 }
 
 func TestEnvMeaning(t *testing.T) {
-	for e, want := range map[Env]bool{"prod": true, "production": true, "staging": false, "prod-eu": false, "": false} {
+	for e, want := range map[Env]bool{"prod": true, "production": true, "staging": false, "prod-eu": true, "prod_us": true, "production-apac": true, "eu-prod": true, "eu_production": true, "preprod": false, "product": false, "prodigy": false, "non-prod": false, "pre_prod": false, "eu-pre-prod": false, "": false} {
 		if IsProd(e) != want {
 			t.Errorf("IsProd(%q) = %v", e, !want)
 		}
 	}
-	for e, want := range map[Env]bool{"local": true, "dev": true, "int": true, "development": true, "test": true, "staging": false, "prod": false, "qa": false} {
+	for e, want := range map[Env]bool{"local": true, "dev": true, "int": true, "development": true, "test": true, "staging": false, "prod": false, "prod-eu": false, "qa": false} {
 		if IsDevLike(e) != want {
 			t.Errorf("IsDevLike(%q) = %v", e, !want)
 		}

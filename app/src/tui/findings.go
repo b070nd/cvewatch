@@ -396,7 +396,8 @@ type detail struct {
 	sel     viewport // the environment rows, followed by project and env
 	body    viewport // the scrolling page
 	lay     *detailLayout
-	pos     int // where the issue is, or was, in the list
+	pos     int    // where the issue is, or was, in the list
+	scope   string // the scope the rows were ordered by: its project's rows come first
 }
 
 func targetID(t query.Target) string { return t.Project + "/" + string(t.Env) }
@@ -409,6 +410,7 @@ func (m *app) detailLoaded(msg detailMsg) {
 	if msg.err != nil && !d.loading && d.err == nil {
 		return // a refresh failed: the page on screen is still the latest there is
 	}
+	first := d.loading
 	d.loading, d.err, d.lay = false, msg.err, nil
 	if msg.err != nil {
 		return
@@ -422,13 +424,42 @@ func (m *app) detailLoaded(msg detailMsg) {
 	if msg.exErr != nil {
 		d.exErr = msg.exErr.Error()
 	}
+	d.scope = m.scope
 	slices.SortStableFunc(d.is.Targets, func(a, b query.Target) int {
+		if in, jn := a.Project == d.scope, b.Project == d.scope; in != jn {
+			if in {
+				return -1
+			}
+			return 1
+		}
 		if c := strings.Compare(a.Project, b.Project); c != 0 {
 			return c
 		}
 		return model.EnvCompare(a.Env, b.Env)
 	})
+	if first && d.sel.key == "" {
+		d.sel.key = d.scopedRow()
+	}
 	d.sel.refit(len(d.is.Targets), func(i int) string { return targetID(d.is.Targets[i]) })
+}
+
+// scopedRow is the row the page starts on under a scope: the first prod-like
+// environment of the scoped project, else its first row; "" without a scope or
+// a row there.
+func (d *detail) scopedRow() string {
+	var first string
+	for _, t := range d.is.Targets {
+		if d.scope == "" || t.Project != d.scope {
+			continue
+		}
+		if model.IsProd(t.Env) {
+			return targetID(t)
+		}
+		if first == "" {
+			first = targetID(t)
+		}
+	}
+	return first
 }
 
 // links are the links of the References section.
