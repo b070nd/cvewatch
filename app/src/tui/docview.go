@@ -107,7 +107,7 @@ func (m *app) openEvidence() tea.Cmd {
 		return nil
 	}
 	d.doc = newDoc(docEvidence, "", true)
-	cmd := m.start("loading the evidence pack...", "evidence "+d.id, 0, nil, evidenceCmd(m.b, d.id, d.filter))
+	cmd := m.start("loading the evidence pack...", "evidence "+d.id+filterKey(d.filter), 0, nil, evidenceCmd(m.b, d.id, d.filter, d))
 	if cmd == nil {
 		d.doc = nil
 	}
@@ -123,14 +123,15 @@ func (m *app) closeDoc() tea.Cmd {
 
 type evidenceMsg struct {
 	id   string
+	page *detail // the page it was read for; nil for any
 	text string
 	err  error
 }
 
 // evidenceCmd renders the evidence pack as markdown.
-func evidenceCmd(b Backend, id string, f query.Filter) tea.Cmd {
+func evidenceCmd(b Backend, id string, f query.Filter, page *detail) tea.Cmd {
 	return func() tea.Msg {
-		m := evidenceMsg{id: id}
+		m := evidenceMsg{id: id, page: page}
 		m.err = b.Read(func(s *ops.Session) error {
 			p, err := s.EvidenceIn(id, f)
 			if err != nil {
@@ -149,7 +150,7 @@ func evidenceCmd(b Backend, id string, f query.Filter) tea.Cmd {
 
 func (m *app) evidenceLoaded(msg evidenceMsg) outcome {
 	d := m.fnd.det
-	if d == nil || d.doc == nil || d.id != msg.id || d.doc.kind != docEvidence {
+	if d == nil || d.doc == nil || d.id != msg.id || (msg.page != nil && msg.page != d) || d.doc.kind != docEvidence {
 		return outcome{} // closed or left meanwhile
 	}
 	if msg.err != nil {

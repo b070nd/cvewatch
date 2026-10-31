@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -192,11 +193,16 @@ func expand(src model.Source, since, now time.Time) string {
 }
 
 // mergeHeaders combines the default Accept header with the source headers.
-// Source headers win; names are compared case-insensitively.
-func mergeHeaders(accept string, user map[string]string) map[string]string {
+// Source headers win; names are compared case-insensitively. The variable
+// named by auth_env, when set, becomes a bearer token unless the source gives
+// an Authorization header itself.
+func mergeHeaders(accept string, src model.Source) map[string]string {
 	out := map[string]string{"Accept": accept}
-	for k, v := range user {
+	for k, v := range src.Headers {
 		out[http.CanonicalHeaderKey(k)] = v
+	}
+	if tok := strings.TrimSpace(os.Getenv(src.AuthEnv)); src.AuthEnv != "" && tok != "" && out["Authorization"] == "" {
+		out["Authorization"] = "Bearer " + tok
 	}
 	return out
 }

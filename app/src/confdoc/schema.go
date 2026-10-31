@@ -261,7 +261,8 @@ func sourceFields(fs *[]Field, prefix, doc, section string) {
 	u.Secret = true
 	h := row("headers", "Headers", TypeMap, "Request headers, such as an API key. Values are never shown.")
 	h.Elem, h.Secret = TypeString, true
-	*fs = append(*fs, t, u, h,
+	a := row("auth_env", "Token variable", TypeEnvRef, "Name of the environment variable holding a token, sent as a Bearer Authorization header. Unset or empty sends nothing. The value is never shown.")
+	*fs = append(*fs, t, u, h, a,
 		row("disabled", "Disabled", TypeBool, "Keep the entry but do not poll it."),
 		row("match_title_only", "Match title only", TypeBool, "Match technologies on the title only; for firehoses like NVD."),
 		row("match_structured", "Match structured", TypeBool, "A technology with CPE names matches only on the feed's product data."))

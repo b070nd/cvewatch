@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -510,5 +511,37 @@ func TestKEVFieldsReachTheItem(t *testing.T) {
 	if !k.Ransomware || k.Action != "Apply updates per vendor instructions." ||
 		!k.DueDate.Equal(time.Date(2026, 1, 20, 0, 0, 0, 0, time.UTC)) || !k.DateAdded.Equal(time.Date(2025, 12, 30, 0, 0, 0, 0, time.UTC)) {
 		t.Fatalf("kev: %+v", k)
+	}
+}
+
+func TestAuthEnvSendsABearerTokenOnlyWhenTheVariableHasAValue(t *testing.T) {
+	src := model.Source{ID: "ghsa", Type: "ghsa", URL: "https://api.test/advisories", AuthEnv: "CVEWATCH_TEST_GHSA_TOKEN"}
+	run := func(src model.Source) map[string]string {
+		g := body(`[]`)
+		if _, _, err := Fetch(context.Background(), g, src, model.FeedState{}, now, time.Hour); err != nil {
+			t.Fatal(err)
+		}
+		return g.headers
+	}
+	t.Setenv("CVEWATCH_TEST_GHSA_TOKEN", "")
+	if _, ok := run(src)["Authorization"]; ok {
+		t.Error("an empty variable must send no header")
+	}
+	os.Unsetenv("CVEWATCH_TEST_GHSA_TOKEN")
+	if _, ok := run(src)["Authorization"]; ok {
+		t.Error("an unset variable must send no header")
+	}
+	t.Setenv("CVEWATCH_TEST_GHSA_TOKEN", "tok-123\n")
+	if got := run(src)["Authorization"]; got != "Bearer tok-123" {
+		t.Errorf("Authorization = %q", got)
+	}
+	src.AuthEnv = ""
+	if _, ok := run(src)["Authorization"]; ok {
+		t.Error("a source without auth_env sends no token")
+	}
+	src.AuthEnv = "CVEWATCH_TEST_GHSA_TOKEN"
+	src.Headers = map[string]string{"authorization": "Bearer own"}
+	if got := run(src)["Authorization"]; got != "Bearer own" {
+		t.Errorf("a header of the source wins: %q", got)
 	}
 }

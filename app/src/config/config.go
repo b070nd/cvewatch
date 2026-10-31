@@ -393,6 +393,7 @@ func assemble(root string, lenient bool, over Overlay) (*Bundle, []Issue) {
 		}
 		og.projects[p.Name] = path
 		for i, lf := range p.Lockfiles {
+			p.Lockfiles[i].Declared = lf.Path
 			p.Lockfiles[i].Path = resolve(root, lf.Path) // relative paths follow the app root, not the working directory
 		}
 		if lenient {
@@ -529,6 +530,13 @@ func (b *Bundle) validate(decoded map[string]bool, og origins) []Issue {
 			}
 			fail(file, field, "source %q: %v", s.ID, err) // never echo the URL: it may hold a token
 		}
+		if s.AuthEnv != "" && !envName.MatchString(s.AuthEnv) {
+			field := ""
+			if mine {
+				field = base + ".auth_env"
+			}
+			fail(file, field, "source %q: auth_env must be the name of an environment variable, not its value", s.ID) // never echo it: it may be the token
+		}
 	}
 	if b.Interval <= 0 {
 		fail(og.settings, "interval", "interval must be positive")
@@ -581,6 +589,8 @@ func (b *Bundle) validate(decoded map[string]bool, og origins) []Issue {
 	}
 	return out
 }
+
+var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 var placeholders = strings.NewReplacer("{since}", "x", "{since_unix}", "0", "{since_date}", "x", "{now}", "x")
 

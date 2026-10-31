@@ -25,7 +25,7 @@ const (
 // GitHub answers are followed along their Link header. A source that is not
 // paged takes one request.
 func fetchPages(ctx context.Context, g Getter, src model.Source, p parser, prev model.Validators, since, now time.Time, progress func(done, total int)) (items []model.Item, valids model.Validators, notModified bool, resume time.Time, err error) {
-	headers := mergeHeaders(p.accept, src.Headers)
+	headers := mergeHeaders(p.accept, src)
 	note := func(done, total int) {
 		if progress != nil {
 			progress(done, total)

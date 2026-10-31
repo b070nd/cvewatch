@@ -48,3 +48,30 @@ func TestNilLogAndMissingFile(t *testing.T) {
 		t.Fatal("actor override ignored")
 	}
 }
+
+func TestRenamesChainOldNotesAndFailures(t *testing.T) {
+	at := func(h int, e Event) Event { e.Time = time.Unix(int64(h)*3600, 0).UTC(); e.Action = "project"; return e }
+	evs := []Event{
+		{Action: "detected", Project: "a"},                                                           // 0
+		at(1, Event{Project: "a", To: "b", Note: "renamed project to b: 2 findings moved"}),          // 1
+		{Action: "detected", Project: "b"},                                                           // 2
+		at(2, Event{Project: "b", Note: "renamed project to c: 2 findings moved; access x updated"}), // 3: old log, no To
+		at(3, Event{Project: "c", To: "d", Note: "renamed project to d: 2 findings moved"}),          // 4: failed below
+		{Time: time.Unix(3*3600, 0).UTC(), Action: "project-failed", Project: "c"},                   // 5
+		at(4, Event{Project: "c", Note: "edited project file: 1 change(s)"}),                         // 6
+		{Action: "detected", Project: "a"},                                                           // 7: a new project reusing the name
+	}
+	rs := Renames(evs)
+	if len(rs) != 2 || rs[0] != (Rename{"a", "b", 1}) || rs[1] != (Rename{"b", "c", 3}) {
+		t.Fatalf("renames: %+v", rs)
+	}
+	for _, c := range []struct {
+		name string
+		at   int
+		want string
+	}{{"a", 0, "c"}, {"b", 2, "c"}, {"c", 5, "c"}, {"a", 7, "a"}, {"b", 4, "b"}, {"x", 0, "x"}} {
+		if got := CurrentName(rs, c.name, c.at); got != c.want {
+			t.Errorf("%s at %d: %s, want %s", c.name, c.at, got, c.want)
+		}
+	}
+}

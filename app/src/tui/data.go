@@ -256,6 +256,7 @@ type (
 	}
 	detailMsg struct {
 		id    string
+		page  *detail // the page it was read for; nil for any
 		is    query.Issue
 		det   *query.Detail // the same issue with its links, installed versions, evidence and history; nil when not read
 		md    string        // its report
@@ -319,9 +320,9 @@ func loadLandCmd(b Backend, memo *staleMemo, land *landing) tea.Cmd {
 
 // detailCmd reads the page of an issue. Reading the audit trail for its
 // history makes this the dearest read, so it runs once per open and refresh.
-func detailCmd(b Backend, id string, f query.Filter) tea.Cmd {
+func detailCmd(b Backend, id string, f query.Filter, page *detail) tea.Cmd {
 	return func() tea.Msg {
-		m := detailMsg{id: id}
+		m := detailMsg{id: id, page: page}
 		m.err = b.Read(func(s *ops.Session) (e error) {
 			full, e := s.IssueDetailIn(id, f)
 			if e != nil {

@@ -580,6 +580,9 @@ func (u undoStack) unwind() string {
 func (s *Session) runLifecycle(pl *lifecyclePlan) (err error) {
 	now := s.Now()
 	ev := audit.Event{Time: now, Actor: s.Actor, Action: "project", Project: pl.name, Note: pl.auditNote()}
+	if pl.req.Verb == VerbRename {
+		ev.To = pl.newName
+	}
 	if err := s.Audit.Append(ev); err != nil {
 		return fmt.Errorf("audit log: %w", err) // never change anything without a record
 	}

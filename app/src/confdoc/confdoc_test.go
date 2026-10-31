@@ -675,3 +675,19 @@ func TestShippedSettingsFileDocumentsTheUpdateKeys(t *testing.T) {
 		t.Errorf("the project example does not show the update block:\n%s", example)
 	}
 }
+
+func TestSourceAuthEnvTakesAVariableNameNeverAToken(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, "sources/custom.yaml", "sources:\n  - {id: vendor, type: rss, url: \"https://example.com/feed.xml\"}\n")
+	s := mustRead(t, root)
+	if f, ok := Lookup(KindSources, "sources.[id=vendor].auth_env"); !ok || f.Type != TypeEnvRef {
+		t.Fatalf("schema: %+v %v", f, ok)
+	}
+	c := mustWith(t, s, Edit{Op: OpSet, Path: "sources.[id=vendor].auth_env", Value: "VENDOR_TOKEN"})
+	if !strings.Contains(text(t, c, "sources/custom"), "auth_env: VENDOR_TOKEN") {
+		t.Fatalf("not written:\n%s", text(t, c, "sources/custom"))
+	}
+	if _, err := s.With(Edit{Op: OpSet, Path: "sources.[id=vendor].auth_env", Value: "ghp_abc-123 def"}); err == nil || strings.Contains(err.Error(), "ghp_abc") {
+		t.Fatalf("a token must be refused without echoing it: %v", err)
+	}
+}

@@ -73,6 +73,38 @@ func (e *StatusError) Error() string {
 	return fmt.Sprintf("GET %s: unexpected status %d %s", e.URL, e.Code, http.StatusText(e.Code))
 }
 
+// RateLimitError reports that the host refused the request because a request
+// limit is used up, and when it allows requests again.
+type RateLimitError struct {
+	Host  string
+	Code  int
+	Until time.Time
+}
+
+func (e *RateLimitError) Error() string {
+	return fmt.Sprintf("rate limited by %s until %s; set auth_env on the source for a higher limit", e.Host, e.Until.Local().Format("15:04"))
+}
+
+// rateLimitUntil tells whether a 403 or 429 answer is a request limit and when
+// it ends: Retry-After, else X-RateLimit-Reset (epoch seconds) when
+// X-RateLimit-Remaining is 0. Other answers are not limits.
+func rateLimitUntil(h http.Header, now time.Time) (time.Time, bool) {
+	if v := strings.TrimSpace(h.Get("Retry-After")); v != "" {
+		if secs, err := strconv.ParseInt(v, 10, 64); err == nil && secs >= 0 {
+			return now.Add(time.Duration(min(secs, 1<<30)) * time.Second), true
+		}
+		if t, err := http.ParseTime(v); err == nil {
+			return t, true
+		}
+	}
+	if strings.TrimSpace(h.Get("X-RateLimit-Remaining")) == "0" {
+		if secs, err := strconv.ParseInt(strings.TrimSpace(h.Get("X-RateLimit-Reset")), 10, 64); err == nil && secs > 0 {
+			return time.Unix(secs, 0), true
+		}
+	}
+	return time.Time{}, false
+}
+
 // redact drops credentials and the query string, where API tokens tend to
 // live, so URLs are safe to put in logs and errors.
 func redact(u *url.URL) string {
@@ -180,6 +212,9 @@ func (c *Client) Get(ctx context.Context, rawURL string, prev model.Validators, 
 	g := c.gate(strings.ToLower(u.Hostname()))
 	attempts := c.opt.Retries + 1
 	for i := 0; ; i++ {
+		if until := g.limitedUntil(); time.Now().Before(until) { // the host said so a moment ago
+			return nil, fmt.Errorf("httpx: %w", &RateLimitError{Host: u.Hostname(), Until: until})
+		}
 		if err := g.wait(ctx); err != nil {
 			return nil, fmt.Errorf("httpx: GET %s: %w", shown, err)
 		}
@@ -230,7 +265,21 @@ func (c *Client) attempt(ctx context.Context, g *gate, u *url.URL, prev model.Va
 	defer resp.Body.Close()
 	g.observe(resp.StatusCode, c.opt.Threshold429, c.opt.Cooldown429)
 
+	now := time.Now()
+	until, limited := time.Time{}, false
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
+		until, limited = rateLimitUntil(resp.Header, now)
+	}
 	switch code := resp.StatusCode; {
+	case limited:
+		io.Copy(io.Discard, io.LimitReader(resp.Body, drainLimit))
+		err := &RateLimitError{Host: u.Hostname(), Code: code, Until: until}
+		wait := until.Sub(now)
+		if wait > c.waitCap() { // not worth sleeping inside a cycle
+			g.limitUntil(until)
+			return nil, err
+		}
+		return nil, &retryError{err: err, after: max(wait, 0)}
 	case code == http.StatusNotModified:
 		return &Response{NotModified: true, Validators: prev}, nil
 	case code >= 200 && code < 300:
@@ -245,6 +294,14 @@ func (c *Client) attempt(ctx context.Context, g *gate, u *url.URL, prev model.Va
 		io.Copy(io.Discard, io.LimitReader(resp.Body, drainLimit))
 		return nil, &StatusError{Code: code, URL: redact(u)}
 	}
+}
+
+// waitCap is the longest wait for a request limit that is worth it.
+func (c *Client) waitCap() time.Duration {
+	if c.opt.Cooldown429 > 0 {
+		return c.opt.Cooldown429
+	}
+	return maxWait
 }
 
 func (c *Client) newRequest(ctx context.Context, u *url.URL, prev model.Validators, headers map[string]string) (*http.Request, error) {

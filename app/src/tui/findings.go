@@ -362,8 +362,9 @@ func (m *app) openIssueIn(project, id string) tea.Cmd {
 	if project != "" {
 		f = query.Filter{Project: project}
 	}
-	m.fnd.det = &detail{id: id, project: project, filter: f, loading: true, body: scrolling(), pos: m.visibleIssue(project, id)}
-	return m.start("loading "+oneLine(id)+"...", "show "+id, 0, nil, detailCmd(m.b, id, f))
+	d := &detail{id: id, project: project, filter: f, loading: true, body: scrolling(), pos: m.visibleIssue(project, id)}
+	m.fnd.det = d
+	return m.start("loading "+oneLine(id)+"...", "show "+id+filterKey(f), 0, nil, detailCmd(m.b, id, f, d))
 }
 
 // clickIssue selects the issue drawn on the given body line, the count line
@@ -598,11 +599,15 @@ type detail struct {
 	filter  query.Filter // what the page, its report and its evidence are read for
 }
 
+// filterKey tells the operations of one context from those of another, so that
+// a read that is still running for the old one does not hold up the new one.
+func filterKey(f query.Filter) string { return "\x00" + f.Vendor + "\x00" + f.Project }
+
 func targetID(t query.Target) string { return t.Project + "/" + string(t.Env) }
 
 func (m *app) detailLoaded(msg detailMsg) {
 	d := m.fnd.det
-	if d == nil || d.id != msg.id {
+	if d == nil || d.id != msg.id || (msg.page != nil && msg.page != d) {
 		return
 	}
 	if msg.err != nil && !d.loading && d.err == nil {

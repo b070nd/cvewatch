@@ -14,6 +14,19 @@ type gate struct {
 	next    time.Time // earliest start of the next request
 	blocked time.Time // end of the current cooldown
 	streak  int       // consecutive 429 responses
+	limited time.Time // the host refused requests until then (a request limit)
+}
+
+func (g *gate) limitUntil(t time.Time) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.limited = t
+}
+
+func (g *gate) limitedUntil() time.Time {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.limited
 }
 
 // wait reserves the next free slot and sleeps until it starts. Slots are

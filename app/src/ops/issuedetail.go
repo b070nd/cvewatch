@@ -1,7 +1,6 @@
 package ops
 
 import (
-	"slices"
 	"strings"
 	"time"
 
@@ -70,10 +69,7 @@ func (s *Session) issueParts(id string, f query.Filter) (issueParts, error) {
 	p.events, p.aerr = s.Audit.Events()
 	if len(f.Projects) > 0 || f.Project != "" || f.Vendor != "" {
 		p.restricted = true
-		p.events = slices.DeleteFunc(p.events, func(e audit.Event) bool { return !visibleIn(f, &e) })
-		for i := range p.events { // a record of several projects names only those in view
-			p.events[i].Project = visibleProjects(f, p.events[i].Project)
-		}
+		p.events = narrowEvents(p.events, f)
 	}
 	return p, nil
 }
@@ -86,18 +82,28 @@ func (p issueParts) pack(now time.Time) evidence.Pack {
 	return pk
 }
 
-// visibleIn reports whether an audit record concerns no project or one the filter allows.
-func visibleIn(f query.Filter, e *audit.Event) bool {
-	return e.Project == "" || slices.ContainsFunc(strings.Split(e.Project, ","), f.Allows)
-}
-
-// visibleProjects keeps the allowed projects of a record's comma-separated project field.
-func visibleProjects(f query.Filter, project string) string {
-	var keep []string
-	for _, p := range strings.Split(project, ",") {
-		if project == "" || f.Allows(p) {
-			keep = append(keep, p)
+// narrowEvents keeps the records that concern no project or one the filter
+// allows, and cuts a record of several projects down to those in view. A record
+// made under a name the project had before a rename counts for the project it
+// is now, so a reader of the new name sees what was detected under the old one.
+func narrowEvents(events []audit.Event, f query.Filter) []audit.Event {
+	renames := audit.Renames(events)
+	var out []audit.Event
+	for i, e := range events {
+		if e.Project == "" {
+			out = append(out, e)
+			continue
+		}
+		var keep []string
+		for _, name := range strings.Split(e.Project, ",") {
+			if f.Allows(name) || f.Allows(audit.CurrentName(renames, name, i)) {
+				keep = append(keep, name)
+			}
+		}
+		if len(keep) > 0 {
+			e.Project = strings.Join(keep, ",")
+			out = append(out, e)
 		}
 	}
-	return strings.Join(keep, ",")
+	return out
 }

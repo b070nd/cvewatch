@@ -30,7 +30,7 @@ func addSetupTools(srv *mcp.Server, s *server, allowWrite bool) {
 	mcp.AddTool(srv, &mcp.Tool{Name: "get_status", Annotations: ro,
 		Description: "Health of the monitor itself: whether the daemon is running, whether each feed and notification channel works, and what the last cycles did. The level is green (nothing needs attention), yellow (something does) or red (the monitor cannot be relied on), the worst of the problems; problems lists each cause, red first, with a detail, a hint and since when."}, s.status)
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_projects", Annotations: ro,
-		Description: "List the monitored projects with their vendor, environments, declared technologies and lockfiles."}, s.projects)
+		Description: "List the monitored projects with their vendor, environments, declared technologies and lockfiles. A lockfile shows its resolved path and, when the file spells it differently, declared_path; remove_lockfile accepts either."}, s.projects)
 	mcp.AddTool(srv, &mcp.Tool{Name: "check_projects", Annotations: ro,
 		Description: "Find problems in project files: unknown or misspelled technologies, lockfiles that are missing, unreadable or of the wrong type, environments that are not monitored. Each problem names its project and field and may list fixes, each a label and the changes to pass to preview_project_change and edit_project. Without a project, every project you may see is checked."}, s.checkProjects)
 	mcp.AddTool(srv, &mcp.Tool{Name: "preview_project_change", Annotations: ro, InputSchema: projectInSchema(),

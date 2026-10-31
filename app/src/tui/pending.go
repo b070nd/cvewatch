@@ -199,7 +199,7 @@ func (m *app) refresh(set reloadSet) tea.Cmd {
 		cmds = append(cmds, loadLandCmd(m.b, m.stl, nil))
 	}
 	if d := m.fnd.det; set&reDetail != 0 && d != nil {
-		cmds = append(cmds, detailCmd(m.b, d.id, d.filter))
+		cmds = append(cmds, detailCmd(m.b, d.id, d.filter, d))
 	}
 	return tea.Batch(cmds...)
 }

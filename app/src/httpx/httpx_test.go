@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -341,5 +342,65 @@ func TestNonPublicRanges(t *testing.T) {
 		if nonPublic(netip.MustParseAddr(s)) {
 			t.Errorf("%s must be public", s)
 		}
+	}
+}
+
+func TestRateLimit403FailsFastAndBlocksTheHost(t *testing.T) {
+	reset := time.Now().Add(time.Hour)
+	ts, calls := serve(t, func(_ int, w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(reset.Unix(), 10))
+		w.WriteHeader(http.StatusForbidden)
+	})
+	c := New(fast(Options{Retries: 3, Cooldown429: time.Minute}))
+	start := time.Now()
+	_, err := c.Get(context.Background(), ts.URL+"/advisories?access_token=SECRET", model.Validators{}, map[string]string{"Authorization": "Bearer SECRET"})
+	var rl *RateLimitError
+	if !errors.As(err, &rl) || rl.Code != 403 || !rl.Until.Equal(time.Unix(reset.Unix(), 0)) {
+		t.Fatalf("err = %v, want RateLimitError until the reset", err)
+	}
+	want := "rate limited by 127.0.0.1 until " + time.Unix(reset.Unix(), 0).Local().Format("15:04") + "; set auth_env on the source for a higher limit"
+	if err.Error() != "httpx: "+want {
+		t.Fatalf("err = %q", err)
+	}
+	if strings.Contains(err.Error(), "SECRET") || strings.Contains(err.Error(), "access_token") {
+		t.Fatalf("secret in error: %v", err)
+	}
+	if time.Since(start) > 5*time.Second || calls.Load() != 1 {
+		t.Fatalf("took %v with %d calls, want one request and no waiting", time.Since(start), calls.Load())
+	}
+	// the next request to the host fails without asking again
+	if _, err := c.Get(context.Background(), ts.URL+"/other", model.Validators{}, nil); !errors.As(err, &rl) || calls.Load() != 1 {
+		t.Fatalf("err = %v, calls = %d", err, calls.Load())
+	}
+}
+
+func TestRateLimitShortWaitIsRetried(t *testing.T) {
+	for _, code := range []int{http.StatusForbidden, http.StatusTooManyRequests} {
+		ts, calls := serve(t, func(n int, w http.ResponseWriter, _ *http.Request) {
+			if n == 1 {
+				w.Header().Set("Retry-After", "1")
+				w.WriteHeader(code)
+				return
+			}
+			w.Write([]byte("ok"))
+		})
+		start := time.Now()
+		res, err := New(fast(Options{Retries: 1, Cooldown429: time.Minute})).Get(context.Background(), ts.URL, model.Validators{}, nil)
+		if err != nil || string(res.Body) != "ok" || calls.Load() != 2 || time.Since(start) < 900*time.Millisecond {
+			t.Fatalf("%d: res %v err %v calls %d after %v", code, res, err, calls.Load(), time.Since(start))
+		}
+	}
+}
+
+func TestRateLimitNeedsTheHeaders(t *testing.T) {
+	ts, calls := serve(t, func(_ int, w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-RateLimit-Remaining", "12")
+		w.WriteHeader(http.StatusForbidden)
+	})
+	_, err := New(fast(Options{Retries: 2})).Get(context.Background(), ts.URL, model.Validators{}, nil)
+	var se *StatusError
+	if !errors.As(err, &se) || se.Code != 403 || calls.Load() != 1 {
+		t.Fatalf("a plain 403 keeps its message: %v (calls %d)", err, calls.Load())
 	}
 }

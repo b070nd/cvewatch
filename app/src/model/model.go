@@ -183,6 +183,7 @@ type Source struct {
 	Type     string            `yaml:"type"` // rss | hn | nvd | kev | ghsa | csaf | cve
 	URL      string            `yaml:"url"`  // may contain {since} (RFC3339) and {since_unix}
 	Headers  map[string]string `yaml:"headers"`
+	AuthEnv  string            `yaml:"auth_env"` // env var holding a token, sent as "Authorization: Bearer"; unset or empty sends nothing
 	Disabled bool              `yaml:"disabled"`
 	// MatchTitleOnly limits tech matching to the title. Use it for firehoses
 	// like NVD, whose descriptions mention platforms ("... written in PHP").
@@ -449,6 +450,9 @@ type Lockfile struct {
 	// Dev includes development-only packages (composer require-dev and the
 	// like) in every environment. By default they count only in development-like environments (see IsDevLike).
 	Dev bool `yaml:"dev" json:"dev,omitempty"`
+	// Declared is the path as the project file spells it, kept when the loader
+	// turns Path into an absolute one.
+	Declared string `yaml:"-" json:"-"`
 }
 
 func (p Project) EffectiveEnvs() []Env {

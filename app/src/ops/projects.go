@@ -90,8 +90,11 @@ type EnvDiff struct {
 type LockEntry struct {
 	Type string `json:"type"`
 	Path string `json:"path"`
-	Env  string `json:"env,omitempty"`
-	Dev  bool   `json:"dev,omitempty"`
+	// DeclaredPath is the path as the project file spells it, when Path is the
+	// resolved one; edit operations accept either.
+	DeclaredPath string `json:"declared_path,omitempty"`
+	Env          string `json:"env,omitempty"`
+	Dev          bool   `json:"dev,omitempty"`
 }
 
 // ViewOf copies the parts of a project worth showing.
@@ -112,7 +115,11 @@ func ViewOf(p model.Project) ProjectView {
 		v.Differences = append(v.Differences, EnvDiff{Env: string(e), Techs: c.Techs, Exclude: c.Exclude, Image: c.Image, Old: c.Old})
 	}
 	for _, l := range p.Lockfiles {
-		v.Lockfiles = append(v.Lockfiles, LockEntry{l.Type, l.Path, string(l.Env), l.Dev})
+		declared := ""
+		if l.Declared != "" && l.Declared != l.Path {
+			declared = l.Declared
+		}
+		v.Lockfiles = append(v.Lockfiles, LockEntry{Type: l.Type, Path: l.Path, DeclaredPath: declared, Env: string(l.Env), Dev: l.Dev})
 	}
 	if !p.Since.IsZero() {
 		v.Since = p.Since.Format(projectfile.SinceLayout)
@@ -244,6 +251,47 @@ func declaredName(path, fallback string) string {
 	return f.Project().Name
 }
 
+// declaredLockOps lets remove_lockfile and set_lockfile_dev name a lockfile by
+// the path the project file declares or by the resolved one that listings
+// show. The declared spelling is tried first; else the one declared path that
+// resolves to the given one is used. Several spellings of it are an error.
+func (s *Session) declaredLockOps(f *projectfile.File, list []projectfile.Op) ([]projectfile.Op, error) {
+	out := slices.Clone(list)
+	locks := f.Project().Lockfiles
+	resolve := func(p string) string {
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(s.Cfg.Root, p)
+		}
+		return filepath.Clean(p)
+	}
+	for i, op := range out {
+		if op.Kind != "remove_lockfile" && op.Kind != "set_lockfile_dev" {
+			continue
+		}
+		var declared []string
+		for _, l := range locks {
+			if op.Lockfile.Env != "" && l.Env != op.Lockfile.Env {
+				continue
+			}
+			if l.Path == op.Lockfile.Path {
+				declared = nil
+				break
+			}
+			if resolve(l.Path) == resolve(op.Lockfile.Path) && !slices.Contains(declared, l.Path) {
+				declared = append(declared, l.Path)
+			}
+		}
+		switch len(declared) {
+		case 0:
+		case 1:
+			out[i].Lockfile.Path = declared[0]
+		default:
+			return nil, fmt.Errorf("lockfile path %q is ambiguous: the project declares it as %q and as %q; use one of them", op.Lockfile.Path, declared[0], declared[1])
+		}
+	}
+	return out, nil
+}
+
 func absPath(p string) string {
 	if abs, err := filepath.Abs(p); err == nil {
 		return abs
@@ -281,6 +329,9 @@ func (s *Session) EditProject(c ProjectChange) (ProjectPreview, error) {
 			return out, err
 		}
 	default:
+		return out, err
+	}
+	if c.Ops, err = s.declaredLockOps(f, c.Ops); err != nil {
 		return out, err
 	}
 	if err := f.Apply(c.Ops...); err != nil {

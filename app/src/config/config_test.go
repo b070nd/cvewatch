@@ -543,3 +543,33 @@ func TestVendorGrantCoversEveryProjectOfTheVendorAtRequestTime(t *testing.T) {
 		t.Fatalf("dave: %v open=%v", got, open)
 	}
 }
+
+func TestShippedGhsaSourceReadsItsTokenFromTheEnvironment(t *testing.T) {
+	b, issues := Check(t.TempDir(), nil)
+	if len(issues) != 0 {
+		t.Fatalf("%+v", issues)
+	}
+	if s, ok := sourceByID(b, "ghsa"); !ok || s.AuthEnv != "GITHUB_TOKEN" {
+		t.Fatalf("ghsa = %+v", s)
+	}
+	root := t.TempDir()
+	put(t, root, "sources/a.yaml", "sources:\n  - {id: ghsa, auth_env: MY_TOKEN}\n")
+	b, _ = Check(root, nil)
+	if s, _ := sourceByID(b, "ghsa"); s.AuthEnv != "MY_TOKEN" || s.Type != "ghsa" {
+		t.Fatalf("override: %+v", s)
+	}
+}
+
+func TestSourceAuthEnvMustBeAVariableNameNotAToken(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, "sources/a.yaml", "sources:\n  - {id: ghsa, auth_env: 'ghp_secret-value 123'}\n")
+	_, issues := Check(root, nil)
+	if len(issues) == 0 || issues[0].Field != "sources.[id=ghsa].auth_env" {
+		t.Fatalf("%+v", issues)
+	}
+	for _, i := range issues {
+		if strings.Contains(i.Msg, "ghp_secret") {
+			t.Errorf("the value is echoed: %q", i.Msg)
+		}
+	}
+}

@@ -276,7 +276,7 @@ func (m *app) fetchDone(msg fetchDoneMsg) tea.Cmd {
 		return nil
 	case errors.Is(msg.err, ops.ErrDenied) && msg.job.auto:
 		m.fet.denied = true
-		m.note("no automatic updates: you may not change every project; F fetches what you may")
+		m.note("no automatic updates: you may not change every project; u fetches what you may")
 		return nil
 	case msg.err != nil:
 		m.fail("fetch failed: " + msg.err.Error())
