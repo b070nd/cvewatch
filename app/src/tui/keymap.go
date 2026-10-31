@@ -108,7 +108,7 @@ func bindReturn(level string) binding {
 }
 
 func rootBinds(own ...binding) []binding {
-	return append(append(own, bindScreens(), bindTabs(), bindJump(), bindClearScope(), bindRefresh(), bindFetch(), bindHelp()), bindQuit())
+	return append(append(own, bindScreens(), bindTabs(), bindJump(), bindClearScope(), bindClearTime(), bindRefresh(), bindFetch(), bindHelp()), bindQuit())
 }
 
 func viewportOf(get func(m *app) *viewport) func(m *app, key string) bool {
@@ -153,6 +153,7 @@ func init() {
 			binding{keys: ks("enter"), help: "open the selected issue: its environments and what to do", short: "open", prio: 1, do: plain((*app).openIssue)},
 			bindFilter(),
 			bindSeverity(),
+			bindTime(),
 			binding{keys: ks(" "), disp: "space", help: "mark or unmark the issue for a change of many; the cursor moves on", short: "select", prio: 2, do: plain((*app).toggleSelect)},
 			binding{keys: ks("ctrl+a"), help: "select every issue in the list, or none when all of them are selected", short: "all", prio: 3, do: plain((*app).selectAll)},
 			binding{keys: ks("f", "i", "n", "o"), disp: "f/i/n/o", help: "mark every selected issue fixed, ignored, not affected or reopened (its open environments); one note for all",
@@ -233,7 +234,8 @@ func init() {
 		click: func(m *app, x, y int) tea.Cmd { return m.clickProject(y - 1) },
 		binds: rootBinds(
 			binding{keys: ks("enter"), help: "open the project: its problems and its security issues; the overview and the findings show only this project until 0 clears it", short: "open", prio: 1, do: plain((*app).enterProject)},
-			binding{keys: ks("c"), help: "open the project's fields: environments, technologies, lockfiles, versions, images, since", short: "fields", prio: 1, do: plain((*app).openFields)},
+			binding{keys: ks("c"), help: "open the project's fields: environments, technologies, lockfiles, differences per environment, since", short: "fields", prio: 1, do: plain((*app).openFields)},
+			binding{keys: ks("H"), help: "work through the hints of the project: unknown technologies, missing versions or lockfiles, environments; each one can be acted on", short: "hints", prio: 2, when: hasHints, do: plain((*app).openHints)},
 			binding{keys: ks("e"), help: "edit the project step by step in a guided form (to change one field directly, press c)", short: "guided edit", prio: 3, do: plain((*app).editProject)},
 			binding{keys: ks("+"), help: "add a project: from a folder, from a Dockerfile or compose file, or an empty one", short: "add", prio: 1, do: plain((*app).addChooser)},
 			binding{keys: ks("a", "n"), disp: "a", help: "add a project with the guided form", short: "guided add", prio: 3, do: plain((*app).addProject)},
@@ -260,7 +262,8 @@ func init() {
 			{keys: ks("s"), help: "select among the security issues of the project: enter opens one", short: "security", prio: 2, when: hasSecurity, do: plain((*app).focusSecurity)},
 			{keys: ks("+"), help: "add a project: from a folder, from a Dockerfile or compose file, or an empty one", short: "add", prio: 3, do: plain((*app).addChooser)},
 			{keys: ks("-"), help: "remove the project: shows what it affects, then asks for its name; the file moves to the project backups", short: "remove", prio: 3, do: lifeKey(ops.VerbDelete)},
-			{keys: ks("c"), help: "edit the project's fields directly: environments, technologies, lockfiles, versions, images, since", short: "fields", prio: 1, do: plain((*app).openFields)},
+			{keys: ks("c"), help: "edit the project's fields directly: environments, technologies, lockfiles, differences per environment, since", short: "fields", prio: 1, do: plain((*app).openFields)},
+			{keys: ks("H"), help: "work through the hints of the project: unknown technologies, missing versions or lockfiles, environments; each one can be acted on", short: "hints", prio: 2, when: hasHints, do: plain((*app).openHints)},
 			{keys: ks("e"), help: "edit the project step by step in a guided form (to change one field directly, press c)", short: "guided edit", prio: 4, do: plain((*app).editProject)},
 			{keys: ks("E", "o"), disp: "E", help: "open the project's file in $EDITOR (also when it is broken), then reload", short: "editor", prio: 3, do: plain((*app).openEditor)},
 			{keys: ks("R"), help: "rename the project: its findings and access rules follow the new name", short: "rename", prio: 4, do: lifeKey(ops.VerbRename)},
@@ -325,10 +328,14 @@ func init() {
 	mo.formBusy = &mode{name: "form busy", title: "Keys in the project form",
 		binds: []binding{{short: "working, please wait", help: "wait for the preview or the save to finish"}}}
 	mo.formText = &mode{name: "form text", title: "Keys in the project form",
-		typed: func(m *app, k tea.KeyMsg) bool { return m.frm.in.key(k) },
+		typed: func(m *app, k tea.KeyMsg) bool { return m.formTyped(k) },
 		binds: []binding{
 			{short: "type the answer", help: "type the answer to the question"},
-			formNext("accept the answer and go on"),
+			{keys: ks("up", "down"), disp: "up/down", help: "technologies the catalog did not take: select one of the rows offered under the text", short: "select", prio: 1, when: hasAssist, do: (*app).assistMove},
+			{keys: ks("enter"), help: "take the selected row: put the close catalog name in the place of the word, or ask what is needed to keep it as your own keyword", short: "take", prio: 0, when: assistFocused, do: plain((*app).assistPick)},
+			{keys: ks("esc"), help: "back to the text", short: "text", prio: 1, when: assistFocused, do: plain((*app).assistLeave)},
+			{keys: ks("ctrl+o"), help: "add the word under the cursor, or the first the catalog does not know, as your own keyword (+word does it at once)", short: "own keyword", prio: 2, when: onAddTechs, do: plain((*app).assistOwn)},
+			withWhen(formNext("accept the answer and go on"), func(m *app) bool { return !assistFocused(m) }),
 			formBack(true),
 			formScan("ctrl+d"),
 			bindHelpTyped(),
@@ -371,6 +378,7 @@ func init() {
 			{keys: ks("n", "N"), alias: true, help: "do not save: back to the step before the review", do: plain(func(m *app) tea.Cmd { return m.formAnswer("no") })},
 			{keys: ks("e"), help: "change one step: pick it from a list; the review comes back after it", short: "edit step", prio: 1, do: plain((*app).openPick)},
 			{keys: ks("+"), help: "add a lockfile: pick its file; the type is taken from its name", short: "add lockfile", prio: 2, when: onLockStepOrReview, do: plain((*app).formLockPrompt)},
+			{keys: ks("H"), help: "work through the hints: keep an unknown technology as your own keyword, replace a typo, go to the step that settles it", short: "hints", prio: 2, when: hasHints, do: plain((*app).openHints)},
 			formBack(false), formScan("d", "ctrl+d"), bindHelp(),
 		}}
 	mo.formPick = &mode{name: "form pick", title: "Keys in the list of steps", move: viewportOf(func(m *app) *viewport { return &m.frm.pick.vp }), moveShort: "pick",

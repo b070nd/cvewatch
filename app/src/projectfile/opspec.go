@@ -33,9 +33,30 @@ type OpSpec struct {
 var OpTable = []OpSpec{
 	{
 		Kind: "set_envs", Summary: "choose which environments the project runs in",
-		Params:  []Param{{"envs", "envs", false, "dev, int, staging or prod; empty means all four"}},
+		Params:  []Param{{"envs", "envs", false, "environment names, free to choose (local, dev, prod, qa-2); empty removes the key, which means the old default dev, int, staging, prod"}},
 		Example: Op{Kind: "set_envs", Envs: []model.Env{model.EnvDev, model.EnvProd}},
 		Flag:    "-envs E,E|all", Args: []string{"-envs", "dev,prod"},
+	},
+	{
+		Kind: "add_env", Summary: "add an environment to the project",
+		Params:  []Param{{"env", "env", true, "the name: lowercase letters, digits, - and _; a file without envs first gets the old default list, then this one"}},
+		Example: Op{Kind: "add_env", Env: "qa"},
+		Flag:    "-env-add ENV", Args: []string{"-env-add", "qa"},
+	},
+	{
+		Kind: "remove_env", Summary: "remove an environment from the project's list and its when@ block (lockfiles that name it stay in the file and are reported)",
+		Params:  []Param{{"env", "env", true, "an environment of the project; the last one cannot be removed"}},
+		Example: Op{Kind: "remove_env", Env: "int"},
+		Flag:    "-env-remove ENV", Args: []string{"-env-remove", "int"},
+	},
+	{
+		Kind: "rename_env", Summary: "rename an environment in the list, its when@ block, its lockfiles and the envs of scoped techs",
+		Params: []Param{
+			{"env", "env", true, "the current name"},
+			{"to", "env", true, "the new name; it must not exist yet"},
+		},
+		Example: Op{Kind: "rename_env", Env: "staging", To: "stage"},
+		Flag:    "-env-rename OLD=NEW", Args: []string{"-env-rename", "staging=stage"},
 	},
 	{
 		Kind: "set_tech", Summary: "declare a technology and its version, or change the version",
@@ -53,32 +74,64 @@ var OpTable = []OpSpec{
 		Flag:    "-remove TECH", Args: []string{"-remove", "php"},
 	},
 	{
-		Kind: "set_env_tech", Summary: "set the version deployed in one environment, when it differs from the declared one",
+		Kind: "set_env_tech", Summary: "set the version a tech has in one environment (its when@ENV block), when it differs from the generic one; also adds a tech that exists only there",
 		Params: []Param{
-			{"env", "env", true, "dev, int, staging or prod"},
+			{"env", "env", true, "an environment of the project, such as local, dev or prod"},
 			{"tech", "string", true, "catalog name"},
-			{"version", "string", true, "the deployed version"},
+			{"version", "string", true, "the version in that environment"},
 		},
 		Example: Op{Kind: "set_env_tech", Env: model.EnvProd, Tech: "php", Version: "8.3"},
 		Flag:    "-env-set ENV:TECH=VERSION", Args: []string{"-env-set", "prod:php=8.3"},
 	},
 	{
-		Kind: "remove_env_tech", Summary: "drop the version deployed in one environment",
+		Kind: "remove_env_tech", Summary: "drop the version a tech has in one environment, so the generic one applies again",
 		Params: []Param{
-			{"env", "env", true, "dev, int, staging or prod"},
+			{"env", "env", true, "an environment of the project, such as local, dev or prod"},
 			{"tech", "string", true, "catalog name"},
 		},
 		Example: Op{Kind: "remove_env_tech", Env: model.EnvProd, Tech: "php"},
 		Flag:    "-env-unset ENV:TECH", Args: []string{"-env-unset", "prod:php"},
 	},
 	{
+		Kind: "exclude_env_tech", Summary: "a generic tech does not run in one environment (exclude: in its when@ENV block)",
+		Params: []Param{
+			{"env", "env", true, "an environment of the project, such as local, dev or prod"},
+			{"tech", "string", true, "a generic tech of the project"},
+		},
+		Example: Op{Kind: "exclude_env_tech", Env: model.EnvDev, Tech: "varnish"},
+		Flag:    "-env-exclude ENV:TECH", Args: []string{"-env-exclude", "dev:varnish"},
+	},
+	{
+		Kind: "include_env_tech", Summary: "undo exclude_env_tech: the generic tech runs in the environment again",
+		Params: []Param{
+			{"env", "env", true, "an environment of the project, such as local, dev or prod"},
+			{"tech", "string", true, "the excluded tech"},
+		},
+		Example: Op{Kind: "include_env_tech", Env: model.EnvDev, Tech: "varnish"},
+		Flag:    "-env-include ENV:TECH", Args: []string{"-env-include", "dev:varnish"},
+	},
+	{
+		Kind: "set_tech_envs", Summary: "limit a generic tech to some environments (envs: on the tech); no envs lifts the limit",
+		Params: []Param{
+			{"tech", "string", true, "a generic tech of the project"},
+			{"envs", "envs", false, "the environments it is present in; empty means all of them"},
+		},
+		Example: Op{Kind: "set_tech_envs", Tech: "php", Envs: []model.Env{model.EnvLocal, model.EnvDev}},
+		Flag:    "-tech-envs TECH=E,E", Args: []string{"-tech-envs", "php=local,dev"},
+	},
+	{
 		Kind: "set_image", Summary: "set the container image of one environment",
 		Params: []Param{
-			{"env", "env", true, "dev, int, staging or prod"},
+			{"env", "env", true, "an environment of the project, such as local, dev or prod"},
 			{"image", "string", false, "image tag or digest; empty clears"},
 		},
 		Example: Op{Kind: "set_image", Env: model.EnvProd, Image: "shop:1.4.2"},
 		Flag:    "-image ENV=TAG", Args: []string{"-image", "prod=shop:1.4.2"},
+	},
+	{
+		Kind: "migrate_envs", Summary: "rewrite the old environments: map as when@ENV blocks (same meaning); nothing else changes, and no old map means no change",
+		Example: Op{Kind: "migrate_envs"},
+		Flag:    "-migrate-envs", Args: []string{"-migrate-envs"},
 	},
 	{
 		Kind: "add_lockfile", Summary: "read packages from a lockfile",
@@ -107,7 +160,7 @@ var OpTable = []OpSpec{
 			{"lockfile.type", "string", false, "not used to find the entry; accepted so the lockfile object of add_lockfile works as it is"},
 			{"lockfile.path", "string", true, "path of the lockfile as declared"},
 			{"lockfile.env", "env", false, "only the entry for this environment; empty changes every entry with the path"},
-			{"lockfile.dev", "bool", false, "the new value; false (the default) stops counting them outside dev and int"},
+			{"lockfile.dev", "bool", false, "the new value; false (the default) stops counting them outside development-like environments (local, dev, int)"},
 		},
 		Example: Op{Kind: "set_lockfile_dev", Lockfile: model.Lockfile{Type: "composer", Path: "composer.lock", Env: model.EnvProd, Dev: true}},
 		Flag:    "-lock-dev|-lock-nodev TYPE:PATH[:ENV]", Args: []string{"-lock-dev", "composer:composer.lock:prod"},

@@ -159,3 +159,30 @@ func TestAnyStatusListsFixedFindingsAndDefaultHidesThem(t *testing.T) {
 		t.Fatalf("other filters still apply: %s", ids(got))
 	}
 }
+
+func TestEnvironmentsOfAnyNameSortAndProdOpen(t *testing.T) {
+	l := ledger.New(ledger.State{})
+	l.Create(model.Item{Title: "bug", URL: "https://a.test/1", IDs: []string{"CVE-2026-1"}, Published: day, SourceID: "s", SourceType: "rss"}, day, nil)
+	v := l.Lookup([]string{"CVE-2026-1"})
+	for _, e := range []model.Env{"zeta", "production", "local", "qa", "dev"} {
+		l.AddFinding(model.Finding{VulnID: v.ID, Project: "shop", Env: e, Status: model.StatusOpen})
+	}
+	f := Filter{AnyStatus: true}
+	is := Open(l, f, day)
+	if len(is) != 1 || !is[0].ProdOpen {
+		t.Fatalf("issues = %+v", is)
+	}
+	var got []string
+	for _, tg := range is[0].Targets {
+		got = append(got, string(tg.Env))
+	}
+	if want := "local,dev,production,qa,zeta"; strings.Join(got, ",") != want { // suggested names first, then by name
+		t.Errorf("targets = %v, want %s", got, want)
+	}
+	if is := Open(l, Filter{Env: "qa"}, day); len(is) != 1 || len(is[0].Targets) != 1 || is[0].Targets[0].Env != "qa" {
+		t.Errorf("filter on a custom env: %+v", is)
+	}
+	if is := Open(l, Filter{Env: "uat"}, day); len(is) != 0 {
+		t.Errorf("an environment nobody runs in matches nothing: %+v", is)
+	}
+}

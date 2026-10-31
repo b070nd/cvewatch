@@ -598,3 +598,27 @@ func TestTUISettingsAreEditableAndChecked(t *testing.T) {
 		t.Fatalf("\n%s", got)
 	}
 }
+
+func TestHorizonSettingsAreEditableAndChecked(t *testing.T) {
+	root := t.TempDir()
+	f, ok := Lookup(KindSettings, "horizon.window")
+	if !ok || f.Type != TypeEnum || f.Default != "unlimited" || !reflect.DeepEqual(f.Enum, config.Windows) {
+		t.Fatalf("horizon.window: %+v", f)
+	}
+	s := mustRead(t, root)
+	if _, err := s.With(Edit{Op: OpSet, Path: "horizon.window", Value: "decade"}); err == nil {
+		t.Error("an unknown window was accepted")
+	}
+	c := mustWith(t, s, Edit{Op: OpSet, Path: "horizon.window", Value: "custom"}, Edit{Op: OpSet, Path: "horizon.from", Value: "2026-03-01"}, Edit{Op: OpSet, Path: "horizon.to", Value: "2026-01-01"})
+	r := c.Validate()
+	if !r.Blocked() || r.Issues[0].Field != "horizon.to" || r.Issues[0].Level != "error" {
+		t.Fatalf("to before from must block and name horizon.to: %+v", r.Issues)
+	}
+	c = mustWith(t, s, Edit{Op: OpSet, Path: "horizon.window", Value: "week"})
+	if r := c.Validate(); r.Blocked() {
+		t.Fatalf("a valid horizon must pass the loader: %+v", r.Issues)
+	}
+	if got := text(t, c, IDSettings); !strings.Contains(got, "window: week") {
+		t.Fatalf("\n%s", got)
+	}
+}

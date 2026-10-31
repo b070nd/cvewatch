@@ -175,3 +175,43 @@ func TestRenameProjectMovesFindingsAndRefusesCollisions(t *testing.T) {
 		t.Fatalf("nothing left under the old name: %d %v", n, err)
 	}
 }
+
+func TestRenameEnvMovesFindingsAndRefusesCollisions(t *testing.T) {
+	l := New(State{})
+	v := l.Create(item("PHP bug", "https://a.test/1", "s", "CVE-2026-1"), day, []string{"php"})
+	for _, p := range []string{"shop", "other"} {
+		for _, e := range []model.Env{model.EnvDev, model.EnvProd, "qa"} {
+			l.AddFinding(model.Finding{VulnID: v.ID, Project: p, Env: e, Status: model.StatusOpen})
+		}
+	}
+	if _, err := l.SetStatus(v.ID, "shop", "qa", model.StatusFixed, "done", day); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := l.EnvMove("shop", "qa", "prod"); err == nil || n != 0 {
+		t.Fatalf("the check should find prod in the way: %d %v", n, err)
+	}
+	if _, err := l.RenameEnv("shop", "qa", "prod"); err == nil {
+		t.Fatal("a rename onto an environment with the same finding must fail")
+	}
+	n, err := l.RenameEnv("shop", "qa", "uat")
+	if err != nil || n != 1 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	var got []string
+	for _, f := range l.Findings() {
+		got = append(got, f.Project+"/"+string(f.Env)+"/"+string(f.Status))
+	}
+	// the suggested names sort first, the others after them by name
+	want := []string{"other/dev/open", "other/prod/open", "other/qa/open", "shop/dev/open", "shop/prod/open", "shop/uat/fixed"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+	if l.Findings()[5].Env != "uat" || l.Lookup([]string{"CVE-2026-1"}) == nil {
+		t.Error("state inconsistent")
+	}
+}

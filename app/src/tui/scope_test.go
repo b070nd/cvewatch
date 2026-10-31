@@ -60,16 +60,19 @@ func TestScopeNarrowsOverviewFindingsAndCounts(t *testing.T) {
 	d.want("scope: mw", "open issues 1", "open findings 1", "in prod 1", "1 of 1 open issues", "CVE-2026-1", "all projects")
 	d.wantNot("CVE-2026-3", "CVE-2026-4")
 	v := d.view()
-	for _, re := range []string{`high 1\s`, `critical 0\s`, `low 0\s`, `dev 0\s`, `staging 0\s`, `prod 1\s`} {
+	for _, re := range []string{`high 1\s`, `critical 0\s`, `low 0\s`, `prod 1\s`} {
 		if !regexp.MustCompile(re).MatchString(v) {
 			t.Errorf("the bars lack %q:\n%s", re, v)
 		}
 	}
+	if regexp.MustCompile(`staging \d`).MatchString(v) {
+		t.Errorf("the bars list an environment the scoped project does not run in:\n%s", v)
+	}
 	d.want("2 Findings (1)")
 
 	d.press("2")
-	d.want("1 of 1 open issues", "CVE-2026-1", "mw:prod")
-	d.wantNot("shop:prod", "CVE-2026-3", "CVE-2026-4")
+	d.want("1 of 1 open issues", "CVE-2026-1")
+	d.wantNot("shop", "CVE-2026-3", "CVE-2026-4") // mw runs in prod only, so the row names the project alone
 	if line := strings.Split(d.view(), "\n")[1]; !strings.Contains(line, "scope: mw") {
 		t.Fatalf("the chip is on the breadcrumb line of every screen: %q", line)
 	}
@@ -79,7 +82,7 @@ func TestScopeNarrowsOverviewFindingsAndCounts(t *testing.T) {
 	scopeTo(d, "shop")
 	d.press("2")
 	d.want("3 of 3 open issues", "shop:prod")
-	d.wantNot("mw:prod") // only the targets of the project are shown
+	d.wantNot("mw") // only the targets of the project are shown
 	d.press("1")
 	d.want("open issues 3", "open findings 3")
 }

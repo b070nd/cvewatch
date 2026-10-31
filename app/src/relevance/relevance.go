@@ -70,6 +70,16 @@ type Target struct {
 	Packages []model.Package
 	Image    string    // image tag or digest, recorded only
 	Since    time.Time // items published before this are not judged; zero judges all
+	Horizon  Window    // the alert horizon; items published outside it are not judged
+}
+
+// Window is a span of publication dates with inclusive ends; a zero end is open.
+type Window struct{ From, To time.Time }
+
+// Outside reports whether a dated item falls outside the window. An item
+// without a date is never outside.
+func (w Window) Outside(published time.Time) bool {
+	return !published.IsZero() && (!w.From.IsZero() && published.Before(w.From) || !w.To.IsZero() && published.After(w.To))
 }
 
 // Find returns what the target currently runs for an earlier match, so a
@@ -183,6 +193,14 @@ func (j *Judge) Judge(it model.Item, targets []Target) Verdict {
 				noted[tg.Project] = true
 				v.Notes = append(v.Notes, fmt.Sprintf("%s: published %s, before the project's start date %s",
 					tg.Project, it.Published.UTC().Format("2006-01-02"), tg.Since.UTC().Format("2006-01-02")))
+			}
+			continue
+		}
+		if tg.Horizon.Outside(it.Published) {
+			if !noted[tg.Project] {
+				noted[tg.Project] = true
+				v.Notes = append(v.Notes, fmt.Sprintf("%s: published %s, outside the alert horizon",
+					tg.Project, it.Published.UTC().Format("2006-01-02")))
 			}
 			continue
 		}

@@ -303,3 +303,17 @@ func TestHistoryIsTheTimelineWithoutTheFeedsEvents(t *testing.T) {
 		t.Fatal("nothing happened, so there is no history")
 	}
 }
+
+func TestMatrixOrderWithOwnEnvironmentNames(t *testing.T) {
+	mk := func(e model.Env) model.Finding {
+		return model.Finding{Project: "shop", Env: e, Status: model.StatusOpen}
+	}
+	p := Build(vuln(), []model.Finding{mk("zeta"), mk("prod"), mk("qa"), mk("local"), mk("dev")}, nil, nil, at(9))
+	var got []string
+	for _, r := range p.Matrix {
+		got = append(got, r.Env)
+	}
+	if want := []string{"local", "dev", "prod", "qa", "zeta"}; !slices.Equal(got, want) {
+		t.Fatalf("matrix = %v, want %v", got, want)
+	}
+}

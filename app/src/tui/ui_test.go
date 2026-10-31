@@ -26,7 +26,7 @@ func TestOverviewShowsCounts(t *testing.T) {
 	for _, re := range []string{
 		`open issues 3`, `open findings 4`, `critical \+ high 2`, `in prod 1`,
 		`critical 1\s`, `high 1\s`, `medium 0\s`, `low 1\s`,
-		`dev 1\s`, `staging 1\s`, `prod 2\s`,
+		`dev,staging 1\s`, `prod 2\s`,
 		`policy violations 0`, `items 40  new 3`,
 	} {
 		if !regexp.MustCompile(re).MatchString(v) {
@@ -40,7 +40,7 @@ func TestFindingsListAndSeverityFilter(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
 	d.press("2")
 	d.want("[2 Findings (3)]", "3 of 3 open issues", "SEVERITY", "CVE-2026-3", "critical", "Critical nginx bug", "CVE-2026-1", "high", "Tracked PHP bug",
-		"mw:prod shop:prod", "CVE-2026-4", "low", "> critical")
+		"mw shop:prod", "CVE-2026-4", "low", "> critical")
 	if v := d.view(); strings.Index(v, "CVE-2026-3") > strings.Index(v, "CVE-2026-1") {
 		t.Errorf("the critical issue must come first:\n%s", v)
 	}
@@ -234,7 +234,7 @@ func TestAccessRulesComeFromOps(t *testing.T) {
 	d := start(t, b, Options{})
 	d.press("2")
 	d.want("CVE-2026-1", "shop:prod")
-	d.wantNot("mw:prod") // scoped by ops, not by the TUI
+	d.wantNot("mw") // scoped by ops, not by the TUI
 	d.press("down", "enter", "f", "enter")
 	d.want("error: access denied: tui:carol may not change anything")
 	d.press("esc")

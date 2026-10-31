@@ -120,7 +120,7 @@ func (s *server) with(fn func(*ops.Session) error) error {
 type listIn struct {
 	MinSeverity       string `json:"min_severity,omitempty" jsonschema:"lowest severity to include: low, medium, high or critical"`
 	Project           string `json:"project,omitempty" jsonschema:"only findings for this project"`
-	Env               string `json:"env,omitempty" jsonschema:"only this environment: dev, int, staging or prod"`
+	Env               string `json:"env,omitempty" jsonschema:"only this environment, any name such as local, dev or prod"`
 	IncludeUnaffected bool   `json:"include_unaffected,omitempty" jsonschema:"also list targets whose version is known to be outside the affected range"`
 	IncludeClosed     bool   `json:"include_closed,omitempty" jsonschema:"also list the fixed, ignored and not-affected environments of issues that are still open somewhere"`
 }
@@ -150,7 +150,7 @@ type findingSearchIn struct {
 	OpenOnly    bool   `json:"open_only,omitempty" jsonschema:"only findings that are still open; by default closed environments are listed too"`
 	MinSeverity string `json:"min_severity,omitempty" jsonschema:"lowest severity to include: low, medium, high or critical"`
 	Project     string `json:"project,omitempty" jsonschema:"only findings for this project"`
-	Env         string `json:"env,omitempty" jsonschema:"only this environment: dev, int, staging or prod"`
+	Env         string `json:"env,omitempty" jsonschema:"only this environment, any name such as local, dev or prod"`
 }
 
 func (s *server) searchFindings(_ context.Context, _ *mcp.CallToolRequest, in findingSearchIn) (*mcp.CallToolResult, export.Document, error) {
@@ -244,7 +244,7 @@ func (s *server) calendar(_ context.Context, _ *mcp.CallToolRequest, in calendar
 type statusIn struct {
 	ID      string `json:"id" jsonschema:"CVE or GHSA id"`
 	Project string `json:"project" jsonschema:"project name as in its config file"`
-	Env     string `json:"env,omitempty" jsonschema:"dev, int, staging or prod; omit for all of the project's environments"`
+	Env     string `json:"env,omitempty" jsonschema:"an environment name such as local, dev or prod; omit for all of the project's environments"`
 	Status  string `json:"status" jsonschema:"fixed, ignored, not_affected or open"`
 	Note    string `json:"note,omitempty" jsonschema:"reason, ticket, merge request or version; required for not_affected"`
 }
@@ -316,7 +316,7 @@ func (s *server) violations(_ context.Context, _ *mcp.CallToolRequest, _ struct{
 type assignIn struct {
 	ID      string `json:"id" jsonschema:"CVE or GHSA id"`
 	Project string `json:"project" jsonschema:"project name as in its config file"`
-	Env     string `json:"env,omitempty" jsonschema:"dev, int, staging or prod; omit for all of the project's environments"`
+	Env     string `json:"env,omitempty" jsonschema:"an environment name such as local, dev or prod; omit for all of the project's environments"`
 	Owner   string `json:"owner,omitempty" jsonschema:"who handles it; - clears"`
 	Due     string `json:"due,omitempty" jsonschema:"deadline YYYY-MM-DD; none clears"`
 	Ticket  string `json:"ticket,omitempty" jsonschema:"ticket or merge request link; - clears"`
@@ -335,7 +335,7 @@ func (s *server) assign(_ context.Context, _ *mcp.CallToolRequest, in assignIn) 
 type attachIn struct {
 	ID      string `json:"id" jsonschema:"CVE or GHSA id"`
 	Project string `json:"project" jsonschema:"project name as in its config file"`
-	Env     string `json:"env,omitempty" jsonschema:"dev, int, staging or prod; omit for all of the project's environments"`
+	Env     string `json:"env,omitempty" jsonschema:"an environment name such as local, dev or prod; omit for all of the project's environments"`
 	Note    string `json:"note,omitempty" jsonschema:"what the evidence shows"`
 	URL     string `json:"url,omitempty" jsonschema:"advisory, merge request, change ticket or deployment record (http or https)"`
 }

@@ -86,6 +86,11 @@ type Flow struct {
 	versionAll bool            // ask every tech, not only those without a version
 	revisit    string          // the section being changed from the review; the flow returns to the review after it
 	added      []string        // techs added by name, for the help text
+	differing  []model.Env     // the environments whose differences are being asked, in order
+
+	base   *catalog.Catalog // the catalog as given; cat adds the staged custom techs to it
+	custom []model.Tech     // techs of the person's own, staged until the project is saved
+	own    []string         // names already in the person's techs.yaml
 }
 
 // NewFlow starts a flow with an empty draft. existing is copied; nil means create.
@@ -93,12 +98,14 @@ func NewFlow(cat *catalog.Catalog, existing *model.Project) *Flow {
 	if cat == nil {
 		cat = catalog.New(nil)
 	}
-	f := &Flow{cat: cat, evidence: map[string][]discovery.Evidence{}, asked: map[string]bool{}}
+	f := &Flow{cat: cat, base: cat, evidence: map[string][]discovery.Evidence{}, asked: map[string]bool{}}
 	first := "name"
 	if existing != nil {
 		p := cloneProject(*existing)
 		f.existing, f.draft = &p, cloneProject(*existing)
 		first = "menu"
+	} else {
+		f.draft.Envs = []model.Env{model.EnvLocal}
 	}
 	f.hist = []string{first}
 	return f
@@ -245,7 +252,11 @@ func (f *Flow) Sections() []Section {
 	if len(f.lockCands()) > 0 {
 		out = append(out, Section{"lockfiles", "Lockfiles"})
 	}
-	return append(out, Section{"envs", "Environments"})
+	out = append(out, Section{"envs", "Environments"})
+	if len(f.draft.EffectiveEnvs()) > 1 {
+		out = append(out, Section{"differ", "Differences per environment"})
+	}
+	return out
 }
 
 // Revisit goes from the review to one of its sections. Once that section is
@@ -275,6 +286,10 @@ func (f *Flow) inSection(id string) bool {
 		return base == "add-techs" || base == "version"
 	case "versions":
 		return base == "version"
+	case "envs":
+		return base == "envs-other"
+	case "differ":
+		return strings.HasPrefix(base, "differ") || strings.HasPrefix(base, "diff-")
 	}
 	return false
 }
@@ -327,6 +342,12 @@ var stepTable = []stepDef{
 	{"version", askVersion, applyVersion, nextVersion},
 	{"lockfiles", askLockfiles, applyLockfiles, nextLockfiles},
 	{"envs", askEnvs, applyEnvs, nextEnvs},
+	{"envs-other", askEnvsOther, applyEnvsOther, func(f *Flow, _, _ string) string { return f.afterSection(f.differOrReview()) }},
+	{"differ", askDiffer, applyDiffer, nextDiffer},
+	{"differ-envs", askDifferEnvs, applyDifferEnvs, nextDifferEnvs},
+	{"diff-techs", askDiffTechs, applyDiffTechs, func(f *Flow, env, _ string) string { return f.afterDiffTechs(env) }},
+	{"diff-exclude", askDiffExclude, applyDiffExclude, func(_ *Flow, env, _ string) string { return "diff-image:" + env }},
+	{"diff-image", askDiffImage, applyDiffImage, func(f *Flow, env, _ string) string { return f.afterDiffEnv(env) }},
 	{"review", askReview, noApply, nextReview},
 }
 
@@ -362,7 +383,11 @@ func askMenu(f *Flow, _ string) Step {
 	if len(f.lockCands()) > 0 {
 		opts = append(opts, Option{Value: "lockfiles", Label: "Lockfiles"})
 	}
-	opts = append(opts, Option{Value: "envs", Label: "Environments"}, Option{Value: "review", Label: "Review and save"})
+	opts = append(opts, Option{Value: "envs", Label: "Environments"})
+	if len(f.draft.EffectiveEnvs()) > 1 {
+		opts = append(opts, Option{Value: "differ", Label: "Differences per environment"})
+	}
+	opts = append(opts, Option{Value: "review", Label: "Review and save"})
 	return Step{Title: "What do you want to change?", Help: "Pick a section. Each one returns here when answered.",
 		Kind: KindChoice, Options: opts, Default: "review"}
 }
@@ -528,6 +553,7 @@ func applyTechs(f *Flow, _, v string) error {
 		}
 	}
 	f.draft.Techs = techs
+	f.forgetCustom()
 	return nil
 }
 
@@ -539,7 +565,9 @@ func (f *Flow) dropEnvTech(name string) {
 				delete(cfg.Techs, n)
 			}
 		}
-		if len(cfg.Techs) == 0 && cfg.Image == "" {
+		cfg.Exclude = slices.DeleteFunc(cfg.Exclude, func(x string) bool { return strings.EqualFold(x, name) })
+		f.draft.Environments[e] = cfg
+		if len(cfg.Techs) == 0 && len(cfg.Exclude) == 0 && cfg.Image == "" {
 			delete(f.draft.Environments, e)
 		}
 	}
@@ -550,39 +578,50 @@ func nextTechs(f *Flow, _, _ string) string { return f.afterSection("add-techs")
 // ---- add-techs ----
 
 func askAddTechs(f *Flow, _ string) Step {
-	help := "Type technology names to search the catalog, for example: redis postgres. Leave empty when done."
+	help := "Type technology names to search the catalog, for example: redis postgres. " +
+		"A name the catalog does not have can be added as your own keyword by writing it with a plus, for example: +algolia (advisories that name it will match). Leave empty when done."
 	if len(f.added) > 0 {
 		help += " Added so far: " + strings.Join(f.added, ", ") + "."
 	}
 	return Step{Title: "Add other technologies", Help: help, Kind: KindText}
 }
 
-// applyAddTechs resolves every term or changes nothing.
+// applyAddTechs resolves every term or changes nothing. A term written with a
+// plus (+algolia) that the catalog does not know is staged as the person's own
+// keyword.
 func applyAddTechs(f *Flow, _, v string) error {
 	if addTechsDone(v) {
 		return nil
 	}
 	var found []model.Tech
-	var unknown, hints []string
+	var custom []model.Tech
+	var problems []string
 	for _, term := range strings.FieldsFunc(v, func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
-		t, sugg, ok := f.resolve(term)
-		if ok {
-			found = append(found, t)
+		typed, own := strings.CutPrefix(term, "+")
+		if lk := f.Lookup(typed); lk.Found {
+			found = append(found, lk.Tech)
 			continue
-		}
-		unknown = append(unknown, term)
-		for _, s := range sugg {
-			if len(hints) < 5 && !slices.Contains(hints, s) {
-				hints = append(hints, s)
+		} else if own {
+			c, err := f.newCustom(model.Tech{Name: typed})
+			if err != nil {
+				problems = append(problems, err.Error())
+				continue
 			}
+			custom = append(custom, c)
+			continue
+		} else if len(lk.Suggest) == 0 {
+			problems = append(problems, fmt.Sprintf("%q is not in the catalog; write +%s to add it as your own keyword", plain(term), plain(term)))
+		} else {
+			var names []string
+			for _, t := range lk.Suggest {
+				names = append(names, t.Name)
+			}
+			problems = append(problems, fmt.Sprintf("%q is not in the catalog. Did you mean: %s? (or write +%s to add it as your own keyword)",
+				plain(term), strings.Join(names, ", "), plain(term)))
 		}
 	}
-	if len(unknown) > 0 {
-		msg := "not in the catalog or not specific enough: " + strings.Join(unknown, ", ")
-		if len(hints) > 0 {
-			msg += ". Did you mean: " + strings.Join(hints, ", ") + "?"
-		}
-		return errors.New(msg)
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, "; "))
 	}
 	for _, t := range found {
 		if techIndex(f.draft.Techs, t.Name) < 0 {
@@ -590,30 +629,13 @@ func applyAddTechs(f *Flow, _, v string) error {
 			f.added = append(f.added, t.Name)
 		}
 	}
+	for _, c := range custom {
+		f.stage(c)
+	}
 	return nil
 }
 
 func addTechsDone(v string) bool { return v == "" || strings.EqualFold(v, "done") }
-
-// resolve finds one catalog tech for a term: an exact name or alias, else the
-// only search hit. Otherwise it returns names worth suggesting.
-func (f *Flow) resolve(term string) (model.Tech, []string, bool) {
-	if t, ok := f.cat.ForTerm(term); ok {
-		return t, nil, true
-	}
-	hits := f.cat.Search(term)
-	if len(hits) == 1 {
-		return hits[0], nil, true
-	}
-	if len(hits) == 0 && len(term) > 3 {
-		hits = f.cat.Search(term[:3]) // a typo: suggest by prefix
-	}
-	var names []string
-	for _, t := range hits[:min(len(hits), 5)] {
-		names = append(names, t.Name)
-	}
-	return model.Tech{}, names, false
-}
 
 func nextAddTechs(f *Flow, _, v string) string {
 	if !addTechsDone(v) {
@@ -769,39 +791,87 @@ func nextLockfiles(f *Flow, _, _ string) string { return f.afterSection("envs") 
 
 // ---- envs ----
 
+// otherEnv is the value of the "other..." option of the envs step; it is not a valid name.
+const otherEnv = "+"
+
+// envChoices are the suggested names, then the project's own.
+func (f *Flow) envChoices() []model.Env {
+	out := slices.Clone(model.SuggestedEnvs)
+	for _, e := range f.draft.EffectiveEnvs() {
+		if !slices.Contains(out, e) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 func askEnvs(f *Flow, _ string) Step {
 	on := map[model.Env]bool{}
 	for _, e := range f.draft.EffectiveEnvs() {
 		on[e] = true
 	}
 	var opts []Option
-	for _, e := range model.AllEnvs {
+	for _, e := range f.envChoices() {
 		opts = append(opts, Option{Value: string(e), Label: string(e), Selected: on[e]})
 	}
+	opts = append(opts, Option{Value: otherEnv, Label: "other..."})
 	return Step{Title: "Environments", Kind: KindMulti, Options: opts,
-		Help: "Which environments are monitored? At least one."}
+		Help: "Where does the project run? Names are free: pick from the list or choose other... to type your own. " +
+			"local is enough to start; add prod (and others) if you deploy there. At least one."}
 }
 
-// applyEnvs stores the choice in canonical order; all four means no envs key.
+// applyEnvs stores the choice; names typed under other... follow in envs-other.
 func applyEnvs(f *Flow, _, v string) error {
 	sel := valueSet(v)
 	var envs []model.Env
-	for _, e := range model.AllEnvs {
+	for _, e := range f.envChoices() {
 		if sel[string(e)] {
 			envs = append(envs, e)
 		}
 	}
-	switch len(envs) {
-	case 0:
+	if len(envs) == 0 && !sel[otherEnv] {
 		return errors.New("select at least one environment")
-	case len(model.AllEnvs):
-		envs = nil
 	}
+	model.SortEnvs(envs)
 	f.draft.Envs = envs
 	return nil
 }
 
-func nextEnvs(f *Flow, _, _ string) string { return f.afterSection("review") }
+func nextEnvs(f *Flow, _, v string) string {
+	if valueSet(v)[otherEnv] {
+		return "envs-other"
+	}
+	return f.afterSection(f.differOrReview())
+}
+
+func askEnvsOther(f *Flow, _ string) Step {
+	return Step{Title: "Other environments", Kind: KindText,
+		Help: "Names separated by commas: lowercase letters, digits, - and _, starting with a letter, such as qa or demo-eu."}
+}
+
+func applyEnvsOther(f *Flow, _, v string) error {
+	envs := slices.Clone(f.draft.Envs)
+	for _, tok := range strings.Split(v, ",") {
+		e := model.Env(strings.ToLower(strings.TrimSpace(tok)))
+		switch {
+		case e == "":
+			continue
+		case !e.Valid():
+			return fmt.Errorf("%q is not a valid environment name (lowercase letters, digits, - and _, starting with a letter)", plain(tok))
+		case !slices.Contains(envs, e):
+			envs = append(envs, e)
+		}
+	}
+	if len(envs) == 0 {
+		return errors.New("select at least one environment")
+	}
+	model.SortEnvs(envs)
+	f.draft.Envs = envs
+	return nil
+}
+
+// EnvHints are the notes on the environments of the draft: the old default in use, no prod.
+func (f *Flow) EnvHints() []projectfile.EnvHint { return projectfile.EnvHints(f.draft) }
 
 // ---- review ----
 
@@ -811,6 +881,9 @@ func askReview(f *Flow, _ string) Step {
 		help = "Changes to save:\n" + diff
 		for _, is := range issues {
 			help += fmt.Sprintf("\n%s: %s: %s", is.Level, is.Field, plain(is.Message))
+		}
+		if lines := DifferenceLines(f.draft); len(lines) > 0 {
+			help += "\nDifferences per environment: " + plain(strings.Join(lines, "; "))
 		}
 	}
 	return Step{Title: "Save this project?", Help: help, Kind: KindConfirm, Default: "yes"}
@@ -836,15 +909,20 @@ func (f *Flow) summary() string {
 	for _, e := range f.draft.EffectiveEnvs() {
 		envs = append(envs, string(e))
 	}
-	return fmt.Sprintf("Project %s: technologies: %s; lockfiles: %d; environments: %s.",
+	out := fmt.Sprintf("Project %s: technologies: %s; lockfiles: %d; environments: %s.",
 		f.draft.Name, strings.Join(techs, ", "), len(f.draft.Lockfiles), strings.Join(envs, ", "))
+	if lines := DifferenceLines(f.draft); len(lines) > 0 {
+		out += " Differences per environment: " + strings.Join(lines, "; ") + "."
+	}
+	return out
 }
 
 // ---- ops and review ----
 
 // Ops is the edit list that turns Existing (or an empty file) into the draft,
-// in a fixed order: envs, tech removals, tech sets, lockfile removals and
-// additions, then per environment the tech versions and the image.
+// in a fixed order: envs, tech removals, tech sets, the environments a tech is
+// limited to, lockfile removals and additions, then per environment the
+// differences: tech versions, excluded techs and the image.
 func (f *Flow) Ops() []projectfile.Op {
 	var base model.Project
 	if f.existing != nil {
@@ -858,12 +936,13 @@ func (f *Flow) Ops() []projectfile.Op {
 	}
 
 	// set_tech cannot clear a version, so a cleared one is removed and set again.
-	changed := map[string]bool{}
+	changed, reset := map[string]bool{}, map[string]bool{}
 	for _, b := range base.Techs {
 		i := techIndex(cur.Techs, b.Name)
 		switch {
 		case i < 0 || b.Version != "" && cur.Techs[i].Version == "":
 			ops = append(ops, projectfile.Op{Kind: "remove_tech", Tech: b.Name})
+			reset[strings.ToLower(b.Name)] = true // removing drops the limit to some environments with it
 		case b.Version != cur.Techs[i].Version:
 			changed[strings.ToLower(b.Name)] = true
 		}
@@ -872,6 +951,16 @@ func (f *Flow) Ops() []projectfile.Op {
 		i := techIndex(base.Techs, c.Name)
 		if i < 0 || changed[strings.ToLower(c.Name)] || base.Techs[i].Version != "" && c.Version == "" {
 			ops = append(ops, projectfile.Op{Kind: "set_tech", Tech: c.Name, Version: c.Version})
+		}
+	}
+
+	for _, c := range cur.Techs {
+		var was []model.Env
+		if i := techIndex(base.Techs, c.Name); i >= 0 {
+			was = base.Techs[i].Envs
+		}
+		if !sameEnvs(was, c.Envs) || reset[strings.ToLower(c.Name)] && len(c.Envs) > 0 {
+			ops = append(ops, projectfile.Op{Kind: "set_tech_envs", Tech: c.Name, Envs: slices.Clone(c.Envs)}) // none lifts the limit
 		}
 	}
 
@@ -890,7 +979,7 @@ func (f *Flow) Ops() []projectfile.Op {
 		}
 	}
 
-	for _, e := range model.AllEnvs {
+	for _, e := range envKeys(base.Environments, cur.Environments) {
 		b, c := base.Environments[e], cur.Environments[e]
 		names := map[string]bool{}
 		for n := range b.Techs {
@@ -906,6 +995,16 @@ func (f *Flow) Ops() []projectfile.Op {
 				ops = append(ops, projectfile.Op{Kind: "remove_env_tech", Env: e, Tech: n})
 			case cv != "" && cv != bv:
 				ops = append(ops, projectfile.Op{Kind: "set_env_tech", Env: e, Tech: n, Version: cv})
+			}
+		}
+		for _, x := range b.Exclude {
+			if !slices.ContainsFunc(c.Exclude, func(o string) bool { return strings.EqualFold(o, x) }) {
+				ops = append(ops, projectfile.Op{Kind: "include_env_tech", Env: e, Tech: x})
+			}
+		}
+		for _, x := range c.Exclude {
+			if !slices.ContainsFunc(b.Exclude, func(o string) bool { return strings.EqualFold(o, x) }) {
+				ops = append(ops, projectfile.Op{Kind: "exclude_env_tech", Env: e, Tech: x})
 			}
 		}
 		if b.Image != c.Image {
@@ -926,12 +1025,31 @@ func mapKeys(m map[string]bool) func(yield func(string) bool) {
 }
 
 func sameEnvs(a, b []model.Env) bool {
-	for _, e := range model.AllEnvs {
-		if slices.Contains(a, e) != slices.Contains(b, e) {
+	for _, e := range a {
+		if !slices.Contains(b, e) {
+			return false
+		}
+	}
+	for _, e := range b {
+		if !slices.Contains(a, e) {
 			return false
 		}
 	}
 	return true
+}
+
+// envKeys is every environment either map names, in display order.
+func envKeys(maps ...map[model.Env]model.EnvConfig) []model.Env {
+	var out []model.Env
+	for _, m := range maps {
+		for e := range m {
+			if !slices.Contains(out, e) {
+				out = append(out, e)
+			}
+		}
+	}
+	model.SortEnvs(out)
+	return out
 }
 
 // Review applies Ops to the file text and returns the diff and the validation
@@ -1074,6 +1192,9 @@ func techIndex(techs []model.ProjectTech, name string) int {
 func cloneProject(p model.Project) model.Project {
 	p.Envs = slices.Clone(p.Envs)
 	p.Techs = slices.Clone(p.Techs)
+	for i := range p.Techs {
+		p.Techs[i].Envs = slices.Clone(p.Techs[i].Envs)
+	}
 	p.Lockfiles = slices.Clone(p.Lockfiles)
 	if p.Environments != nil {
 		m := make(map[model.Env]model.EnvConfig, len(p.Environments))
@@ -1085,6 +1206,7 @@ func cloneProject(p model.Project) model.Project {
 				}
 				c.Techs = t
 			}
+			c.Exclude = slices.Clone(c.Exclude)
 			m[e] = c
 		}
 		p.Environments = m

@@ -390,3 +390,90 @@ func TestRunWithoutProgressCallbackIsUnchanged(t *testing.T) {
 		t.Fatalf("%+v", res)
 	}
 }
+
+const horizonFeed = `<?xml version="1.0"?><rss version="2.0"><channel>
+<item><title>CVE-2026-7001: PHP-FPM remote code execution</title><link>https://ex.test/h1</link><pubDate>Sun, 25 Oct 2026 00:00:00 +0000</pubDate><description>Recent.</description></item>
+<item><title>CVE-2026-7002: PHP session fixation in the cookie handler</title><link>https://ex.test/h2</link><pubDate>Thu, 01 Oct 2026 00:00:00 +0000</pubDate><description>Old.</description></item>
+<item><title>CVE-2026-7003: PHP opcache memory corruption</title><link>https://ex.test/h3</link><description>No date.</description></item>
+</channel></rss>`
+
+func TestHorizonKeepsOlderVulnerabilitiesOutOfJudgingAlertsAndDigests(t *testing.T) {
+	project := map[string]string{"shop": "name: shop\nenvs: [prod]\ntechs: [{name: php}]\n"}
+	ids := func(g interface{ Findings(string) []model.Finding }, want ...string) []string {
+		var got []string
+		for _, id := range want {
+			if len(g.Findings(id)) > 0 {
+				got = append(got, id)
+			}
+		}
+		return got
+	}
+
+	t.Run("judging", func(t *testing.T) {
+		g := rig(t, phpTech, project, map[string]string{feedURL: horizonFeed})
+		g.Write("config/config.yaml", "lookback: 720h\nhorizon:\n  window: week\n")
+		g.Reload()
+		res := g.Run()
+		if res.Findings != 2 || g.Channel.Alerts() != 2 {
+			t.Fatalf("the week window judges the recent and the undated item: %+v, alerts %d", res, g.Channel.Alerts())
+		}
+		if got := ids(g, "CVE-2026-7001", "CVE-2026-7002", "CVE-2026-7003"); !slices.Equal(got, []string{"CVE-2026-7001", "CVE-2026-7003"}) {
+			t.Fatalf("findings for %v", got)
+		}
+	})
+
+	t.Run("alerts and digests of findings that exist", func(t *testing.T) {
+		g := rig(t, phpTech, project, map[string]string{feedURL: horizonFeed})
+		g.Write("config/config.yaml", "lookback: 720h\nnotify:\n  digest:\n    daily_at: '23:59'\n")
+		g.Reload()
+		if res := g.Run(); res.Findings != 3 || g.Channel.Alerts() != 3 {
+			t.Fatalf("unlimited judges everything: %+v", res)
+		}
+
+		g.Write("config/config.yaml", "lookback: 720h\nhorizon:\n  window: week\nnotify:\n  digest:\n    daily_at: '00:00'\n")
+		g.Reload()
+		mail := &testkit.Channel{Label: "email"}
+		g.Runner.Channels = append(g.Runner.Channels, pipeline.Delivery{Channel: mail})
+		res := g.Run()
+		if mail.Alerts() != 2 || res.Alerted != 2 {
+			t.Fatalf("a channel that was told nothing yet hears only about the window: %d, %+v", mail.Alerts(), res)
+		}
+		if len(g.Channel.Digests) != 1 || g.Channel.Digests[0].Open != 2 {
+			t.Fatalf("the digest counts only the window: %+v", g.Channel.Digests)
+		}
+		if got := ids(g, "CVE-2026-7001", "CVE-2026-7002", "CVE-2026-7003"); len(got) != 3 {
+			t.Fatalf("findings that exist stay: %v", got)
+		}
+
+		g.Write("config/config.yaml", "lookback: 720h\n")
+		g.Reload()
+		mail2 := &testkit.Channel{Label: "pager"}
+		g.Runner.Channels = append(g.Runner.Channels, pipeline.Delivery{Channel: mail2})
+		g.Run()
+		if mail2.Alerts() != 3 {
+			t.Fatalf("unlimited alerts everything again: %d", mail2.Alerts())
+		}
+	})
+
+	t.Run("custom range and project since", func(t *testing.T) {
+		both := map[string]string{
+			"shop":  "name: shop\nenvs: [prod]\ntechs: [{name: php}]\nsince: 2026-10-26\n",
+			"other": "name: other\nenvs: [prod]\ntechs: [{name: php}]\n",
+		}
+		g := rig(t, phpTech, both, map[string]string{feedURL: horizonFeed})
+		g.Write("config/config.yaml", "lookback: 720h\nhorizon:\n  window: custom\n  from: 2026-09-15\n  to: 2026-10-25\n")
+		g.Reload()
+		g.Run()
+		// 7001 (25 Oct) is inside the range but before shop's since; 7002 is inside the range for other only; 7003 has no date.
+		for id, want := range map[string][]string{"CVE-2026-7001": {"other"}, "CVE-2026-7002": {"other"}, "CVE-2026-7003": {"other", "shop"}} {
+			var got []string
+			for _, f := range g.Findings(id) {
+				got = append(got, f.Project)
+			}
+			slices.Sort(got)
+			if !slices.Equal(got, want) {
+				t.Errorf("%s: findings for %v, want %v", id, got, want)
+			}
+		}
+	})
+}

@@ -319,10 +319,10 @@ func TestSettingsAddAndRemoveRecords(t *testing.T) {
 	d.press("a")
 	d.typ("zope")
 	d.press("enter")
-	d.typ("Zope")
-	d.press("enter")
+	d.typ("zope, plone")
+	d.press("enter", "enter", "enter")
 	d.saveSetting("add zope to Technologies")
-	if got := fileAt(t, root, "config/techs.yaml"); !strings.Contains(got, "name: zope") {
+	if got := fileAt(t, root, "config/techs.yaml"); !strings.Contains(got, "name: zope") || !strings.Contains(got, "plone") {
 		t.Fatalf("tech:\n%s", got)
 	}
 

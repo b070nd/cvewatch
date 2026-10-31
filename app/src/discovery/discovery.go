@@ -83,6 +83,8 @@ type Options struct {
 	MaxDepth    int   // default 3; the scanned root is depth 0
 	MaxFiles    int   // default 3000 files visited
 	MaxFileSize int64 // default 1 MiB read per file
+	// IncludeIgnored looks at paths .gitignore (and .git/info/exclude) ignore too.
+	IncludeIgnored bool
 }
 
 const (
@@ -116,15 +118,17 @@ type hint struct {
 }
 
 type scanner struct {
-	cat   *catalog.Catalog
-	o     Options
-	hints map[string][]hint // lowercase file name -> version hints
-	hits  []hit
-	locks []LockProposal
-	notes map[string]bool
-	big   bool
-	trunc bool
-	one   bool // a single file is scanned, so unresolved variables are worth a note
+	cat     *catalog.Catalog
+	o       Options
+	hints   map[string][]hint // lowercase file name -> version hints
+	hits    []hit
+	locks   []LockProposal
+	notes   map[string]bool
+	big     bool
+	trunc   bool
+	one     bool // a single file is scanned, so unresolved variables are worth a note
+	ign     *Ignore
+	ignored int // paths left out because git ignores them
 }
 
 // file is one regular file being looked at; its content is read at most once.
@@ -167,9 +171,22 @@ func Scan(dir string, cat *catalog.Catalog, o Options) (Result, error) {
 		o.MaxFileSize = 1 << 20
 	}
 	s := &scanner{cat: cat, o: o, notes: map[string]bool{}}
+	if !o.IncludeIgnored {
+		s.ign = NewIgnore(real)
+	}
 	s.compileHints()
 	s.walk(real)
+	if s.ignored > 0 {
+		s.note("%s ignored by .gitignore left out", plural(s.ignored, "path"))
+	}
 	return s.result(abs), nil
+}
+
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 func (s *scanner) note(format string, a ...any) { s.notes[fmt.Sprintf(format, a...)] = true }
@@ -211,9 +228,17 @@ func (s *scanner) walk(root string) {
 			if skipDirs[d.Name()] || strings.Count(rel, "/")+1 > s.o.MaxDepth {
 				return fs.SkipDir
 			}
+			if s.ign != nil && s.ign.Ignored(p, true) {
+				s.ignored++
+				return fs.SkipDir
+			}
 			return nil
 		}
 		if !d.Type().IsRegular() {
+			return nil
+		}
+		if s.ign != nil && s.ign.Ignored(p, false) {
+			s.ignored++
 			return nil
 		}
 		if files++; files > s.o.MaxFiles {

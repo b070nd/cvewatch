@@ -150,7 +150,7 @@ func TestInitDetectsRepository(t *testing.T) {
 	// And a doctor run on it is clean.
 	t.Setenv("SLACK_WEBHOOK_URL", "")
 	r := Run(t.Context(), root, Options{})
-	want(t, r, "inventory", "my-shop-v2/prod", OK)
+	want(t, r, "inventory", "my-shop-v2/local", OK)
 
 	// Re-running skips the project file; Force rewrites it.
 	res, err = Init(root, InitOptions{Repo: repo})

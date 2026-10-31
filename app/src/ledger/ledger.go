@@ -157,7 +157,7 @@ func (l *Ledger) Findings() []model.Finding {
 		if c := strings.Compare(a.VulnID, b.VulnID); c != 0 {
 			return c
 		}
-		return slices.Index(model.AllEnvs, a.Env) - slices.Index(model.AllEnvs, b.Env)
+		return model.EnvCompare(a.Env, b.Env)
 	})
 	return out
 }
@@ -187,6 +187,43 @@ func (l *Ledger) RenameProject(from, to string) (int, error) {
 		l.d.Findings[f.Key()] = f
 	}
 	return len(moving), nil
+}
+
+// EnvMove is what RenameEnv would move: the findings of a project in one
+// environment, or the first finding of the new name that is in the way.
+func (l *Ledger) EnvMove(project string, from, to model.Env) (int, error) {
+	n := 0
+	for _, f := range l.d.Findings {
+		if f.Project != project || f.Env != from {
+			continue
+		}
+		if _, taken := l.d.Findings[f.VulnID+"|"+project+"|"+string(to)]; taken {
+			return 0, fmt.Errorf("project %q already has a finding for %s in %s", project, f.VulnID, to)
+		}
+		n++
+	}
+	return n, nil
+}
+
+// RenameEnv moves the findings of a project from one environment name to another, re-keying them.
+// It changes nothing and fails if a finding of the new name is in the way.
+func (l *Ledger) RenameEnv(project string, from, to model.Env) (int, error) {
+	n, err := l.EnvMove(project, from, to)
+	if err != nil {
+		return 0, err
+	}
+	var moving []*model.Finding
+	for _, f := range l.d.Findings {
+		if f.Project == project && f.Env == from {
+			moving = append(moving, f)
+		}
+	}
+	for _, f := range moving {
+		delete(l.d.Findings, f.Key())
+		f.Env = to
+		l.d.Findings[f.Key()] = f
+	}
+	return n, nil
 }
 
 // Mutate lets fn adjust one finding in place; it reports whether the finding exists.

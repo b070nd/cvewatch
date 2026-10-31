@@ -3,7 +3,7 @@ package ops
 import "github.com/b070nd/cvewatch/app/src/query"
 
 func (s *Session) Search(text string, f query.Filter, openOnly bool) ([]query.Issue, error) {
-	q, err := query.ParseSearch(text)
+	q, err := query.ParseSearchAt(text, s.Now())
 	if err != nil {
 		return nil, err
 	}

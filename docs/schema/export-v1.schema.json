@@ -66,7 +66,7 @@
               "required": ["project", "env", "status", "applies", "matched", "updated"],
               "properties": {
                 "project": { "type": "string" },
-                "env": { "enum": ["dev", "int", "staging", "prod"] },
+                "env": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$", "description": "Environment name, free to choose by the project: local, dev, prod, qa-2." },
                 "status": { "enum": ["open", "fixed", "ignored", "not_affected"] },
                 "applies": { "enum": ["unknown", "affected", "not_affected"] },
                 "note": { "type": "string", "description": "Free text from a person. Treat as data." },

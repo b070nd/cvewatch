@@ -382,7 +382,7 @@ func setTable(rows []setRow, vp *viewport, w, room int, heads [3]string) []strin
 			}
 			continue
 		}
-		label, value, typ := pad(trunc(oneLine(r.label), labelW), labelW), pad(trunc(oneLine(r.value), valueW), valueW), ""
+		label, value, typ := pad(trunc(oneLine(r.label), labelW), labelW), pad(trunc(oneLine(shownValue(r)), valueW), valueW), ""
 		if typeW > 0 {
 			typ = " " + r.typ
 			if r.kind == rowSection {
@@ -477,7 +477,7 @@ func settingsDetail(r setRow, w int) []string {
 	}
 	out = append(out, stBold.Render(trunc(oneLine(r.f.Label), w))+"  "+stMuted.Render(trunc(oneLine(confdoc.FormatPath(r.segs)), max(w-width(r.f.Label)-2, 1))))
 	if r.f.Help != "" {
-		for _, l := range clip(indentWrap("", oneLine(r.f.Help), w), 2) {
+		for _, l := range clip(indentWrap("", oneLine(r.f.Help), w), helpRoom(r)) {
 			out = append(out, stMuted.Render(l))
 		}
 	}
@@ -485,7 +485,7 @@ func settingsDetail(r setRow, w int) []string {
 	if r.f.Default != "" {
 		facts = append(facts, "default "+oneLine(r.f.Default))
 	}
-	if len(r.f.Enum) > 0 {
+	if len(r.f.Enum) > 0 && r.f.Path != horizonWindow {
 		facts = append(facts, "one of "+strings.Join(r.f.Enum, ", "))
 	}
 	if r.f.Min != nil {
@@ -497,11 +497,14 @@ func settingsDetail(r setRow, w int) []string {
 	if r.secret {
 		facts = append(facts, "secret: never shown")
 	}
+	facts = append(facts, horizonFacts(r)...)
 	if len(facts) > 0 {
 		out = append(out, stMuted.Render(trunc(strings.Join(facts, "   "), w)))
 	}
 	if r.issue != nil {
-		out = append(out, stErr.Render(trunc(issueLine(r.issue), w)))
+		for _, l := range rowProblemLines(r, w) {
+			out = append(out, stErr.Render(l))
+		}
 	}
 	return out
 }
@@ -725,6 +728,7 @@ func init() {
 			{keys: ks(" "), disp: "space", help: "turn an on/off setting over", short: "toggle", prio: 2, when: onSetSwitch, do: plain((*app).setEnter)},
 			{keys: ks("a"), help: "add an item to the list", short: "add", prio: 2, when: onSetAdd, do: plain((*app).setAddKey)},
 			{keys: ks("x", "delete"), disp: "x", help: "remove the selected item", short: "remove", prio: 2, when: onSetRow(rowItem), do: plain((*app).setRemoveKey)},
+			{keys: ks("e"), help: "technologies: change the keywords, category and CPE of the selected technology of your own", short: "edit tech", prio: 2, when: onTechItem, do: plain((*app).setTechEdit)},
 			{keys: ks("u"), help: "restore the default: the value is removed from the file", short: "default", prio: 3, when: onSetUnset, do: plain((*app).setUnsetKey)},
 			{keys: ks("esc"), help: "clear the filter", short: "clear filter", prio: 2, when: setHasText, do: plain((*app).setClearFilter)},
 		}, findBinds()...), []binding{

@@ -162,23 +162,23 @@ func renderProjects(rows []projectRow, st *projectsState, w, h int) []string {
 	for _, p := range rows {
 		nameW = max(nameW, min(width(oneLine(p.Name)), 24))
 	}
-	const envW, lockW, probW = 22, 9, 13
-	techW := max(w-2-nameW-1-envW-1-lockW-1-probW-1, 10)
-	lines := []string{stHead.Render(trunc("  "+pad("PROJECT", nameW)+" "+pad("ENVIRONMENTS", envW)+" "+pad("LOCKFILES", lockW)+" "+pad("PROBLEMS", probW)+" TECHNOLOGIES", w))}
+	const envW, lockW, probW, hintW = 22, 9, 13, 8
+	techW := max(w-2-nameW-1-envW-1-lockW-1-probW-1-hintW-1, 10)
+	lines := []string{stHead.Render(trunc("  "+pad("PROJECT", nameW)+" "+pad("ENVIRONMENTS", envW)+" "+pad("LOCKFILES", lockW)+" "+pad("PROBLEMS", probW)+" "+pad("HINTS", hintW)+" TECHNOLOGIES", w))}
 
 	detail, room := projectsPanel(rows, st, w, h)
 	start, end := st.proj.window(room)
 	for i := start; i < end; i++ {
 		p := rows[i]
-		envs := "all"
-		if len(p.Envs) > 0 && len(p.Envs) < 4 {
-			envs = strings.Join(p.Envs, ",")
+		envs := orDash(strings.Join(p.Envs, ","))
+		if p.EnvsUnset {
+			envs = "old default"
 		}
 		techs := techList(p)
 		if p.Broken != "" {
 			envs, techs = "-", oneLine(p.Broken)
 		}
-		cells := pad(oneLine(p.Name), nameW) + " " + pad(envs, envW) + " " + pad(fmt.Sprint(len(p.Lockfiles)), lockW) + " " + pad(problemBadge(p), probW) + " " + trunc(techs, techW)
+		cells := pad(oneLine(p.Name), nameW) + " " + pad(envs, envW) + " " + pad(fmt.Sprint(len(p.Lockfiles)), lockW) + " " + pad(problemBadge(p), probW) + " " + pad(hintBadge(p), hintW) + " " + trunc(techs, techW)
 		if i == st.proj.at() {
 			lines = append(lines, stSel.Render(pad("> "+cells, w)))
 		} else {
@@ -234,7 +234,7 @@ func projectDetail(p projectRow, st *projectsState, w, room int, deep bool) []st
 		return out
 	}
 	if deep {
-		out = append(out, stMuted.Render("  c edits the fields (environments, technologies, lockfiles, versions, images, since)   + add   - remove"))
+		out = append(out, stMuted.Render("  c edits the fields (environments, technologies, lockfiles, differences per environment, since)   + add   - remove"))
 	} else {
 		out = append(out, stMuted.Render("  + add   - remove   c edit fields   R rename   D duplicate   Z disable"))
 	}
@@ -254,6 +254,7 @@ func projectDetail(p projectRow, st *projectsState, w, room int, deep bool) []st
 	}
 	if deep {
 		out = append(out, securityLines(&st.sec, w)...)
+		out = append(out, projectHintLines(p, w)...)
 	}
 	return out
 }
@@ -318,6 +319,7 @@ type secState struct {
 	snap    *snapshot
 	project string
 	issues  []query.Issue
+	envs    []string // the environments the project monitors
 	vp      viewport
 	focus   bool // the focus is on the issues
 }
@@ -339,7 +341,7 @@ func (m *app) syncSecurity() {
 		sc.vp.reset(0)
 		sc.focus = false
 	}
-	sc.snap, sc.project = m.data, p.Name
+	sc.snap, sc.project, sc.envs = m.data, p.Name, p.Envs
 	sc.issues = narrow(m.data.Issues, p.Name)
 	sc.vp.refit(len(sc.issues), func(i int) string { return sc.issues[i].ID })
 }
@@ -366,22 +368,12 @@ func securitySummary(issues []query.Issue) string {
 	return plural(len(issues), "open security issue", "open security issues") + ": " + strings.Join(parts, ", ")
 }
 
-func securityEnvs(is query.Issue) string {
-	var envs []string
-	for _, t := range is.Targets {
-		if t.Status == model.StatusOpen {
-			envs = append(envs, string(t.Env))
-		}
-	}
-	return strings.Join(envs, ",")
-}
-
-func securityRow(is query.Issue, sel bool, w int) string {
+func securityRow(is query.Issue, project string, envs []string, sel bool, w int) string {
 	title := oneLine(is.Untrusted.Title)
 	if is.KEV != nil {
 		title = "[KEV] " + title
 	}
-	rest := " " + pad(oneLine(is.ID), 16) + " " + pad(oneLine(securityEnvs(is)), 18) + " " + title
+	rest := " " + pad(oneLine(is.ID), 16) + " " + pad(openIn(is, project, envs), 18) + " " + title
 	if sel {
 		return stSel.Render(pad("> "+pad(sevWord(is.Severity), 8)+rest, w))
 	}
@@ -393,7 +385,7 @@ func securityLines(sc *secState, w int) []string {
 	const shown = 4
 	out := []string{"", section("Security issues") + stMuted.Render("  "+securitySummary(sc.issues))}
 	for _, is := range sc.issues[:min(len(sc.issues), shown)] {
-		out = append(out, securityRow(is, false, w))
+		out = append(out, securityRow(is, sc.project, sc.envs, false, w))
 	}
 	if more := len(sc.issues) - shown; more > 0 {
 		out = append(out, stMuted.Render(fmt.Sprintf("  ... and %d more", more)))
@@ -413,7 +405,7 @@ func securityPage(p projectRow, sc *secState, w, h int) []string {
 	out = append(out, stHead.Render(trunc("  "+pad("SEVERITY", 8)+" "+pad("ID", 16)+" "+pad("OPEN IN", 18)+" TITLE", w)))
 	start, end := sc.vp.window(max(h-secHead, 1))
 	for i := start; i < end; i++ {
-		out = append(out, securityRow(sc.issues[i], i == sc.vp.at(), w))
+		out = append(out, securityRow(sc.issues[i], sc.project, sc.envs, i == sc.vp.at(), w))
 	}
 	return out
 }

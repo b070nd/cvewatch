@@ -25,6 +25,19 @@ lockfiles:                        # re-read every run
   - {type: composer, path: /path/to/shop/composer.lock}
   - {type: npm, path: /path/to/shop/package-lock.json}
   # - {type: cyclonedx, path: /path/to/shop-prod.cdx.json, env: prod}   # an SBOM for one environment
+when@prod:                        # only what differs there from the generic list above
+  techs: {php: "8.2.30"}
+  image: registry.example/shop@sha256:...   # recorded only
+`
+
+// legacyExample is the same project in the old spelling of the differences.
+const legacyExample = `name: shop
+envs: [dev, int, staging, prod]   # omit for all four
+techs:
+  - {name: php, version: "8.2"}
+  - {name: magento, version: "2.4.7"}
+lockfiles:
+  - {type: composer, path: /path/to/shop/composer.lock}
 environments:                     # what actually runs where
   prod:
     techs: {php: "8.2.30"}
@@ -43,10 +56,9 @@ lockfiles:
     path: composer.lock
 
 # deployed
-environments:
-  prod:
-    techs:
-      php: "8.2.30"
+when@prod:
+  techs:
+    php: "8.2.30"
 `
 
 func mustParse(t *testing.T, s string) *File {
@@ -153,15 +165,15 @@ func TestApplyOnExample(t *testing.T) {
 		want []string // the added and removed lines, in order
 	}{
 		{"deployed version updated", []Op{{Kind: "set_env_tech", Env: "prod", Tech: "php", Version: "8.2.31"}},
-			[]string{`-     techs: {php: "8.2.30"}`, `+     techs: {php: "8.2.31"}`}},
+			[]string{`-   techs: {php: "8.2.30"}`, `+   techs: {php: "8.2.31"}`}},
 		{"deployed version in a new env", []Op{{Kind: "set_env_tech", Env: "staging", Tech: "php", Version: "8.2.30"}},
-			[]string{`+   staging:`, `+     techs: {php: "8.2.30"}`}},
+			[]string{`+ when@staging:`, `+   techs: {php: "8.2.30"}`}},
 		{"second tech in an env", []Op{{Kind: "set_env_tech", Env: "prod", Tech: "node", Version: "20"}},
-			[]string{`-     techs: {php: "8.2.30"}`, `+     techs: {php: "8.2.30", node: "20"}`}},
+			[]string{`-   techs: {php: "8.2.30"}`, `+   techs: {php: "8.2.30", node: "20"}`}},
 		{"image", []Op{{Kind: "set_image", Env: "prod", Image: "reg.example/shop:1.4"}},
-			[]string{`-     image: registry.example/shop@sha256:...   # recorded only`, `+     image: reg.example/shop:1.4 # recorded only`}},
+			[]string{`-   image: registry.example/shop@sha256:...   # recorded only`, `+   image: reg.example/shop:1.4 # recorded only`}},
 		{"image in a new env", []Op{{Kind: "set_image", Env: "dev", Image: "shop:dev"}},
-			[]string{`+   dev:`, `+     image: shop:dev`}},
+			[]string{`+ when@dev:`, `+   image: shop:dev`}},
 		{"lockfile with env", []Op{{Kind: "add_lockfile", Lockfile: model.Lockfile{Type: "cyclonedx", Path: "/p/shop-prod.cdx.json", Env: "prod"}}},
 			[]string{`+   - {type: cyclonedx, path: /p/shop-prod.cdx.json, env: prod}`}},
 		{"lockfile with dev", []Op{{Kind: "add_lockfile", Lockfile: model.Lockfile{Type: "pip", Path: "req.txt", Dev: true}}},
@@ -181,9 +193,9 @@ func TestApplyOnExample(t *testing.T) {
 		{"envs narrowed", []Op{{Kind: "set_envs", Envs: []model.Env{"staging", "prod"}}},
 			[]string{`- envs: [dev, int, staging, prod]   # omit for all four`, `+ envs: [staging, prod] # omit for all four`}},
 		{"remove env tech and prune", []Op{{Kind: "remove_env_tech", Env: "prod", Tech: "php"}},
-			[]string{`-     techs: {php: "8.2.30"}`}},
+			[]string{`-   techs: {php: "8.2.30"}`}},
 		{"clear image", []Op{{Kind: "set_image", Env: "prod", Image: ""}},
-			[]string{`-     image: registry.example/shop@sha256:...   # recorded only`}},
+			[]string{`-   image: registry.example/shop@sha256:...   # recorded only`}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -225,7 +237,7 @@ func TestApplyResultsAreRight(t *testing.T) {
 	if got := p.Lockfiles[len(p.Lockfiles)-1]; got != (model.Lockfile{Type: "cyclonedx", Path: "/x.json", Env: "prod", Dev: true}) {
 		t.Errorf("last lockfile = %+v", got)
 	}
-	if got := p.Techs[len(p.Techs)-1]; got != (model.ProjectTech{Name: "redis", Version: "7.2"}) {
+	if got := p.Techs[len(p.Techs)-1]; got.Name != "redis" || got.Version != "7.2" {
 		t.Errorf("last tech = %+v", got)
 	}
 	if got := p.Lockfiles[0].Path; got != "/path/to/shop/composer.lock" {
@@ -261,7 +273,7 @@ func TestBlockStyleFile(t *testing.T) {
 	want := strings.NewReplacer(
 		"  - name: mysql\n", "  - name: mysql\n    version: \"8.0\"\n  - {name: redis, version: \"7\"}\n",
 		"    path: composer.lock\n", "    path: composer.lock\n  - {type: npm, path: package-lock.json}\n",
-		"      php: \"8.2.30\"\n", "      php: \"8.2.30\"\n      mysql: \"8.0.35\"\n",
+		"    php: \"8.2.30\"\n", "    php: \"8.2.30\"\n    mysql: \"8.0.35\"\n",
 	).Replace(blockStyle)
 	if got != want {
 		t.Fatalf("got\n%s\nwant\n%s", got, want)
@@ -283,7 +295,7 @@ func TestSetEnvs(t *testing.T) {
 			t.Fatalf("envs still there:\n%s", got)
 		}
 		f := mustParse(t, got)
-		if !reflect.DeepEqual(f.Project().EffectiveEnvs(), model.AllEnvs) {
+		if !reflect.DeepEqual(f.Project().EffectiveEnvs(), model.LegacyEnvs) {
 			t.Fatalf("effective envs = %v", f.Project().EffectiveEnvs())
 		}
 	})
@@ -309,20 +321,20 @@ func TestApplyErrors(t *testing.T) {
 	}{
 		{"unknown kind", Op{Kind: "explode"}, `unknown kind "explode"`},
 		{"empty kind", Op{}, "unknown kind"},
-		{"invalid env in set_envs", Op{Kind: "set_envs", Envs: []model.Env{"dev", "qa"}}, `"qa"`},
-		{"invalid env in set_env_tech", Op{Kind: "set_env_tech", Env: "qa", Tech: "php", Version: "8"}, `"qa"`},
+		{"invalid env in set_envs", Op{Kind: "set_envs", Envs: []model.Env{"dev", "QA"}}, `"QA"`},
+		{"invalid env in set_env_tech", Op{Kind: "set_env_tech", Env: "QA", Tech: "php", Version: "8"}, `"QA"`},
 		{"missing env", Op{Kind: "set_image", Image: "x"}, "invalid env"},
 		{"empty tech in set_tech", Op{Kind: "set_tech", Tech: "  "}, "empty"},
 		{"empty tech in remove_tech", Op{Kind: "remove_tech"}, "empty"},
 		{"empty tech in set_env_tech", Op{Kind: "set_env_tech", Env: "dev", Version: "1"}, "empty"},
 		{"empty version in set_env_tech", Op{Kind: "set_env_tech", Env: "dev", Tech: "php"}, "version"},
 		{"remove absent tech", Op{Kind: "remove_tech", Tech: "ruby"}, `"ruby"`},
-		{"remove absent env tech", Op{Kind: "remove_env_tech", Env: "dev", Tech: "php"}, "environments.dev.techs.php"},
-		{"remove absent env tech in known env", Op{Kind: "remove_env_tech", Env: "prod", Tech: "node"}, "environments.prod.techs.node"},
+		{"remove absent env tech", Op{Kind: "remove_env_tech", Env: "dev", Tech: "php"}, "when@dev.techs.php"},
+		{"remove absent env tech in known env", Op{Kind: "remove_env_tech", Env: "prod", Tech: "node"}, "when@prod.techs.node"},
 		{"remove absent lockfile", Op{Kind: "remove_lockfile", Lockfile: model.Lockfile{Path: "/nope"}}, `"/nope"`},
 		{"remove lockfile for the wrong env", Op{Kind: "remove_lockfile", Lockfile: model.Lockfile{Path: "/path/to/shop/composer.lock", Env: "dev"}}, "dev"},
 		{"lockfile without path", Op{Kind: "add_lockfile", Lockfile: model.Lockfile{Type: "npm"}}, "path"},
-		{"lockfile with bad env", Op{Kind: "add_lockfile", Lockfile: model.Lockfile{Type: "npm", Path: "p", Env: "qa"}}, "qa"},
+		{"lockfile with bad env", Op{Kind: "add_lockfile", Lockfile: model.Lockfile{Type: "npm", Path: "p", Env: "QA"}}, "QA"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -374,13 +386,13 @@ func TestApplyIsIdempotent(t *testing.T) {
 
 func TestEmptyContainersAreFilled(t *testing.T) {
 	// a key with nothing after it, and empty flow lists and maps
-	src := "name: x\ntechs:\nlockfiles: []\nenvironments:\n  dev: {}\n"
+	src := "name: x\ntechs:\nlockfiles: []\nwhen@dev: {}\n"
 	got := mustApply(t, src,
 		Op{Kind: "set_tech", Tech: "php", Version: "8.2"},
 		Op{Kind: "add_lockfile", Lockfile: model.Lockfile{Type: "npm", Path: "p"}},
 		Op{Kind: "set_env_tech", Env: "dev", Tech: "php", Version: "8.2.1"},
 	)
-	want := "name: x\ntechs:\n  - {name: php, version: \"8.2\"}\nlockfiles:\n  - {type: npm, path: p}\nenvironments:\n  dev:\n    techs: {php: \"8.2.1\"}\n"
+	want := "name: x\ntechs:\n  - {name: php, version: \"8.2\"}\nlockfiles:\n  - {type: npm, path: p}\nwhen@dev:\n  techs: {php: \"8.2.1\"}\n"
 	if got != want {
 		t.Fatalf("got\n%s\nwant\n%s", got, want)
 	}
@@ -417,7 +429,7 @@ func TestDiff(t *testing.T) {
 func TestValidate(t *testing.T) {
 	known := func(s string) bool { return s == "php" || s == "magento" }
 	src := `name: ""
-envs: [dev, qa]
+envs: [dev, QA]
 techs:
   - {name: php, version: "8.2"}
   - {name: PHP}
@@ -427,13 +439,13 @@ lockfiles:
   - {type: composer, path: composer.lock}
   - {type: nope, path: x}
   - {type: npm, path: ""}
-  - {type: npm, path: p, env: qa}
+  - {type: npm, path: p, env: QA}
 environments:
   prod:
     techs: {php: "8.2.30", node: "20"}
-  uat: {}
+  UAT: {}
 `
-	// "uat" and "qa" are not valid environments; the file still parses because
+	// "UAT" and "QA" are not valid environments (names are lowercase); the file still parses because
 	// the model keys are plain strings
 	issues := mustParse(t, src).Validate(known)
 	got := map[string]string{}
@@ -448,7 +460,7 @@ environments:
 		"error lockfiles[1].type",
 		"error lockfiles[2].path",
 		"error lockfiles[3].env",
-		"error environments.uat",
+		"error environments.UAT",
 		"warning techs[2]",                     // ruby unknown and version "latest"
 		"warning environments.prod",            // prod not in envs
 		"warning environments.prod.techs.node", // unknown tech

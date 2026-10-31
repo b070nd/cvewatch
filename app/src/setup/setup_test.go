@@ -99,11 +99,18 @@ func TestCreateFlowEndToEnd(t *testing.T) {
 
 	st = f.Current()
 	for _, o := range st.Options {
-		if !o.Selected {
-			t.Errorf("env %s should start selected", o.Value)
+		if o.Selected != (o.Value == "local") {
+			t.Errorf("env %s: selected = %v, only local starts selected", o.Value, o.Selected)
 		}
 	}
-	answer(t, f, "envs", "dev,int,staging,prod")
+	if last := st.Options[len(st.Options)-1]; last.Value != otherEnv || last.Label != "other..." {
+		t.Errorf("the last option should be other...: %+v", last)
+	}
+	answer(t, f, "envs", "local,prod")
+	if st := f.Current(); st.ID != "differ" || st.Default != "no" || !strings.Contains(st.Title, "Does an environment differ from the rest?") {
+		t.Fatalf("differ step = %+v", st)
+	}
+	answer(t, f, "differ", "")
 
 	st = f.Current()
 	if st.ID != "review" || st.Kind != KindConfirm || !strings.Contains(st.Help, "postgresql") {
@@ -119,6 +126,7 @@ func TestCreateFlowEndToEnd(t *testing.T) {
 	}
 
 	wantOps := []projectfile.Op{
+		{Kind: "set_envs", Envs: []model.Env{"local", "prod"}},
 		{Kind: "set_tech", Tech: "php", Version: "8.2"},
 		{Kind: "set_tech", Tech: "nginx", Version: "1.25"},
 		{Kind: "set_tech", Tech: "postgresql", Version: "16"},
@@ -215,7 +223,11 @@ func TestEditEnvs(t *testing.T) {
 	f := NewFlow(testCatalog(), ex)
 	answer(t, f, "menu", "envs")
 	st := f.Current()
-	if st.Options[0].Selected != true || st.Options[1].Selected || !st.Options[3].Selected {
+	sel := map[string]bool{}
+	for _, o := range st.Options {
+		sel[o.Value] = o.Selected
+	}
+	if sel["local"] || !sel["dev"] || sel["int"] || sel["staging"] || !sel["prod"] {
 		t.Fatalf("envs options = %+v", st.Options)
 	}
 	answer(t, f, "envs", "prod,dev") // same set, no op
@@ -223,8 +235,8 @@ func TestEditEnvs(t *testing.T) {
 		t.Fatalf("ops = %+v", f.Ops())
 	}
 	answer(t, f, "menu", "envs")
-	answer(t, f, "envs", "dev,int,staging,prod") // all four clears the key
-	want := []projectfile.Op{{Kind: "set_envs"}}
+	answer(t, f, "envs", "dev,int,staging,prod") // all four are written out
+	want := []projectfile.Op{{Kind: "set_envs", Envs: []model.Env{"dev", "int", "staging", "prod"}}}
 	if got := f.Ops(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ops = %+v", got)
 	}
@@ -452,6 +464,7 @@ func TestReviewCreated(t *testing.T) {
 	answer(t, f, "add-techs", "")
 	answer(t, f, "lockfiles", "0")
 	answer(t, f, "envs", "dev,prod")
+	answer(t, f, "differ", "no")
 
 	diff, issues, err := f.Review(testCatalog())
 	if err != nil {
@@ -596,6 +609,7 @@ func TestRevisitChangesOneSectionAndReturnsToTheReview(t *testing.T) {
 		t.Fatal("only the review can go back to a section")
 	}
 	answer(t, f, "envs", "dev,prod")
+	answer(t, f, "differ", "no")
 	if f.Current().ID != "review" {
 		t.Fatalf("current = %q", f.Current().ID)
 	}
@@ -604,7 +618,7 @@ func TestRevisitChangesOneSectionAndReturnsToTheReview(t *testing.T) {
 	for _, s := range f.Sections() {
 		ids = append(ids, s.ID)
 	}
-	if got := strings.Join(ids, ","); got != "name,techs,add-techs,versions,lockfiles,envs" {
+	if got := strings.Join(ids, ","); got != "name,techs,add-techs,versions,lockfiles,envs,differ" {
 		t.Fatalf("sections = %s", got)
 	}
 	if err := f.Revisit("nope"); err == nil {
@@ -619,6 +633,19 @@ func TestRevisitChangesOneSectionAndReturnsToTheReview(t *testing.T) {
 		t.Fatalf("one answer must lead back to the review: %+v", st)
 	}
 	if got := f.Draft().Project.Envs; len(got) != 3 {
+		t.Errorf("envs = %v", got)
+	}
+
+	// other... leads to the typed names and from there back to the review
+	if err := f.Revisit("envs"); err != nil {
+		t.Fatal(err)
+	}
+	answer(t, f, "envs", "prod,"+otherEnv)
+	answer(t, f, "envs-other", "qa")
+	if st := f.Current(); st.ID != "review" {
+		t.Fatalf("current = %q", st.ID)
+	}
+	if got := f.Draft().Project.Envs; !reflect.DeepEqual(got, []model.Env{"prod", "qa"}) {
 		t.Errorf("envs = %v", got)
 	}
 
@@ -713,5 +740,125 @@ func TestFlowEmitsOnlyDeclaredKinds(t *testing.T) {
 		if !slices.Contains(OpKinds, m[1]) {
 			t.Errorf("Flow.Ops emits %s, which OpKinds does not declare", m[1])
 		}
+	}
+}
+
+func TestEnvsOtherNamesAndLegacyDefault(t *testing.T) {
+	// a file without envs means the old four; keeping them asks for no edit
+	ex := &model.Project{Name: "shop"}
+	f := NewFlow(testCatalog(), ex)
+	if hints := f.EnvHints(); len(hints) != 1 || hints[0].Level != "warn" || !strings.Contains(hints[0].Message, "old default") {
+		t.Fatalf("hints = %+v", hints)
+	}
+	answer(t, f, "menu", "envs")
+	for _, o := range f.Current().Options {
+		if want := o.Value == "dev" || o.Value == "int" || o.Value == "staging" || o.Value == "prod"; o.Selected != want {
+			t.Errorf("option %s selected = %v", o.Value, o.Selected)
+		}
+	}
+	answer(t, f, "envs", "dev,int,staging,prod")
+	if len(f.Ops()) != 0 {
+		t.Fatalf("ops = %+v", f.Ops())
+	}
+
+	// own names are typed under other..., checked, and listed next time
+	answer(t, f, "menu", "envs")
+	answer(t, f, "envs", "prod,"+otherEnv)
+	if f.Current().ID != "envs-other" {
+		t.Fatalf("current = %q", f.Current().ID)
+	}
+	if err := f.Answer("QA!"); err == nil {
+		t.Error("an invalid name must be rejected")
+	}
+	answer(t, f, "envs-other", "qa-2, Demo")
+	want := []projectfile.Op{{Kind: "set_envs", Envs: []model.Env{"prod", "demo", "qa-2"}}}
+	if got := f.Ops(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("ops = %+v", got)
+	}
+	if f.Current().ID != "menu" {
+		t.Errorf("current = %q", f.Current().ID)
+	}
+	answer(t, f, "menu", "envs")
+	var names []string
+	for _, o := range f.Current().Options {
+		names = append(names, o.Value)
+	}
+	if got := strings.Join(names, ","); got != "local,dev,int,staging,prod,demo,qa-2,+" {
+		t.Errorf("options = %s", got)
+	}
+
+	// only other... with nothing typed leaves nothing selected
+	answer(t, f, "envs", otherEnv)
+	if err := f.Answer(""); err == nil {
+		t.Error("no environment at all must be rejected")
+	}
+}
+
+func TestNewProjectStartsWithLocalOnly(t *testing.T) {
+	f := NewFlow(testCatalog(), nil)
+	if got := f.Draft().Project.Envs; !reflect.DeepEqual(got, []model.Env{model.EnvLocal}) {
+		t.Fatalf("envs = %v", got)
+	}
+	hints := f.EnvHints()
+	if len(hints) != 1 || hints[0].Level != "info" || !strings.Contains(hints[0].Message, "prod") {
+		t.Fatalf("hints = %+v", hints)
+	}
+	if len(hints[0].Fix) != 1 || hints[0].Fix[0].Kind != "add_env" {
+		t.Errorf("fix = %+v", hints[0].Fix)
+	}
+}
+
+func TestDifferencesOps(t *testing.T) {
+	ex := &model.Project{Name: "shop", Envs: []model.Env{"local", "prod"},
+		Techs:        []model.ProjectTech{{Name: "php", Version: "8.2"}, {Name: "redis", Envs: []model.Env{"local"}}},
+		Environments: map[model.Env]model.EnvConfig{"prod": {Exclude: []string{"nginx"}}}}
+	f := NewFlow(testCatalog(), ex)
+	f.draft.Techs[1].Envs = []model.Env{"local", "prod"}
+	f.draft.Techs = append(f.draft.Techs, model.ProjectTech{Name: "nginx", Envs: []model.Env{"prod"}})
+	f.draft.Environments["prod"] = model.EnvConfig{Exclude: []string{"php"}}
+	f.draft.Environments["local"] = model.EnvConfig{Exclude: []string{"php"}}
+	want := []projectfile.Op{
+		{Kind: "set_tech", Tech: "nginx"},
+		{Kind: "set_tech_envs", Tech: "redis", Envs: []model.Env{"local", "prod"}},
+		{Kind: "set_tech_envs", Tech: "nginx", Envs: []model.Env{"prod"}},
+		{Kind: "exclude_env_tech", Env: "local", Tech: "php"},
+		{Kind: "include_env_tech", Env: "prod", Tech: "nginx"},
+		{Kind: "exclude_env_tech", Env: "prod", Tech: "php"},
+	}
+	got := f.Ops()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ops = %+v", got)
+	}
+	if !reflect.DeepEqual(ex.Techs[1].Envs, []model.Env{"local"}) {
+		t.Error("the existing project was modified")
+	}
+
+	// applying the ops to the file gives the draft
+	file, err := projectfile.Parse([]byte("name: shop\nenvs: [local, prod]\ntechs:\n  - {name: php, version: \"8.2\"}\n  - {name: redis, envs: [local]}\nwhen@prod:\n  exclude: [nginx]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Apply(got...); err != nil {
+		t.Fatal(err)
+	}
+	p := file.Project()
+	if !reflect.DeepEqual(p.TechsIn("local"), []model.ProjectTech{{Name: "redis"}}) || !reflect.DeepEqual(p.TechsIn("prod"), []model.ProjectTech{{Name: "redis"}, {Name: "nginx"}}) {
+		t.Errorf("local %+v, prod %+v", p.TechsIn("local"), p.TechsIn("prod"))
+	}
+}
+
+func TestRemovingATechDropsItsExclusionsAndKeepsOthers(t *testing.T) {
+	ex := &model.Project{Name: "shop", Techs: []model.ProjectTech{{Name: "php", Version: "8"}, {Name: "redis"}},
+		Environments: map[model.Env]model.EnvConfig{"prod": {Exclude: []string{"redis"}}, "dev": {Exclude: []string{"php", "redis"}}}}
+	f := NewFlow(testCatalog(), ex)
+	f.dropEnvTech("redis")
+	if _, ok := f.draft.Environments["prod"]; ok {
+		t.Errorf("an environment left with nothing stays: %+v", f.draft.Environments)
+	}
+	if got := f.draft.Environments["dev"].Exclude; !reflect.DeepEqual(got, []string{"php"}) {
+		t.Errorf("dev exclude = %v", got)
+	}
+	if len(ex.Environments["dev"].Exclude) != 2 {
+		t.Error("the existing project was modified")
 	}
 }

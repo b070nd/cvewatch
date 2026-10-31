@@ -175,6 +175,19 @@ func (m *app) refitLists() {
 	m.ovw.refit(all)
 }
 
+// noneText is what an empty list says: nothing is open, or nothing in the scope or the time filter.
+func (m *app) noneText() string {
+	switch {
+	case m.scope != "" && !m.published.Any():
+		return "Nothing open in project " + oneLine(m.scope) + " published " + m.published.Label() + ". Press 0 to widen the scope and the time filter."
+	case m.scope != "":
+		return "Nothing open in project " + oneLine(m.scope) + ". Press 0 to see all projects."
+	case !m.published.Any():
+		return "Nothing open published " + m.published.Label() + ". Press t for another period, 0 for any time."
+	}
+	return "Nothing open. No open vulnerabilities to act on."
+}
+
 func (m *app) cycleSeverity() tea.Cmd {
 	l := m.list()
 	l.min = minCycle[(l.min.Rank()+1)%len(minCycle)] // the cycle is in rank order
@@ -260,27 +273,7 @@ func (m *app) findingsBody(w, h int) []string {
 		}
 		return d.view(w, h)
 	}
-	return renderFindings(len(m.dataIssues()), &m.fnd.issueList, m.scope, w, h)
-}
-
-// projectEnvs summarises where an issue is open, e.g. "shop:dev,prod mw:prod".
-func projectEnvs(is query.Issue) string {
-	var order []string
-	envs := map[string][]string{}
-	for _, t := range is.Targets {
-		if t.Status != model.StatusOpen {
-			continue
-		}
-		if _, ok := envs[t.Project]; !ok {
-			order = append(order, t.Project)
-		}
-		envs[t.Project] = append(envs[t.Project], string(t.Env))
-	}
-	var parts []string
-	for _, p := range order {
-		parts = append(parts, oneLine(p)+":"+oneLine(strings.Join(envs[p], ",")))
-	}
-	return strings.Join(parts, " ")
+	return renderFindings(len(m.dataIssues()), &m.fnd.issueList, m.noneText(), m.data.monitored(), w, h)
 }
 
 func owners(is query.Issue) string {
@@ -300,8 +293,8 @@ func owners(is query.Issue) string {
 func findingsRoom(h int) int { return max(h-2, 1) }
 
 // renderFindings draws the table: a count line, a header and the rows around
-// the cursor. total is the unfiltered count.
-func renderFindings(total int, st *issueList, scope string, w, h int) []string {
+// the cursor. total is the unfiltered count; none is what to say when nothing is open.
+func renderFindings(total int, st *issueList, none string, mon map[string][]model.Env, w, h int) []string {
 	rows := st.vis
 	info := fmt.Sprintf("%d of %d open issues   min severity: %s", len(rows), total, minLabel(st.min))
 	if n := len(st.sel); n > 0 {
@@ -315,10 +308,7 @@ func renderFindings(total int, st *issueList, scope string, w, h int) []string {
 	}
 	lines := []string{stMuted.Render(trunc(info, w))}
 	if len(rows) == 0 {
-		msg := "Nothing open. No open vulnerabilities to act on."
-		if scope != "" {
-			msg = "Nothing open in project " + oneLine(scope) + ". Press 0 to see all projects."
-		}
+		msg := none
 		if total > 0 {
 			msg = "No issue matches the filter. Press s to lower the severity, / to change the text."
 		}
@@ -344,7 +334,7 @@ func renderFindings(total int, st *issueList, scope string, w, h int) []string {
 	row := func(cells ...string) string { return strings.Join(cells, " ") }
 	head := []string{pad("SEVERITY", sevW), pad("ID", idW), pad("AGE", ageW)}
 	if showProj {
-		head = append(head, pad("PROJECTS:ENVS", projW))
+		head = append(head, pad("PROJECTS (ONLY IN)", projW))
 	}
 	if showOwn {
 		head = append(head, pad("OWNER", ownW))
@@ -366,7 +356,11 @@ func renderFindings(total int, st *issueList, scope string, w, h int) []string {
 		cells := func(sev string) []string {
 			c := []string{sev, pad(oneLine(is.ID), idW), pad(age, ageW)}
 			if showProj {
-				c = append(c, pad(projectEnvs(is), projW))
+				cell := pad(whereOpen(is, mon, projW), projW)
+				if i != st.vp.at() {
+					cell = emphasiseProd(cell)
+				}
+				c = append(c, cell)
 			}
 			if showOwn {
 				c = append(c, pad(owners(is), ownW))
@@ -432,7 +426,7 @@ func (m *app) detailLoaded(msg detailMsg) {
 		if c := strings.Compare(a.Project, b.Project); c != 0 {
 			return c
 		}
-		return slices.Index(model.AllEnvs, a.Env) - slices.Index(model.AllEnvs, b.Env)
+		return model.EnvCompare(a.Env, b.Env)
 	})
 	d.sel.refit(len(d.is.Targets), func(i int) string { return targetID(d.is.Targets[i]) })
 }

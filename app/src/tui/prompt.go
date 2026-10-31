@@ -27,6 +27,7 @@ const (
 	pkDelete                      // the name of the project to delete, typed to confirm
 	pkSetting                     // the value of a setting, or what a new item of a list needs
 	pkLock                        // the file of a lockfile to add to a project, or to the project being set up
+	pkTech                        // a technology of the person's own: name, keywords, category, CPE
 )
 
 type field struct {
@@ -59,6 +60,8 @@ type prompt struct {
 	project string                                                                // pkEdit, pkRename, pkDuplicate, pkDelete: the project
 	known   []projectfile.Issue                                                   // pkEdit: the problems the file had before
 	build   func(vals []string) (label string, edits []projectfile.Op, err error) // pkEdit
+
+	act func(m *app, vals []string) (tea.Cmd, error) // pkTech: what the answers start, or why they are refused
 
 	crumb  string                                                              // pkSetting: the setting, for the breadcrumb
 	sbuild func(vals []string) (label string, edits []confdoc.Edit, err error) // pkSetting
@@ -317,6 +320,16 @@ func (m *app) promptSubmit() tea.Cmd {
 		return m.previewLife(ops.LifecycleRequest{Verb: verb, Project: p.project, NewName: val(0)}, p)
 	case pkLock:
 		return m.lockPicked(p)
+	case pkTech:
+		vals := make([]string, len(p.fields))
+		for i := range vals {
+			vals[i] = val(i)
+		}
+		cmd, err := p.act(m, vals)
+		if err != nil {
+			p.problem = oneLine(err.Error())
+		}
+		return cmd
 	case pkDelete:
 		if val(0) != p.project || m.prj.life == nil {
 			p.problem = "type the name of the project exactly, " + p.project + ", to delete it"

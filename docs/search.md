@@ -30,7 +30,8 @@ cvewatch search -- -wordpress
 | `-open` | findings that are still open. Each issue shows only its open environments. |
 | `-min S` | this severity and above: `low`, `medium`, `high` or `critical` |
 | `-project P` | one project |
-| `-env E` | one environment: `dev`, `int`, `staging` or `prod` |
+| `-env E` | one environment, by its name, such as `dev`, `prod` or `qa-2` |
+| `-published T` | published in this time: `hour`, `day`, `week`, `month`, `year`, a span such as `7d`, or a range such as `2026-01-01..2026-03-01` (the same values as the `published:` field) |
 | `-json` | the same JSON document that `list -json` prints |
 
 Without `-open`, every status counts: open, fixed, ignored and not affected. Each issue lists its environments with their status.
@@ -76,7 +77,7 @@ Rules:
 
 A mistake stops the search with a message instead of an empty list:
 
-- `unknown field "foo"; use one of: id, severity, project, env, owner, ticket, tech, status, applies, kev, fix, overdue, after, before`
+- `unknown field "foo"; use one of: id, severity, project, env, owner, ticket, tech, status, applies, kev, fix, overdue, after, before, published`
 - `unknown severity "urgent"; use low, medium, high, critical or unknown, and add + for that or worse`
 - `missing value after owner:`
 - `bad date "2026-9-1" for after; use YYYY-MM-DD`
@@ -90,7 +91,7 @@ Each field has a short alias where one is shown.
 | `id` (`cve`) | the ID or an alias. A `*` at the end matches a prefix. | any ID | `id:CVE-2026-1234`, `id:CVE-2026-12*` |
 | `severity` (`sev`) | the severity. `+` means that severity or worse. | `low`, `medium`, `high`, `critical`, `unknown` | `severity:high+` |
 | `project` | the project | the name in the project file | `project:shop` |
-| `env` | the environment | `dev`, `int`, `staging`, `prod` | `env:prod` |
+| `env` | the environment | any environment name the project uses, such as `dev`, `prod` or `qa-2` | `env:prod` |
 | `owner` | the owner set with `assign` | any name | `owner:"Jane Doe"` |
 | `ticket` | the ticket set with `assign` | any text | `ticket:OPS-12` |
 | `tech` | a technology of the issue | the technology name | `tech:php` |
@@ -101,6 +102,7 @@ Each field has a short alias where one is shown.
 | `overdue` | an open finding whose due date has passed | `yes`, `no` | `overdue:yes` |
 | `after` | published on or after this day | `YYYY-MM-DD` | `after:2026-09-01` |
 | `before` | published before this day | `YYYY-MM-DD` | `before:2026-10-01` |
+| `published` | published in this time, like Google's time filter | `hour`, `day`, `week`, `month`, `year`, a span such as `24h`, `7d`, `2w`, `1y`, a day `YYYY-MM-DD`, or a range `FROM..TO` where either side may be empty | `published:week`, `published:2026-01-01..2026-03-01`, `published:..2026-03-01` |
 
 Notes:
 
@@ -108,6 +110,8 @@ Notes:
 - `severity:high` means high only. `severity:high+` means high and critical.
 - `kev`, `overdue` and `fix` also accept `true` and `false` for `yes` and `no`.
 - `after` includes its day and `before` does not. An issue with no publish date matches neither.
+- `published:week` counts back from now: `hour` is 1 hour, `day` 24 hours, `week` 7 days, `month` 30 days, `year` 365 days. In a range both days are included, dates are UTC, and the range may start or end open (`2026-01-01..`). `published:any` matches every date. An issue with no publish date does not match a bounded `published`.
+- The same values work as `-published VALUE` on `cvewatch list`, `update`, `search` and `export`. The flag and a `published:` term both apply when you give both.
 
 ## Where it works
 
@@ -115,7 +119,7 @@ Access rules apply everywhere: you find only issues in projects you may see, as 
 
 - **Command line:** `cvewatch search`. An unknown ID given to `cvewatch show` gets suggestions from the same search.
 - **MCP:** the `search_findings` tool, for agents. Its input is `query`, with the optional `open_only`, `min_severity`, `project` and `env`. These mean the same as the flags. It returns the same JSON document as `list_findings`. See [agents.md](agents.md).
-- **Terminal UI:** on the findings screen, press `/` and type. The list narrows as you type, and `esc` clears the filter. While the text is not a complete query yet, such as `severity:` without a value, the filter matches the plain words only. It checks them against the ID, title, technologies, aliases, projects, environments and owners.
+- **Terminal UI:** on the findings screen, press `/` and type. The list narrows as you type, and `esc` clears the filter. While the text is not a complete query yet, such as `severity:` without a value, the filter matches the plain words only. It checks them against the ID, title, technologies, aliases, projects, environments and owners. `published:` works there too. The `t` key cycles the same presets as a quick filter (any time, hour, day, week, month, year), and `0` clears it.
 
 ## Limits
 

@@ -44,20 +44,22 @@ Getting started
   doctor [-online] [-json]                     check configuration, lockfiles, state, channels; -online also checks CPE names and feeds
 
 Everyday
-  update [-min S] [-project P] [-env E] [-all] [-json] [-fail-on S]   refresh all sources now, then show open findings (run is the same)
-  list   [-min S] [-project P] [-env E] [-all] [-json] [-fail-on S]   open findings, most urgent first; -fail-on exits 1 for a CI gate
+  update [-min S] [-project P] [-env E] [-published T] [-all] [-json] [-fail-on S]   refresh all sources now, then show open findings (run is the same)
+  list   [-min S] [-project P] [-env E] [-published T] [-all] [-json] [-fail-on S]   open findings, most urgent first; -fail-on exits 1 for a CI gate
   show   ID [-json]                            description, fix, articles, status and plan
   why    ID [-json]                            why it matched, judged again with today's config
-  search [-open] [-min S] [-project P] [-env E] [-json] QUERY...   find issues by id, words or fields such as severity:high; for a query starting with -, put -- before it
+  search [-open] [-min S] [-project P] [-env E] [-published T] [-json] QUERY...   find issues by id, words or fields such as severity:high; for a query starting with -, put -- before it
   daemon                                       refresh every configured interval
   status [-json]                               is it working: daemon, feeds, channels, recent cycles
   dashboard [-out FILE]                        write the static status page now
+  -published T (list, search, export, update): hour, day, week, month, year, a span such as 24h or 7d, or a range such as 2026-01-01..2026-03-01
 
 Projects and technologies
   catalog [-category C] [-json] [WORDS]        the technologies cvewatch knows (open and closed source)
-  discover DIR [-json]                         what a repository uses, with evidence; changes nothing
+  tech add|edit|remove|list ...                your own technologies: add a keyword the catalog lacks, e.g. tech add algolia -yes
+  discover DIR|FILE [-json] [-all]             what a repository uses, with evidence; changes nothing; paths .gitignore ignores are left out unless -all
   tui [-dir REPO]                              full-screen findings, projects, setup and status (starts cvewatch-tui)
-  setup [DIR] [-project NAME]                  guided setup or edit of a project, with the evidence for every guess
+  setup [DIR] [-project NAME] [-all]           guided setup or edit of a project, with the evidence for every guess; -all also scans paths .gitignore ignores
   project [list]                               the monitored projects (disabled ones are marked)
   project NAME FLAGS [-save]                   edit a project file (diff only without -save); FLAGS, any number:
 {{project-flags}}
@@ -75,7 +77,7 @@ Tracking
   evidence add ID -project P [-env E] [-note N] [-url U]   attach a note and link as evidence
 
 Reports
-  export [-format json|csv|md|sarif] [-min S] [-project P] [-env E] [-all]   open findings with every environment's status
+  export [-format json|csv|md|sarif] [-min S] [-project P] [-env E] [-published T] [-all]   open findings with every environment's status
   policy                                       findings that break a policy rule or their due date
   digest [-send]                               the "still open" summary, shown or sent now
   inventory [-project P]                       what the tool believes runs in each environment
@@ -177,6 +179,8 @@ func dispatch(ctx context.Context, root string, log *slog.Logger, args []string)
 		return with(func(s *ops.Session) error { return setupCmd(s, rest) })
 	case "settings":
 		return settingsCmd(root, rest)
+	case "tech":
+		return techCmd(root, rest)
 	case "project":
 		if verb, ok := lifecycleVerb(rest); ok {
 			lifecycle := func(s *ops.Session) error { return lifecycleCmd(s, verb, rest[1:]) }
@@ -250,12 +254,16 @@ func parseList(name string, args []string) (listOpts, error) {
 	env := fs.String("env", "", "only this environment")
 	all := fs.Bool("all", false, "include versions known to be unaffected")
 	asJSON := fs.Bool("json", false, "print JSON instead of text")
+	published := fs.String("published", "", publishedHelp)
 	failOn := fs.String("fail-on", "", "exit non-zero when an open finding is at least this severe (for CI gates)")
 	if err := fs.Parse(args); err != nil {
 		return listOpts{}, err
 	}
 	f, err := ops.ParseFilter(*min, *project, *env)
 	f.All = *all
+	if perr := setPublished(&f, *published); err == nil {
+		err = perr
+	}
 	o := listOpts{Filter: f, JSON: *asJSON}
 	if *failOn != "" {
 		if o.FailOn = model.ParseSeverity(*failOn); o.FailOn == model.SevUnknown {
@@ -263,6 +271,14 @@ func parseList(name string, args []string) (listOpts, error) {
 		}
 	}
 	return o, err
+}
+
+const publishedHelp = "only issues published in this time: hour, day, week, month, year, a span like 24h or 7d, or a range like 2026-01-01..2026-03-01"
+
+func setPublished(f *query.Filter, text string) error {
+	r, err := query.ParseTimeRange(text)
+	f.Published = r
+	return err
 }
 
 func printJSON(v any) error {
@@ -363,6 +379,7 @@ func searchCmd(s *ops.Session, args []string) error {
 	project := fs.String("project", "", "only this project")
 	env := fs.String("env", "", "only this environment")
 	asJSON := fs.Bool("json", false, "print JSON instead of text")
+	published := fs.String("published", "", publishedHelp)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -372,6 +389,9 @@ func searchCmd(s *ops.Session, args []string) error {
 	}
 	f, err := ops.ParseFilter(*min, *project, *env)
 	if err != nil {
+		return err
+	}
+	if err := setPublished(&f, *published); err != nil {
 		return err
 	}
 	issues, err := s.Search(text, f, *openOnly)
@@ -555,6 +575,7 @@ func exportCmd(s *ops.Session, args []string) error {
 	project := fs.String("project", "", "only this project")
 	env := fs.String("env", "", "only this environment")
 	all := fs.Bool("all", false, "include versions known to be unaffected")
+	published := fs.String("published", "", publishedHelp)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -563,6 +584,9 @@ func exportCmd(s *ops.Session, args []string) error {
 		return err
 	}
 	f.All = *all
+	if err := setPublished(&f, *published); err != nil {
+		return err
+	}
 	doc, err := s.Export(f)
 	if err != nil {
 		return err

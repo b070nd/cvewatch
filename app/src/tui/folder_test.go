@@ -242,3 +242,65 @@ func TestFolderOf(t *testing.T) {
 		}
 	}
 }
+
+func boxNames(b *folderBox) string {
+	var names []string
+	for _, e := range b.entries {
+		names = append(names, e.Name)
+	}
+	return strings.Join(names, ",")
+}
+
+func TestFolderBoxHidesIgnoredFoldersAndFiles(t *testing.T) {
+	root := t.TempDir()
+	for name, content := range map[string]string{
+		".gitignore":         "generated/\nDockerfile.local\n*.cache\n",
+		"app/go.mod":         "x",
+		"generated/go.mod":   "x",
+		"scratch.cache/x":    "x",
+		"Dockerfile":         "FROM nginx",
+		"Dockerfile.local":   "FROM nginx",
+		"Dockerfile.other":   "FROM nginx",
+		"app/.gitignore":     "Dockerfile.other\n",
+		"app/Dockerfile.old": "FROM nginx",
+		"app/Dockerfile.new": "FROM nginx",
+	} {
+		p := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b := newFolderBox()
+	b.setText(root + pathSep)
+	if got := boxNames(b); got != "app,Dockerfile,Dockerfile.other" {
+		t.Fatalf("root entries = %s", got)
+	}
+	b.setText(root + pathSep + "gen")
+	if len(b.entries) != 0 {
+		t.Fatalf("an ignored folder must not complete: %s", boxNames(b))
+	}
+	b.tab()
+	if b.text() != root+pathSep+"gen" {
+		t.Fatalf("tab changed the text to %q", b.text())
+	}
+	b.setText(root + pathSep + "Dockerfile.")
+	if got := boxNames(b); got != "Dockerfile.other" { // Dockerfile.local is ignored
+		t.Fatalf("file entries = %s", got)
+	}
+	b.tab()
+	if b.text() != root+pathSep+"Dockerfile.other" {
+		t.Fatalf("the only visible file must complete, got %q", b.text())
+	}
+	b.setText(root + pathSep + "app" + pathSep + "Dockerfile.")
+	if got := boxNames(b); got != "Dockerfile.new,Dockerfile.old" { // app/.gitignore hides nothing it does not name
+		t.Fatalf("nested entries = %s", got)
+	}
+	lock := newBox(boxLockfile, "Lockfile")
+	lock.setText(root + pathSep)
+	if got := boxNames(lock); got != "app" {
+		t.Fatalf("lockfile box entries = %s", got)
+	}
+}

@@ -87,7 +87,7 @@ func (f *File) validate(known func(tech string) bool, suggest func(name string) 
 	enabled := map[model.Env]bool{}
 	for i, e := range p.EffectiveEnvs() {
 		if !e.Valid() {
-			add("error", fmt.Sprintf("envs[%d]", i), "invalid environment %q (valid: %v)", e, model.AllEnvs)
+			add("error", fmt.Sprintf("envs[%d]", i), "invalid environment %q (use lowercase letters, digits, - and _)", e)
 			continue
 		}
 		enabled[e] = true
@@ -124,7 +124,7 @@ func (f *File) validate(known func(tech string) bool, suggest func(name string) 
 			if !sharedPath(p, l) {
 				fixes = []Fix{RemoveLockfileFix(l)}
 			}
-			addFix("error", field+".env", fixes, "invalid environment %q (valid: %v)", l.Env, model.AllEnvs)
+			addFix("error", field+".env", fixes, "invalid environment %q (use lowercase letters, digits, - and _)", l.Env)
 		case l.Env != "" && !enabled[l.Env]:
 			addFix("warning", field+".env", []Fix{enableEnvFix(p, l.Env), RemoveLockfileFix(l)},
 				"environment %s is not in envs, so lockfile %s is not used", l.Env, l.Path)
@@ -134,26 +134,52 @@ func (f *File) validate(known func(tech string) bool, suggest func(name string) 
 		}
 	}
 
+	for i, t := range p.Techs {
+		for _, e := range t.Envs {
+			switch {
+			case !e.Valid():
+				add("error", fmt.Sprintf("techs[%d].envs", i), "invalid environment %q (use lowercase letters, digits, - and _)", e)
+			case !enabled[e]:
+				addFix("warning", fmt.Sprintf("techs[%d].envs", i), []Fix{enableEnvFix(p, e)}, "environment %s is not in envs, so %s is never present there", e, t.Name)
+			}
+		}
+	}
+
 	envs := make([]model.Env, 0, len(p.Environments))
 	for e := range p.Environments {
 		envs = append(envs, e)
 	}
 	slices.Sort(envs)
 	for _, e := range envs {
-		field := "environments." + string(e)
+		field, ec := envField(p, e), p.Environments[e]
 		switch {
 		case !e.Valid():
-			add("error", field, "invalid environment %q (valid: %v)", e, model.AllEnvs)
-		case !enabled[e]:
+			add("error", field, "invalid environment %q (use lowercase letters, digits, - and _)", e)
+		case !enabled[e] && ec.Old:
 			addFix("warning", field, []Fix{enableEnvFix(p, e)}, "environment %s is not in envs, so it is not monitored", e)
+		case !enabled[e]:
+			fixes := []Fix{enableEnvFix(p, e)}
+			if drop := dropDifferencesFix(e, ec); len(drop.Ops) > 0 {
+				fixes = append(fixes, drop)
+			}
+			addFix("error", field, fixes, "%s describes environment %s, which is not in envs", field, e)
 		}
-		names := make([]string, 0, len(p.Environments[e].Techs))
-		for n := range p.Environments[e].Techs {
+		names := make([]string, 0, len(ec.Techs))
+		for n := range ec.Techs {
 			names = append(names, n)
 		}
 		slices.Sort(names)
 		for _, n := range names {
-			checkTech(field+".techs."+n, n, p.Environments[e].Techs[n], func(to string) []Fix { return renameEnvTech(p, e, n, to) })
+			checkTech(field+".techs."+n, n, ec.Techs[n], func(to string) []Fix { return renameEnvTech(p, e, n, to) })
+			if slices.ContainsFunc(ec.Exclude, func(x string) bool { return strings.EqualFold(x, n) }) {
+				addFix("warning", field+".exclude", []Fix{{Label: "keep " + n + " in " + string(e), Ops: []Op{{Kind: "include_env_tech", Env: e, Tech: n}}}},
+					"%s is excluded in %s and also has a version there; the exclusion wins", n, e)
+			}
+		}
+		for _, x := range ec.Exclude {
+			if !seen[strings.ToLower(strings.TrimSpace(x))] {
+				add("warning", field+".exclude", "%q is excluded in %s but the project does not declare it, so there is nothing to exclude", x, e)
+			}
 		}
 	}
 	f.Locate(issues)
@@ -221,4 +247,19 @@ func lineOf(n *yaml.Node, path string, line int) int {
 		return lineOf(item, strings.TrimPrefix(path[end+1:], "."), item.Line)
 	}
 	return 0
+}
+
+// dropDifferencesFix empties the when@ block of an environment the project does not have.
+func dropDifferencesFix(e model.Env, ec model.EnvConfig) Fix {
+	var ops []Op
+	for _, n := range sortedKeys(ec.Techs) {
+		ops = append(ops, Op{Kind: "remove_env_tech", Env: e, Tech: n})
+	}
+	for _, x := range ec.Exclude {
+		ops = append(ops, Op{Kind: "include_env_tech", Env: e, Tech: x})
+	}
+	if ec.Image != "" {
+		ops = append(ops, Op{Kind: "set_image", Env: e})
+	}
+	return Fix{Label: "drop the differences of " + string(e), Ops: ops}
 }

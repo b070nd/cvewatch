@@ -55,11 +55,16 @@ func newWiz(io IO) (*wiz, error) {
 // shows the diff and the issues, asks to confirm inside the flow's own review
 // step and saves with sess.EditProject.
 func Setup(io IO, sess *ops.Session, dir, existing string) error {
+	return SetupWith(io, sess, dir, existing, false)
+}
+
+// SetupWith is Setup that can also scan paths .gitignore ignores.
+func SetupWith(io IO, sess *ops.Session, dir, existing string, includeIgnored bool) error {
 	w, err := newWiz(io)
 	if err != nil {
 		return err
 	}
-	if err := w.setup(sess, dir, existing); err != nil && !errors.Is(err, errQuit) {
+	if err := w.setup(sess, dir, existing, includeIgnored); err != nil && !errors.Is(err, errQuit) {
 		return err
 	}
 	return nil
@@ -118,7 +123,7 @@ func (w *wiz) newProject(sess *ops.Session) error {
 	if err != nil {
 		return err
 	}
-	return w.setup(sess, dir, "")
+	return w.setup(sess, dir, "", false)
 }
 
 func (w *wiz) editProject(sess *ops.Session, names []string) error {
@@ -130,7 +135,7 @@ func (w *wiz) editProject(sess *ops.Session, names []string) error {
 	if err != nil {
 		return err
 	}
-	return w.setup(sess, "", name)
+	return w.setup(sess, "", name, false)
 }
 
 // pick asks one question outside a flow and returns the validated answer.
@@ -164,8 +169,8 @@ func hasValue(opts []setup.Option, v string) bool {
 }
 
 // setup builds the flow for one project and drives it to a save.
-func (w *wiz) setup(sess *ops.Session, dir, existing string) error {
-	o, err := projectflow.Open(sess, projectflow.Request{Project: existing, Folder: dir})
+func (w *wiz) setup(sess *ops.Session, dir, existing string, includeIgnored bool) error {
+	o, err := projectflow.Open(sess, projectflow.Request{Project: existing, Folder: dir, IncludeIgnored: includeIgnored})
 	if err != nil {
 		return err
 	}
@@ -225,14 +230,26 @@ func (w *wiz) drive(f *setup.Flow, adjust func(setup.Step) setup.Step) error {
 // reviewText is the help of the review step: the diff and the issues of the
 // change as it would be saved (lockfile paths relative to the root).
 func reviewText(sess *ops.Session, f *setup.Flow, fallback string) string {
-	p, err := sess.EditProject(ops.ProjectChange{Project: f.Draft().Project.Name, Ops: projectflow.Edits(sess, f)})
+	p, err := sess.EditProject(projectflow.Change(sess, f, false))
 	if err != nil {
 		return fallback + "\n! " + err.Error()
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Changes to %s:\n%s", relPath(sess, p.Path), p.Diff)
+	if p.TechsDiff != "" {
+		fmt.Fprintf(&b, "\nYour own technologies, added to techs.yaml:\n%s", p.TechsDiff)
+	}
+	covered := map[string]bool{} // a hint says more than the warning on the same field
+	for _, h := range p.Hints {
+		covered[h.Field] = true
+	}
 	for _, is := range p.Issues {
-		fmt.Fprintf(&b, "\n%s: %s: %s", is.Level, is.Field, is.Message)
+		if is.Level == "error" || !covered[is.Field] {
+			fmt.Fprintf(&b, "\n%s: %s: %s", is.Level, is.Field, is.Message)
+		}
+	}
+	for _, h := range p.Hints {
+		fmt.Fprintf(&b, "\n%s: %s: %s", h.Level, h.Field, h.Message)
 	}
 	if p.Blocked() {
 		b.WriteString("\nThis cannot be saved until the errors are fixed: answer no to go back.")
@@ -242,7 +259,7 @@ func reviewText(sess *ops.Session, f *setup.Flow, fallback string) string {
 
 // save writes the confirmed change.
 func (w *wiz) save(sess *ops.Session, f *setup.Flow) error {
-	p, err := sess.EditProject(ops.ProjectChange{Project: f.Draft().Project.Name, Ops: projectflow.Edits(sess, f), Save: true})
+	p, err := sess.EditProject(projectflow.Change(sess, f, true))
 	if err != nil {
 		for _, is := range p.Issues {
 			w.printf("  %s: %s: %s\n", is.Level, is.Field, clean(is.Message))
@@ -252,6 +269,9 @@ func (w *wiz) save(sess *ops.Session, f *setup.Flow) error {
 	if !p.Saved {
 		w.printf("\nnothing to save: %s already matches\n", clean(relPath(sess, p.Path)))
 		return nil
+	}
+	if len(p.NewTechs) > 0 {
+		w.printf("\nadded to techs.yaml as your own: %s\n", clean(strings.Join(p.NewTechs, ", ")))
 	}
 	w.printf("\nsaved %s\n\nNext steps:\n  cvewatch doctor   check the setup\n  cvewatch update   fetch advisories and match them to the project\n",
 		clean(relPath(sess, p.Path)))

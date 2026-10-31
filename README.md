@@ -85,7 +85,7 @@ cvewatch is **tech-agnostic**: nothing in it is specific to PHP, Node or any one
 
 | Layer | What you give it | What you get |
 |---|---|---|
-| **Technologies**: runtimes, frameworks, databases, servers, platforms, appliances | a name and a version in the project file; the name must exist in `techs.yaml` | advisories about that product are matched from NVD, KEV and news, and the version is checked against affected ranges where the feed has them |
+| **Technologies**: runtimes, frameworks, databases, servers, platforms, appliances | a name and a version in the project file; the name must be in the catalog or be one of your own (see below) | advisories about that product are matched from NVD, KEV and news, and the version is checked against affected ranges where the feed has them |
 | **Packages** | a lockfile or SBOM: composer, npm, Go, pip, poetry, Pipfile, Gradle, Maven, CycloneDX, SPDX | exact per-package matching, with each ecosystem's own version rules |
 | **Anything else** | just the technology name | it is matched by name and the finding stays `unchecked` until a person confirms the version |
 
@@ -98,6 +98,8 @@ techs:
     aliases: [grafana]
     cpe: [grafana:grafana]      # the product name in the NVD CPE dictionary; optional, but it gives version checks
 ```
+
+`cvewatch tech add grafana -cpe grafana:grafana -yes` writes the same entry without editing YAML. A term the catalog does not know gets the closest names as suggestions, or can be kept as your own keyword with `+term` in setup; see [technologies not in the catalog](docs/overview.md#technologies-not-in-the-catalog).
 
 `cvewatch doctor -online` confirms the CPE name exists. A project in a language without a supported lockfile (Rust, Ruby, .NET, Swift...) is still covered at the technology level, and its packages are covered as soon as you export a CycloneDX or SPDX SBOM that uses a supported ecosystem. Package-level matching for more ecosystems is added the same way the existing ones were: one adapter.
 
@@ -137,7 +139,7 @@ cvewatch update                        # fetch the feeds now, then show what is 
 cvewatch tui                           # or browse and triage in a full-screen interface
 ```
 
-`setup` looks at lockfiles, `.tool-versions`, `go.mod`, `package.json`, Dockerfiles, compose files, Kubernetes manifests and Terraform, also in monorepos, and says why it believes each thing ("nginx 1.25.3: image in `docker-compose.yml`"). Guesses it is unsure about are asked, not declared. `cvewatch init -repo ~/code/shop` does the same without questions.
+`setup` looks at lockfiles, `.tool-versions`, `go.mod`, `package.json`, Dockerfiles, compose files, Kubernetes manifests and Terraform, also in monorepos, and says why it believes each thing ("nginx 1.25.3: image in `docker-compose.yml`"). Guesses it is unsure about are asked, not declared. Paths that `.gitignore` ignores are skipped, so build output and vendored code do not turn into projects; `-all` reads them too. `cvewatch init -repo ~/code/shop` does the same without questions.
 
 The technology catalog and the feeds are built in, so one binary is enough. `setup` writes a project file per repository. `cvewatch setup FILE` does the same for one Dockerfile, compose file or Kubernetes manifest, and lists its base images and services as infrastructure. Check the versions it could not guess: a repository says what is *declared*, not what *runs in prod*.
 
@@ -149,6 +151,8 @@ The technology catalog and the feeds are built in, so one binary is enough. `set
 - **Tells you where you already look.** Slack, a signed webhook or email, plus a daily "still open in prod" digest.
 - **Starts each project when you say.** A `since` date skips advisories published before it, for that project only. Other projects are not affected.
 - **Searches what you track.** `cvewatch search` finds issues by ID, part of an ID, words or fields such as `severity:high+` and `project:shop`, in every status.
+- **Looks back only as far as you say.** `horizon` in `config.yaml` limits what is judged, alerted and digested to the past hour, day, week, month or year, or to a custom range. It is unlimited by default, and findings that already exist stay.
+- **Names its environments.** `local`, `dev`, `prod` or any name you choose. A new project starts with `local`, and what differs in one environment is written once, in a `when@prod:` block.
 
 ```text
   What comes first
@@ -188,7 +192,7 @@ cvewatch not-affected CVE-2026-109619 -project shop -env dev -note "dev has no n
 cvewatch evidence CVE-2026-109618
 ```
 
-**Always on.** Run `cvewatch daemon` (or the Docker image) and it refreshes every few hours. The full-screen interface re-reads the state every 30 seconds and fetches the feeds when you press `F`; `tui.fetch` in `config.yaml` makes it fetch by itself. If you upgrade a lockfile, the open findings are re-checked on their own and each finding's history says what changed.
+**Always on.** Run `cvewatch daemon` (or the Docker image) and it refreshes every few hours. The full-screen interface re-reads the state every `tui.refresh` (30 seconds by default) and fetches the feeds when you press `F`; `tui.fetch` in `config.yaml` makes it fetch by itself. If you upgrade a lockfile, the open findings are re-checked on their own and each finding's history says what changed.
 
 ### The life of a finding
 
@@ -215,13 +219,15 @@ Inventory is declared per project and environment, and read fresh every cycle:
 ```yaml
 # config/projects/shop.yaml
 name: shop
-envs: [dev, prod]
-techs: [{name: php, version: "8.3"}]
+envs: [dev, prod]                 # any names; left out, the old default dev, int, staging, prod applies
+techs:                            # generic: every environment runs these
+  - {name: php, version: "8.3"}
 lockfiles:
   - {type: composer,  path: /repos/shop/composer.lock}
   - {type: cyclonedx, path: /releases/shop-prod.cdx.json, env: prod}   # the SBOM of what is deployed in prod
-environments:
-  prod: {techs: {php: "8.2.30"}, image: "registry.example/shop@sha256:ab12..."}   # recorded, not scanned
+when@prod:                        # only what differs in prod
+  techs: {php: "8.2.30"}
+  image: "registry.example/shop@sha256:ab12..."   # recorded, not scanned
 ```
 
 Supported inputs: composer, npm, Go (`go.mod`), pip, poetry, Pipfile.lock, Gradle, Maven and CycloneDX / SPDX SBOMs. `cvewatch inventory` shows what it believes runs where and what it could not read.
@@ -304,9 +310,9 @@ Read-only by default. The agent can call:
 | `policy_violations` | which deadlines are broken right now |
 | `get_calendar` | what was published this month |
 | `get_status` | whether the monitor itself is healthy: daemon, feeds, channels |
-| `search_catalog`, `discover_stack`, `list_projects`, `check_projects`, `preview_project_change`, `get_settings`, `preview_settings_change` | set a project and the settings up: find technologies, read a repository, find problems in project files, preview a change to a project or to the settings |
+| `search_catalog`, `suggest_tech`, `preview_tech_change`, `discover_stack`, `list_projects`, `check_projects`, `preview_project_change`, `get_settings`, `preview_settings_change` | set a project and the settings up: find technologies (and the closest names for a typo), read a repository, find problems and hints in project files, preview a change to a project, to your own technologies or to the settings |
 
-Opt in to writing with `mcp -allow-write`, and the agent can also `set_status`, `assign`, `attach_evidence`, `refresh`, `edit_project`, `edit_settings` and `manage_project`. The skills in [`skills/`](skills) walk an agent through setup (`cvewatch-setup`) and triage (`cvewatch-triage`), asking the human at every step that matters.
+Opt in to writing with `mcp -allow-write`, and the agent can also `set_status`, `assign`, `attach_evidence`, `refresh`, `edit_project`, `edit_settings`, `edit_tech` and `manage_project`. The skills in [`skills/`](skills) walk an agent through setup (`cvewatch-setup`) and triage (`cvewatch-triage`), asking the human at every step that matters.
 
 **Example: a dependency upgrade.** A developer asks the agent to bump the packages of `shop`. Instead of guessing, the agent calls `list_findings(project="shop", env="prod", min_severity="high")`, sees that `symfony/http-kernel 6.4.1` is `affected` with an official fix in 6.4.2, upgrades exactly that, opens the merge request, and calls `attach_evidence(note="MR !412 upgrades http-kernel to 6.4.2", url=...)`. The **status stays `open`**. After the deploy a human runs `cvewatch fix ... -env prod`, because "fixed" is a statement about production, not about a branch.
 

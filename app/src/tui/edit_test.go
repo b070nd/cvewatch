@@ -72,7 +72,7 @@ func (d *driver) opKinds() []string {
 	return ks
 }
 
-// toField selects the n-th field of the editor (0 environments ... 5 since).
+// toField selects the n-th field of the editor (0 environments ... 4 since).
 func (d *driver) toField(n int) {
 	d.press("home")
 	for range n {
@@ -108,13 +108,13 @@ func TestFieldEditorEditsEveryKindOfFieldAndKeepsComments(t *testing.T) {
 	d.press("3", "down", "enter")
 	d.want("c edits the fields")
 	d.press("c")
-	d.want("Edit fields of shop", "FIELD", "Environments", "dev, prod", "Technologies", "php 8.2, nginx", "1 lockfile", "1 version set", "prod: reg/shop:1", "2026-01-01")
+	d.want("Edit fields of shop", "FIELD", "Environments", "dev, prod", "Technologies", "php 8.2, nginx", "1 lockfile", "Differences per environment", "prod: php 8.2.30, image reg/shop:1", "2026-01-01")
 	if b.writes != 0 {
 		t.Fatal("looking wrote something")
 	}
 
 	// since: a text prompt that starts with the current value
-	d.toField(5)
+	d.toField(4)
 	d.press("enter")
 	d.want("Since date of shop", "> Since", "2026-01-01", "YYYY-MM-DD")
 	d.press("ctrl+u")
@@ -126,7 +126,7 @@ func TestFieldEditorEditsEveryKindOfFieldAndKeepsComments(t *testing.T) {
 	d.want("- since: 2026-01-01", "+ since: 2026-03-05")
 	save("set since to 2026-03-05", "set_since")
 	d.want("Edit fields of shop", "2026-03-05")
-	d.toField(5)
+	d.toField(4)
 	d.press("enter", "ctrl+u", "enter")
 	d.want("clear since")
 	save("clear since", "set_since")
@@ -134,15 +134,35 @@ func TestFieldEditorEditsEveryKindOfFieldAndKeepsComments(t *testing.T) {
 		t.Fatal("an empty date clears since")
 	}
 
-	// environments: a checklist
+	// environments: free names, added, renamed and removed one at a time
 	d.toField(0)
 	d.press("enter")
-	d.want("Environments of shop", "[x] dev", "[ ] int", "[ ] staging", "[x] prod")
-	d.press("down", " ", "enter")
-	save("set environments to dev, int, prod", "set_envs")
-	if got := fileAt(t, root, "config/projects/shop.yaml"); !strings.Contains(got, "int") {
+	d.want("ENVIRONMENT", "USED BY", "> dev", "prod", "2 differences", "+ add an environment")
+	d.press("+")
+	d.want("Add an environment to shop", "suggested: local, int, staging")
+	d.typ("QA")
+	d.press("enter")
+	save("add environment qa", "add_env")
+	if got := fileAt(t, root, "config/projects/shop.yaml"); !strings.Contains(got, "qa") {
 		t.Fatalf("envs:\n%s", got)
 	}
+	d.want("ENVIRONMENT", "qa")
+	d.press("down", "down", "r")
+	d.want("Rename environment qa of shop", "> New name", "qa")
+	d.press("ctrl+u")
+	d.typ("uat-eu")
+	d.press("enter")
+	d.want("environment qa becomes uat-eu: 0 findings move with it")
+	save("rename environment qa to uat-eu", "rename_env")
+	d.want("uat-eu")
+	d.press("home", "down", "down", "x")
+	d.want("Remove environment uat-eu from shop?")
+	d.press("y")
+	save("remove environment uat-eu", "remove_env")
+	if got := fileAt(t, root, "config/projects/shop.yaml"); strings.Contains(got, "uat-eu") || !strings.Contains(got, "dev, prod") {
+		t.Fatalf("envs:\n%s", got)
+	}
+	d.press("esc")
 
 	// technologies: a list of items
 	d.toField(1)
@@ -154,6 +174,24 @@ func TestFieldEditorEditsEveryKindOfFieldAndKeepsComments(t *testing.T) {
 	d.typ("8.3")
 	d.press("enter")
 	save("set php to version 8.3", "set_tech")
+	d.want("WHERE", "everywhere")
+	d.press("e")
+	d.want("Where does php run?", "Everywhere", "Only in the environments I choose")
+	d.press("down", "enter")
+	d.want("Environments of php", "[ ] dev", "[ ] prod")
+	d.press("enter")
+	d.want("problem: tick at least one")
+	d.press(" ", "enter")
+	save("run php only in dev", "set_tech_envs")
+	d.want("only in dev")
+	if got := fileAt(t, root, "config/projects/shop.yaml"); !strings.Contains(got, "envs: [dev]") {
+		t.Fatalf("php is limited to dev:\n%s", got)
+	}
+	d.press("e", "enter")
+	save("run php in every environment", "set_tech_envs")
+	d.wantNot("only in dev")
+	d.press("e", "enter")
+	d.want("php already runs everywhere")
 	d.press("a")
 	d.want("Add a technology to shop", "Name", "Version")
 	d.typ("nodejs")
@@ -203,31 +241,63 @@ func TestFieldEditorEditsEveryKindOfFieldAndKeepsComments(t *testing.T) {
 	d.want("remove lockfile repos/other/composer.lock")
 	save("remove lockfile repos/other/composer.lock", "remove_lockfile")
 
-	// versions per environment: the grid of environment and technology
+	// differences per environment: only what differs, listed once; the old environments: block is migrated first
 	d.press("esc")
 	d.toField(3)
 	d.press("enter")
-	d.want("ENV", "DEPLOYED", "dev", "prod", "8.2.30")
-	d.press("enter") // dev php
-	d.want("Deployed version of php in dev")
-	d.typ("8.1.1")
-	d.press("enter")
-	save("set php in dev to 8.1.1", "set_env_tech")
-	d.press("down", "down", "down", "down", "x") // prod php
-	d.want("Remove the prod version of php from shop?")
-	d.press("y")
-	d.want("remove the prod version of php")
-	save("remove the prod version of php", "remove_env_tech")
-	d.press("home", "down", "enter") // an empty answer where nothing is set is refused
-	d.press("ctrl+u", "enter")
-	d.want("problem: no version is set here", "Deployed version of nodejs in dev")
+	d.want("ENV", "DIFFERENCE", "NOTE", "prod", "php 8.2.30", "generic: 8.3", "image reg/shop:1", "+ add a difference", "old environments: block")
+	d.wantNot("nginx")
+	d.press("m")
+	d.want("the whole old environments: block becomes when@<env> blocks", "+ when@prod:")
+	save("rewrite environments: as when@<env> blocks", "migrate_envs")
+	if got := fileAt(t, root, "config/projects/shop.yaml"); strings.Contains(got, "environments:") || !strings.Contains(got, "when@prod:") {
+		t.Fatalf("the block is migrated:\n%s", got)
+	}
+	d.wantNot("old environments: block")
 
-	// images
-	d.press("esc", "esc")
-	d.toField(4)
+	d.press("home", "enter") // prod php
+	d.want("Version of php in prod", "8.2.30")
+	d.press("ctrl+u")
+	d.typ("8.3")
 	d.press("enter")
-	d.want("IMAGE", "reg/shop:1")
-	d.press("down", "down", "enter")
+	save("set php in prod to 8.3", "set_env_tech")
+
+	d.press("+") // an environment, then what differs in it, then how
+	d.want("Which environment differs?", "> dev", "prod")
+	d.press("enter")
+	d.want("What differs in dev?", "php", "generic 8.3", "nodejs", "another technology", "the image")
+	d.press("down", "enter")
+	d.want("nodejs in dev", "another version", "it does not run there")
+	d.press("down", "enter")
+	save("nodejs does not run in dev", "exclude_env_tech")
+	d.want("-nodejs", "does not run in dev")
+	d.press("home", "x")
+	d.want("Run nodejs in dev again?")
+	d.press("y")
+	save("run nodejs in dev again", "include_env_tech")
+	d.wantNot("-nodejs")
+
+	d.press("+", "down", "enter", "down", "down", "enter") // prod, another technology
+	d.want("Add a technology to prod only", "Name", "Version")
+	d.typ("redis")
+	d.press("tab", "enter")
+	d.want("problem: give the name of the technology and its version")
+	d.typ("7")
+	d.press("enter")
+	save("add redis 7 to prod only", "set_env_tech")
+	d.want("+redis 7", "runs only in prod")
+	d.press("home", "down", "x")
+	d.want("Remove redis from prod? It runs only there")
+	d.press("y")
+	save("remove redis from prod", "remove_env_tech")
+
+	d.press("home", "x") // prod php: the generic version applies again
+	d.want("Remove the prod version of php? The generic one applies in prod again.")
+	d.press("y")
+	save("remove the prod version of php", "remove_env_tech")
+
+	// the image of an environment
+	d.press("home", "enter")
 	d.want("Image of shop in prod", "reg/shop:1")
 	d.press("ctrl+u")
 	d.typ("reg/shop:2")
@@ -241,6 +311,25 @@ func TestFieldEditorEditsEveryKindOfFieldAndKeepsComments(t *testing.T) {
 	if strings.Contains(fileAt(t, root, "config/projects/shop.yaml"), "reg/shop") {
 		t.Fatal("the image is cleared")
 	}
+	d.want("+ add a difference")
+
+	// adding an image through the picker
+	d.press("+", "down", "enter", "down", "down", "down", "enter") // prod, the image
+	d.want("Image of shop in prod")
+	d.typ("reg/shop:3")
+	d.press("enter")
+	save("set the prod image to reg/shop:3", "set_image")
+
+	// a file without envs: f writes the old default into it
+	d.press("esc")
+	path := filepath.Join(root, "config", "projects", "shop.yaml")
+	if err := os.WriteFile(path, []byte(strings.Replace(fileAt(t, root, "config/projects/shop.yaml"), "envs: [dev, prod]\n", "", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d.press("r")
+	d.toField(0)
+	d.press("enter", "f", "enter")
+	save("write the old default environments into the file", "set_envs")
 
 	for _, k := range OpKinds {
 		if !seen[k] {
@@ -279,7 +368,7 @@ func TestEditRejectionKeepsTheTypedText(t *testing.T) {
 	b, root := diskFake(t, nil)
 	d := start(t, b, Options{})
 	d.press("3", "down", "c")
-	d.toField(5)
+	d.toField(4)
 	d.press("enter", "ctrl+u")
 	d.typ("next tuesday")
 	d.press("enter")
@@ -297,9 +386,9 @@ func TestEditRejectionKeepsTheTypedText(t *testing.T) {
 	d.press("enter", "+")
 	d.typ(other)
 	d.press("enter")
-	d.typ("qa")
+	d.typ("QA")
 	d.press("enter", "enter")
-	d.want("problem:", "invalid lockfile env", "Add a composer lockfile to shop", "qa")
+	d.want("problem:", "invalid lockfile env", "Add a composer lockfile to shop", "QA")
 	d.wantNot("Save this change?")
 	d.press("esc")
 	d.want("TYPE", "+ add a lockfile")
@@ -353,8 +442,8 @@ func TestFieldEditorBreadcrumbAndBack(t *testing.T) {
 		t.Errorf("fields: %q", got)
 	}
 	d.press("enter")
-	if got := crumbOf(d); got != "Projects › shop › Fields › Environments" {
-		t.Errorf("env picker: %q", got)
+	if got := crumbOf(d); got != "Projects › shop › Environments › dev" {
+		t.Errorf("environments: %q", got)
 	}
 	d.press("esc")
 	d.press("down", "enter")
@@ -392,7 +481,7 @@ func TestFieldEditorBreadcrumbAndBack(t *testing.T) {
 }
 
 func TestFieldEditorMouse(t *testing.T) {
-	b, root := diskFake(t, nil)
+	b, _ := diskFake(t, nil)
 	d := start(t, b, Options{})
 	d.press("3", "down", "c")
 	a := d.m.(*app)
@@ -415,21 +504,14 @@ func TestFieldEditorMouse(t *testing.T) {
 	}
 	d.press("esc")
 	d.click(5, row(0))
-	d.click(5, row(0)) // environments: the checklist
-	d.want("Environments of shop")
-	pk := a.prj.ed.pick
-	d.click(5, bodyTop+pickHead+2) // staging
-	if pk.vp.at() != 2 {
-		t.Fatalf("a click picks: %d", pk.vp.at())
+	d.click(5, row(0)) // environments: the list
+	d.want("ENVIRONMENT", "USED BY")
+	d.click(5, row(1))
+	if a.prj.ed.sub.at() != 1 {
+		t.Fatalf("a click selects the environment: %d", a.prj.ed.sub.at())
 	}
-	d.click(5, bodyTop+pickHead+2) // a second click ticks
-	d.want("[x] staging")
-	d.press("enter")
-	d.want("Save this change?")
-	d.press("y")
-	if got := fileAt(t, root, "config/projects/shop.yaml"); !strings.Contains(got, "staging") {
-		t.Fatalf("envs:\n%s", got)
-	}
+	d.click(5, row(1)) // a second click renames it
+	d.want("Rename environment prod of shop", "New name")
 }
 
 func TestFieldEditorOnProjectsThatCannotBeEdited(t *testing.T) {
@@ -506,7 +588,9 @@ func TestFieldEditorFootersAndHelp(t *testing.T) {
 	d.press("?")
 	d.want("Keys in the list of a field", "include or leave out development packages")
 	d.press("?", "esc", "home", "enter")
-	if f := foot(); !strings.Contains(f, "choose") {
-		t.Errorf("picker footer: %q", f)
+	if f := foot(); !strings.Contains(f, "r rename") || !strings.Contains(f, "+ add") || width(f) > 80 {
+		t.Errorf("environments footer: %q", f)
 	}
+	d.press("?")
+	d.want("Keys in the list of a field", "environments: rename the selected one")
 }

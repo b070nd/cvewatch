@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/ops"
 	"github.com/b070nd/cvewatch/app/src/projectfile"
 )
@@ -27,8 +28,9 @@ type fixState struct {
 	saving  bool
 	vp      viewport // scrolls the preview
 
-	edit bool   // a change the user made in the field editor, not the fix of a problem
-	land string // the project the list settles on once the change is saved (a new project)
+	edit  bool         // a change the user made in the field editor, not the fix of a problem
+	land  string       // the project the list settles on once the change is saved (a new project)
+	techs []model.Tech // technologies of the person's own the change adds to techs.yaml
 }
 
 func (f *fixState) waiting() bool { return f.prev == nil && f.err == "" }
@@ -61,10 +63,11 @@ func fixPreviewCmd(b Backend, fx *fixState, seq int, project string, edits []pro
 }
 
 func fixSaveCmd(b Backend, fx *fixState, project string, edits []projectfile.Op) tea.Cmd {
+	techs := fx.techs
 	return func() tea.Msg {
 		var p ops.ProjectPreview
 		err := b.Write(func(s *ops.Session) (e error) {
-			p, e = s.EditProject(ops.ProjectChange{Project: project, Ops: edits, Save: true})
+			p, e = s.EditProject(ops.ProjectChange{Project: project, Ops: edits, NewTechs: techs, Save: true})
 			return e
 		})
 		return fixSavedMsg{fx: fx, prev: p, err: err}

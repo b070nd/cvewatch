@@ -17,7 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - TUI mouse support: wheel, click to select, clickable tabs and breadcrumb.
 - TUI `E` opens the project file at the problem's line in vim, nano, emacs, VS Code, Sublime Text and more.
 - TUI fix preview lists every fix of a problem; `[` and `]` choose one.
-- TUI project field editor: `c` on Projects (or inside a project) opens the project's fields for direct editing: environments, technologies, lockfiles with env and dev, versions per environment, images and since. Each change is previewed as a diff before it is saved.
+- TUI project field editor: `c` on Projects (or inside a project) opens the project's fields for direct editing: environments, technologies, lockfiles with env and dev, differences per environment (versions, technologies that run only there, exclusions and images) and since. Each change is previewed as a diff before it is saved.
 - Project lifecycle in the TUI (`N` new, `R` rename, `D` duplicate, `X` delete, `Z` disable or enable), in the CLI (`cvewatch project rename|duplicate|delete|disable|enable`, which shows the consequences until `-yes`) and in MCP (`manage_project`, which shows them until `confirm`). Delete moves the project file to the backups, asks for the typed name in the TUI, and can mark its open findings ignored with `-close-findings`.
 - Settings screen in the TUI (screen 5) and `cvewatch settings list|get|set|unset|add|diff|schema`: every setting of `config.yaml`, `techs.yaml` and `sources/*.yaml`, with its type and help. Changes are previewed before they are saved, comments are kept, and secrets are never shown.
 - Configuration documents module (`confdoc`): edits by field path, validated the way the loader validates them, saved atomically with a backup.
@@ -33,6 +33,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - TUI `+` adds a project from a folder, from a Dockerfile, compose or Kubernetes file, or empty. `-` removes the selected project after its name is typed, and removes a lockfile, technology, version or image after a question.
 - TUI lockfiles: `+` adds one by picking its file with Tab completion; the type comes from the file name.
 - Projects from a Dockerfile, compose or Kubernetes file: `cvewatch discover FILE` and `cvewatch setup FILE` read one file, and the `discover_stack` MCP tool accepts one. Base images, compose services, Kubernetes images and packages installed in a Dockerfile are marked as infrastructure, with their category.
+- Environments have free names: lowercase letters, digits, `-` and `_`, starting with a letter, up to 32 characters. `local`, `dev`, `int`, `staging` and `prod` are suggested, not required, and `production` counts as prod. A new project starts with `local`.
+- Environment edits `add_env`, `remove_env` and `rename_env`: `-env-add`, `-env-remove` and `-env-rename OLD=NEW` on the CLI, `+`, `-` and `r` in the TUI field editor, and the same kinds in MCP `edit_project`. A rename moves the environment's findings and says how many; a removal also drops its differences.
+- Project files keep the generic technologies at the top. A `when@<env>:` block holds only what differs in that environment: `techs` (another version, or a technology that runs only there), `exclude` (generic technologies that do not run there) and `image`. A technology can carry `envs: [...]` to run only in some environments.
+- `migrate_envs` (`-migrate-envs` on the CLI, `m` on the TUI's differences list) rewrites the old `environments:` block as `when@<env>` blocks in one previewed step. The old spelling still loads and keeps its meaning.
+- Scope and exclusion edits for a project: `-tech-envs TECH=ENV,ENV`, `-env-exclude ENV:TECH` and `-env-include ENV:TECH` on the CLI, and the matching `set_tech_envs`, `exclude_env_tech` and `include_env_tech` kinds in MCP.
+- TUI differences per environment: `+` adds a version, an extra technology, an exclusion or an image for one environment, `-` removes one after a question, and `e` on a technology chooses the environments it runs in.
+- Discovery skips what `.gitignore` ignores, and `.git/info/exclude` too. `cvewatch discover` and `cvewatch setup` take `-all` to read them anyway, and the TUI folder box hides ignored entries. A file given directly (`discover FILE`) that is ignored is refused unless `-all` is given.
+- Technologies the catalog does not have can be kept as your own keyword: `+term` in the setup technology step, `ctrl+o` in the TUI add-technologies step, `K` on the Technologies field, or `cvewatch tech add|edit|remove|list`. The entry goes to `config/techs.yaml`, after a preview, and a new project is written together with it.
+- MCP `suggest_tech` (the closest names for a typed term), `preview_tech_change` and `edit_tech` (with `-allow-write`) for your own technologies. The Settings screen's Tech catalog section lists yours, with `a`, `e` and `x`.
+- Hints: advice about a project that is not an error, such as an unknown technology with its suggestions or the keyword to add, a missing version, a lockfile problem, no prod environment, or no start date. They show in the setup review, `cvewatch project`, `check_projects` and `preview_project_change`. The TUI lists them under `H`, and the Projects screen counts them.
+- Alert horizon: `horizon:` in `config.yaml` with `window` (`unlimited`, `hour`, `day`, `week`, `month`, `year` or `custom` with `from` and `to`). A vulnerability published outside it is not judged, alerted or put in a digest; findings that exist stay. The default is `unlimited`, and `cvewatch check` warns when the window reaches further back than `lookback`.
+- `published:` search field (`published:week`, `published:7d`, `published:2026-01-01..2026-03-01`, `published:..2026-03-01`) and `-published VALUE` on `list`, `update`, `search` and `export`.
+- TUI `t` cycles a time filter on the publication date (any time, past hour, day, week, month, year) on Overview and Findings, shown as a chip on the breadcrumb line; `0` clears it. Overview and Status show the alert horizon when it is not unlimited.
 
 ### Changed
 - TUI has five screens, Overview, Findings, Projects, Status and Settings, on keys 1 to 5.
@@ -45,6 +58,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - TUI: `q` quits only from the root of a screen. Inside a level or a popup it goes back.
 - TUI: `F` fetches the feeds now. It showed the project's issues before; `i` still does.
 - TUI: the re-read period is the `tui.refresh` setting, no longer fixed at 30 seconds in the code.
+- Lists (Overview, Findings and a project's issues) name environments only where an issue differs from what the project monitors. A project the issue is open in everywhere shows its name alone. The Findings column is `PROJECTS (ONLY IN)`.
+- Overview's `by environment` line reads `all N environments alike (K open each)` when the counts are equal, and shows bars only when they differ.
+- Setup asks once whether an environment differs from the rest, instead of a version per technology and environment. The question comes only when there is more than one environment.
+- A project file without `envs` still means `dev`, `int`, `staging` and `prod`, and the review says so with a hint to list its environments. `environments:` is still read, but new files and edits write `when@<env>` blocks.
+- Development-only packages count by default in `local`, `dev`, `int`, `development` and `test`, not only in `dev` and `int`.
+- A `when@<env>` block for an environment the project does not have is an error with a fix. A lockfile or technology that names one is a warning.
 
 ### Fixed
 - `edit_project` and `preview_project_change` accept a `lockfile` object, so fixes from `check_projects` can be passed on as they are.
@@ -56,6 +75,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - TUI refuses a second submit of a change that is still being saved, so it is not written twice.
 - The `user-techs.yaml` example said `keywords`; the field is `aliases`.
 - A project whose file name differs from the `name:` it declares (`magento2-shop.yaml` declaring `shop`) could not be deleted, disabled, renamed or edited: `cvewatch project delete shop` said unknown project. Projects are found by their declared name now, and the mismatch is a warning.
+- `Did you mean` for an unknown technology offers only close names: `algolia` gets no suggestion, while a typo such as `rabbitMW` finds `rabbitmq`.
 
 ## [1.2.0] - 2026-10-29
 

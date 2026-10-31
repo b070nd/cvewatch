@@ -35,6 +35,14 @@ func SupportedFile(name string) bool {
 	return ok
 }
 
+// ErrIgnored is returned for a file git ignores, unless Options.IncludeIgnored is set.
+var ErrIgnored = errors.New("ignored by .gitignore")
+
+type ignoredError string
+
+func (e ignoredError) Error() string        { return "discovery: " + string(e) + " is ignored by .gitignore" }
+func (e ignoredError) Is(target error) bool { return target == ErrIgnored }
+
 // ScanFile inspects one file with the same detectors a folder scan uses on it.
 // Root is the folder the file is in, so a project name can default to it, and
 // evidence names the file without a path.
@@ -54,6 +62,9 @@ func ScanFile(path string, cat *catalog.Catalog, o Options) (Result, error) {
 	base := filepath.Base(abs)
 	if !SupportedFile(base) {
 		return Result{}, errors.New("discovery: " + base + " is not a Dockerfile, compose file, Kubernetes manifest, Terraform file or lockfile")
+	}
+	if !o.IncludeIgnored && NewIgnore(filepath.Dir(abs)).Ignored(abs, false) {
+		return Result{}, ignoredError(base)
 	}
 	if cat == nil {
 		cat = catalog.New(nil)

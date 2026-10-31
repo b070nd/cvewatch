@@ -39,6 +39,7 @@ func addSetupTools(srv *mcp.Server, s *server, allowWrite bool) {
 		Description: "Read the configuration the user edits: config.yaml (interval, http, notify, policy rules, access), techs.yaml and the sources/*.yaml feeds, as the values that are set (defaults are not listed). Secret values read (set). Works when a file is broken: that file reports its error. With include_schema, also every setting with its path, type, allowed values and help, which is what edit paths are built from."}, s.getSettings)
 	mcp.AddTool(srv, &mcp.Tool{Name: "preview_settings_change", Annotations: ro,
 		Description: "Show what changes to the settings would do (diff and problems) without writing anything. Each edit is set, unset or append on a path from the schema, for example set http.timeout 45s, unset http.retries or append policy.rules {name, ...}. All edits apply or none do."}, s.previewSettings)
+	addTechTools(srv, s, allowWrite)
 	if allowWrite {
 		no := false
 		mcp.AddTool(srv, &mcp.Tool{Name: "edit_project", InputSchema: projectInSchema(),
@@ -68,9 +69,11 @@ type techEntry struct {
 }
 
 type searchOut struct {
-	Count      int         `json:"count"`
-	Techs      []techEntry `json:"techs"`
-	Categories []string    `json:"categories"`
+	Count       int         `json:"count"`
+	Techs       []techEntry `json:"techs"`
+	Categories  []string    `json:"categories"`
+	NotFound    bool        `json:"not_found,omitempty" jsonschema:"the query matches nothing in the catalog; it can be added as the user's own keyword with edit_tech"`
+	Suggestions []techEntry `json:"suggestions,omitempty" jsonschema:"close catalog entries for a query that matched nothing"`
 }
 
 func (s *server) searchCatalog(_ context.Context, _ *mcp.CallToolRequest, in searchIn) (*mcp.CallToolResult, searchOut, error) {
@@ -83,6 +86,12 @@ func (s *server) searchCatalog(_ context.Context, _ *mcp.CallToolRequest, in sea
 			techs = cat.Search(q)
 		} else if in.Category == "" {
 			return errors.New("give a query or a category")
+		}
+		if q := strings.TrimSpace(in.Query); q != "" && len(techs) == 0 && in.Category == "" {
+			out.NotFound = true
+			for _, t := range cat.Suggest(q, 5) {
+				out.Suggestions = append(out.Suggestions, entry(t))
+			}
 		}
 		limit := min(max(in.Limit, 1), 100)
 		if in.Limit == 0 {
@@ -166,13 +175,19 @@ type checkIn struct {
 
 type checkOut struct {
 	Issues []projectfile.Issue `json:"issues"`
+	Hints  []ops.ProjectHint   `json:"hints" jsonschema:"what may not be covered or cause trouble, beyond the issues: unknown technologies with suggestions or the keyword to add, missing versions, lockfiles, a start date"`
 }
 
 func (s *server) checkProjects(_ context.Context, _ *mcp.CallToolRequest, in checkIn) (*mcp.CallToolResult, checkOut, error) {
-	out := checkOut{Issues: []projectfile.Issue{}}
+	out := checkOut{Issues: []projectfile.Issue{}, Hints: []ops.ProjectHint{}}
 	err := s.withReadRepair(func(sess *ops.Session) error {
 		issues, err := sess.ProjectProblems(strings.TrimSpace(in.Project))
 		out.Issues = append(out.Issues, issues...)
+		if err != nil {
+			return err
+		}
+		hints, err := sess.ProjectHints(strings.TrimSpace(in.Project))
+		out.Hints = append(out.Hints, hints...)
 		return err
 	})
 	return nil, out, err
@@ -195,6 +210,7 @@ type opIn struct {
 	Version  string   `json:"version,omitempty"`
 	Env      string   `json:"env,omitempty"`
 	Envs     []string `json:"envs,omitempty"`
+	To       string   `json:"to,omitempty"`
 	Image    string   `json:"image,omitempty"`
 	Since    string   `json:"since,omitempty"`
 	LockType string   `json:"lockfile_type,omitempty"`
@@ -219,7 +235,7 @@ type projectIn struct {
 func (in projectIn) change(save bool) ops.ProjectChange {
 	c := ops.ProjectChange{Project: in.Project, Save: save}
 	for _, o := range in.Changes {
-		op := projectfile.Op{Kind: o.Kind, Tech: o.Tech, Version: o.Version, Env: model.Env(o.Env), Image: o.Image, Since: o.Since,
+		op := projectfile.Op{Kind: o.Kind, Tech: o.Tech, Version: o.Version, Env: model.Env(o.Env), To: model.Env(o.To), Image: o.Image, Since: o.Since,
 			Lockfile: model.Lockfile{Type: o.LockType, Path: o.LockPath, Env: model.Env(o.LockEnv), Dev: o.LockDev}}
 		if l := o.Lockfile; l != nil {
 			op.Lockfile = model.Lockfile{Type: l.Type, Path: l.Path, Env: model.Env(l.Env), Dev: l.Dev}

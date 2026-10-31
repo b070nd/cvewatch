@@ -31,6 +31,7 @@ func projectInSchema() map[string]any {
 			"env":     text(projectfile.ParamHelp("env")),
 			"envs": map[string]any{"type": "array", "items": map[string]any{"type": "string"},
 				"description": projectfile.ParamHelp("envs")},
+			"to":            text(projectfile.ParamHelp("to")),
 			"image":         text(projectfile.ParamHelp("image")),
 			"since":         text(projectfile.ParamHelp("since")),
 			"lockfile_type": text(projectfile.ParamHelp("lockfile.type")),

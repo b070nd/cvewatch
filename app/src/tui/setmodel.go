@@ -92,6 +92,7 @@ func newSetModel(v ops.SettingsView) *setModel {
 	}
 	broken := map[string]bool{}
 	for _, is := range v.Issues {
+		is = horizonIssue(is)
 		si := setIssue{Issue: is, kind: docKind(is.Doc)}
 		if is.Field != "" && si.kind != "" {
 			if segs, err := confdoc.ParsePath(is.Field); err == nil {
@@ -374,22 +375,23 @@ const (
 )
 
 type setRow struct {
-	id     string
-	kind   rowKind
-	label  string
-	value  string
-	typ    string
-	f      confdoc.Field
-	segs   []string
-	doc    string // the document an edit goes to
-	set    bool   // the file has a value
-	dflt   bool   // value is the default, which the file does not say
-	secret bool
-	level  confdoc.Level // the worst problem at or below the row
-	issue  *setIssue     // the first problem at or below it; for rowIssue, the problem
-	count  int           // rowSection: values set
-	errs   int           // rowSection: errors
-	warns  int
+	id       string
+	kind     rowKind
+	label    string
+	value    string
+	typ      string
+	f        confdoc.Field
+	segs     []string
+	doc      string // the document an edit goes to
+	set      bool   // the file has a value
+	dflt     bool   // value is the default, which the file does not say
+	secret   bool
+	inactive bool          // the setting has no effect with the other settings as they are
+	level    confdoc.Level // the worst problem at or below the row
+	issue    *setIssue     // the first problem at or below it; for rowIssue, the problem
+	count    int           // rowSection: values set
+	errs     int           // rowSection: errors
+	warns    int
 }
 
 func typeText(f confdoc.Field) string {
@@ -458,6 +460,7 @@ func (m *setModel) fieldRow(f confdoc.Field, segs []string) setRow {
 	if r.value == "" {
 		r.value, r.dflt = "-", true
 	}
+	m.horizonRow(&r)
 	return r
 }
 

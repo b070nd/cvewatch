@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/b070nd/cvewatch/app/src/catalog"
 	"github.com/b070nd/cvewatch/app/src/matrix"
 	"github.com/b070nd/cvewatch/app/src/model"
 )
@@ -58,7 +59,7 @@ func Suggest(name string, known []string) (string, bool) {
 	}
 	best, bestDist, tied := "", limit+1, false
 	for _, k := range known {
-		d := editDistance(name, strings.ToLower(k))
+		d := catalog.EditDistance(name, strings.ToLower(k))
 		switch {
 		case d == 0:
 			return "", false
@@ -69,32 +70,6 @@ func Suggest(name string, known []string) (string, bool) {
 		}
 	}
 	return best, bestDist <= limit && !tied
-}
-
-// editDistance counts inserts, deletes, substitutions and swaps of neighbours.
-func editDistance(a, b string) int {
-	x, y := []rune(a), []rune(b)
-	d := make([][]int, len(x)+1)
-	for i := range d {
-		d[i] = make([]int, len(y)+1)
-		d[i][0] = i
-	}
-	for j := range d[0] {
-		d[0][j] = j
-	}
-	for i := 1; i <= len(x); i++ {
-		for j := 1; j <= len(y); j++ {
-			cost := 1
-			if x[i-1] == y[j-1] {
-				cost = 0
-			}
-			d[i][j] = min(d[i-1][j]+1, d[i][j-1]+1, d[i-1][j-1]+cost)
-			if i > 1 && j > 1 && x[i-1] == y[j-2] && x[i-2] == y[j-1] {
-				d[i][j] = min(d[i][j], d[i-2][j-2]+1)
-			}
-		}
-	}
-	return d[len(x)][len(y)]
 }
 
 // RemoveLockfileFix drops the lockfile entry l.

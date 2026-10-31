@@ -308,6 +308,11 @@ func settingsEdit(ss *ops.SettingsSession, op confdoc.Op, args []string, preview
 	}
 	save := *yes && !previewOnly
 	p, err := ss.Edit(ops.SettingsChange{Edits: []confdoc.Edit{e}, Save: save})
+	return showSettings(p, err, save)
+}
+
+// showSettings prints a previewed or saved settings change.
+func showSettings(p ops.SettingsPreview, err error, save bool) error {
 	if len(p.Diffs) > 0 {
 		fmt.Println(p.Diff)
 	}

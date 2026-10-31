@@ -26,6 +26,16 @@ type setReview struct {
 	prev   *ops.SettingsPreview
 	saving bool
 	vp     viewport
+
+	run func(ss *ops.SettingsSession, save bool) (ops.SettingsPreview, error) // a change ops makes itself, such as one to the technologies; edits is then empty
+}
+
+// apply previews or saves the review's change.
+func (rv *setReview) apply(ss *ops.SettingsSession, edits []confdoc.Edit, save bool) (ops.SettingsPreview, error) {
+	if rv.run != nil {
+		return rv.run(ss, save)
+	}
+	return ss.Edit(ops.SettingsChange{Edits: edits, Save: save})
 }
 
 type (
@@ -45,7 +55,7 @@ func settingsPreviewCmd(b Backend, rv *setReview, edits []confdoc.Edit) tea.Cmd 
 	return func() tea.Msg {
 		var p ops.SettingsPreview
 		err := b.Settings(func(ss *ops.SettingsSession) (e error) {
-			p, e = ss.Edit(ops.SettingsChange{Edits: edits})
+			p, e = rv.apply(ss, edits, false)
 			return e
 		})
 		return setCheckedMsg{rv: rv, prev: p, err: err}
@@ -56,7 +66,7 @@ func settingsSaveCmd(b Backend, rv *setReview, edits []confdoc.Edit) tea.Cmd {
 	return func() tea.Msg {
 		var p ops.SettingsPreview
 		err := b.Settings(func(ss *ops.SettingsSession) (e error) {
-			p, e = ss.Edit(ops.SettingsChange{Edits: edits, Save: true})
+			p, e = rv.apply(ss, edits, true)
 			return e
 		})
 		return setSavedMsg{rv: rv, prev: p, err: err}
@@ -252,6 +262,9 @@ func (m *app) setRemoveKey() tea.Cmd {
 	if !ok || r.kind != rowItem || !m.setMayEdit() || !m.setDocOK(r.doc) {
 		return nil
 	}
+	if onTechItem(m) {
+		return m.setTechRemove()
+	}
 	what := r.label
 	if r.secret {
 		what = "an item"
@@ -338,15 +351,16 @@ func (m *app) setToggle(r setRow) tea.Cmd {
 
 // setPickEnum offers the values a setting may have.
 func (m *app) setPickEnum(r setRow) {
-	pk := &picker{title: "Choose " + oneLine(r.f.Label), hint: "enter chooses; u on the setting restores the default", crumb: lastSeg(r.segs)}
+	pk := &picker{title: "Choose " + oneLine(r.f.Label), hint: "enter chooses; u on the setting restores the default" + enumHint(r.f.Path), crumb: lastSeg(r.segs)}
 	for _, v := range r.f.Enum {
-		it := pickItem{value: v, label: v}
+		it := pickItem{value: v, label: enumLabel(r.f.Path, v)}
 		switch {
 		case r.set && r.value == v:
 			it.detail = "now"
 		case r.f.Default == v:
 			it.detail = "default"
 		}
+		it.detail = enumNote(r.f.Path, v, it.detail)
 		pk.items = append(pk.items, it)
 	}
 	pk.vp.reset(len(pk.items))
@@ -354,7 +368,7 @@ func (m *app) setPickEnum(r setRow) {
 		pk.vp.to(i)
 	}
 	pk.done = func(m *app, vals []string) tea.Cmd {
-		return m.previewSettings(fmt.Sprintf("set %s to %s", r.f.Label, vals[0]), lastSeg(r.segs),
+		return m.previewSettings(fmt.Sprintf("set %s to %s", r.f.Label, enumLabel(r.f.Path, vals[0])), lastSeg(r.segs),
 			[]confdoc.Edit{{Doc: r.doc, Op: confdoc.OpSet, Path: confdoc.FormatPath(r.segs), Value: vals[0]}}, nil)
 	}
 	m.set.pick = pk
@@ -362,6 +376,9 @@ func (m *app) setPickEnum(r setRow) {
 
 // settingHint says what a value of the setting may be, in one line.
 func settingHint(f confdoc.Field, secret bool) string {
+	if h := horizonHint(f.Path); h != "" {
+		return h
+	}
 	var hint string
 	switch f.Type {
 	case confdoc.TypeDuration:
@@ -525,6 +542,8 @@ type addField struct {
 
 func (m *app) setAdd(n setNode) tea.Cmd {
 	switch {
+	case isTechList(n):
+		return m.setTechAdd()
 	case isRecords(n.f):
 		m.setAddRecord(n)
 	case n.f.Type == confdoc.TypeMap:

@@ -72,6 +72,9 @@ func (m *app) overviewHead(w, h int) []string {
 		}
 	}
 	blocks = append(blocks, summaryBlock{2, append(cycle, cycleErr...)})
+	if h := sn.horizonText(); h != "" {
+		blocks = append(blocks, summaryBlock{2, []string{trunc("alert horizon: "+h+" (only vulnerabilities published then are judged and alerted)", w)}})
+	}
 
 	blocks = append(blocks, summaryBlock{1, flow([]string{
 		fmt.Sprintf("open issues %d", c.Issues), fmt.Sprintf("open findings %d", c.Findings),
@@ -91,15 +94,15 @@ func (m *app) overviewHead(w, h int) []string {
 	}
 	blocks = append(blocks, summaryBlock{3, []string{"  by severity  " + strings.Join(sev, "  ")}})
 
-	most = 0
-	for _, n := range c.ByEnv {
-		most = max(most, n)
+	var inScope []model.Env // the environments of the projects in scope; findings may name more
+	for _, p := range sn.Projects {
+		if m.scope == "" || p.Name == m.scope {
+			for _, e := range p.Envs {
+				inScope = append(inScope, model.Env(e))
+			}
+		}
 	}
-	var envs []string
-	for _, e := range model.AllEnvs {
-		envs = append(envs, fmt.Sprintf("%s %d %s", e, c.ByEnv[e], bar(c.ByEnv[e], most, barW)))
-	}
-	blocks = append(blocks, summaryBlock{4, []string{"  by environment  " + strings.Join(envs, "  ")}})
+	blocks = append(blocks, summaryBlock{4, []string{trunc("  by environment  "+envSummary(c.ByEnv, inScope, barW), w)}})
 
 	var warns []string
 	warns = append(warns, rep.Warnings...)
@@ -141,7 +144,7 @@ func overviewBody(m *app, w, h int) []string {
 		start, end := m.txt[scrOverview].window(room)
 		return append(head, m.page(scrOverview, w).view(start, end, m.pageSel[scrOverview].at())...)
 	}
-	return append(head, renderFindings(len(m.dataIssues()), &m.ovw.issueList, m.scope, w, room)...)
+	return append(head, renderFindings(len(m.dataIssues()), &m.ovw.issueList, m.noneText(), m.data.monitored(), w, room)...)
 }
 
 func overviewLayout(m *app, w, h int) {
@@ -217,6 +220,7 @@ func init() {
 			binding{keys: ks("enter"), help: "open the selected issue: its environments and what to do", short: "open", prio: 1, do: plain((*app).openFromOverview)},
 			bindFilter(),
 			bindSeverity(),
+			bindTime(),
 			binding{keys: ks("v"), help: "show the policy violations and the warnings; enter opens the issue of a violation", short: "violations", prio: 2, do: plain((*app).openViolations)},
 			bindClearFilter(func(m *app) bool { return false }),
 		),
