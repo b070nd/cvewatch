@@ -56,6 +56,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The Linux kernel catalog entry takes the names people write: `ubuntu kernel`, `debian kernel`, `linux-image` and `linux image` are aliases of `linux-kernel`. The words of an unknown technology are matched one by one, so `ubuntu kernel` suggests `linux-kernel`.
 - CVSS scores are read for every version the sources carry (2.0, 3.0, 3.1 and 4.0), from NVD, CVE records, GitHub advisories, CSAF advisories and articles. An issue keeps its issuer's score first, then the newer version. `show` and the exports carry the version, vector and source (`cvss_version`, `cvss_vector` and `cvss_source`, added to the export schema).
 - `enrich: {cvss: true}`, on by default: tracked CVEs that no source rated get a score from NVD's public API, at most 5 per cycle and once a day per CVE. Only the CVE id is sent. Set `enrich.cvss: false` to turn it off.
+- Auto-update with settings per project. A project file can hold `update: {auto: true, every: 1h}`: `every` is how often the project is refreshed (at least 5m, default the `interval` of `config.yaml`) and `auto: false` takes it out of scheduled runs. `update.auto` in `config.yaml` (true by default) turns scheduled refreshes off for all projects. Edit it with `-update-every` and `-update-auto` on `cvewatch project`, the `set_update` kind in MCP `edit_project`, and the Updates field in the TUI.
+- The daemon wakes when the first project is due, at the latest after `interval`. A scheduled cycle fetches the feeds once, then judges, reports and alerts only the projects that are due; the findings of the others stay as they are until their turn. `cvewatch update`, `cvewatch run` and `F` in the TUI still cover every project.
+- Per-project last update and next due time in `cvewatch status` and on the TUI Status screen. The TUI Projects screen shows `every 1h` and `due now`, `next 14:05`, `paused` or `manual` for each project.
+- `tui.auto` setting (true by default, on the Settings screen): without a running daemon the TUI updates the due projects in the background on the same schedule. With a live daemon it does not fetch. A `tui.fetch` period above zero still fetches everything on its own period.
+- `cvewatch doctor` and project validation: an `every` under 5m is an error, an `every` over 30 days is a warning, and a project with `auto: false` is listed.
 
 ### Changed
 - TUI has five screens, Overview, Findings, Projects, Status and Settings, on keys 1 to 5.
@@ -68,6 +73,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - TUI: `q` quits only from the root of a screen. Inside a level or a popup it goes back.
 - TUI: `F` fetches the feeds now. It showed the project's issues before; `i` still does.
 - TUI: the re-read period is the `tui.refresh` setting, no longer fixed at 30 seconds in the code.
+- The daemon no longer refreshes every project on every `interval`: a project is refreshed when its own period is up. With no `update:` block that is the `interval`, as before.
+- `cvewatch status` has a Projects section. Before, it showed every feed as "never succeeded" when no daemon ran.
+- `tui.fetch` keeps its meaning (a fixed period for fetching everything); `tui.auto` is the default way for the TUI to keep data fresh.
 - Lists (Overview, Findings and a project's issues) name environments only where an issue differs from what the project monitors. A project the issue is open in everywhere shows its name alone. The Findings column is `PROJECTS (ONLY IN)`.
 - Overview's `by environment` line reads `all N environments alike (K open each)` when the counts are equal, and shows bars only when they differ.
 - Setup asks once whether an environment differs from the rest, instead of a version per technology and environment. The question comes only when there is more than one environment.

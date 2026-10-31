@@ -149,6 +149,7 @@ The technology catalog and the feeds are built in, so one binary is enough. `set
 - **Puts the urgent things first.** Order: actively exploited (CISA KEV), then severity, open in prod, exploit probability (EPSS, optional), age. Every issue says why it ranks where it does.
 - **Merges the duplicates.** The NVD entry, the GitHub advisory, the CISA listing and two news stories become one record with all links, the articles in order, and the known fix.
 - **Tells you where you already look.** Slack, a signed webhook or email, plus a daily "still open in prod" digest.
+- **Refreshes each project on its own schedule.** A project file can hold `update: {every: 1h}` to be refreshed more or less often than the `interval`, or `auto: false` to be left out of scheduled runs. The daemon wakes when the first project is due and judges and alerts only the projects that are due. `cvewatch update` and `F` in the TUI always cover every project.
 - **Starts each project when you say.** A `since` date skips advisories published before it, for that project only, and closes the open findings from before it as not affected. Moving the date earlier reopens them. Other projects are not affected.
 - **Searches what you track.** `cvewatch search` finds issues by ID, part of an ID, words or fields such as `severity:high+` and `project:shop`, in every status.
 - **Looks back only as far as you say.** `horizon` in `config.yaml` limits what is judged, alerted and digested to the past hour, day, week, month or year, or to a custom range. It is unlimited by default, and findings that already exist stay.
@@ -192,7 +193,7 @@ cvewatch not-affected CVE-2026-109619 -project shop -env dev -note "dev has no n
 cvewatch evidence CVE-2026-109618
 ```
 
-**Always on.** Run `cvewatch daemon` (or the Docker image) and it refreshes every few hours. The full-screen interface re-reads the state every `tui.refresh` (30 seconds by default) and fetches the feeds when you press `F`; `tui.fetch` in `config.yaml` makes it fetch by itself. If you upgrade a lockfile, the open findings are re-checked on their own and each finding's history says what changed. Editing a project, `techs.yaml` or the alert horizon works the same way: the daemon notices within about 15 seconds, judges the stored advisories again and fetches older ones when the change needs them.
+**Always on.** Run `cvewatch daemon` (or the Docker image) and it refreshes every few hours. The full-screen interface re-reads the state every `tui.refresh` (30 seconds by default) and fetches the feeds when you press `F`. Without a running daemon it also updates the projects that are due by itself (`tui.auto`, on by default), so `cvewatch status` does not stay at "never succeeded"; with a daemon it leaves the fetching to it. `tui.fetch` in `config.yaml` sets a fixed period instead. If you upgrade a lockfile, the open findings are re-checked on their own and each finding's history says what changed. Editing a project, `techs.yaml` or the alert horizon works the same way: the daemon notices within about 15 seconds, judges the stored advisories again and fetches older ones when the change needs them.
 
 ### The life of a finding
 

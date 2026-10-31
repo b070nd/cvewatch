@@ -27,6 +27,8 @@ One binary is enough: the technology catalog and the feeds are built in. `config
 
 A failed source keeps its cursor and is retried next cycle. A finding counts as alerted per channel only after that channel accepted it.
 
+Not every project is part of every cycle. Each project is due one period after its last refresh (see [Update schedule per project](#update-schedule-per-project)). A scheduled cycle fetches the feeds once, then judges, reconciles and alerts only the projects that are due; the findings of the others are left as they are until their turn. A manual `cvewatch update` or `cvewatch run` covers every project.
+
 ## Technologies and discovery
 
 The built-in catalog lists open and closed source technologies: runtimes, frameworks, databases, servers, platforms, appliances and more. Search it with `cvewatch catalog WORDS`. A technology is judged only when a project declares it, so a big catalog adds no noise. Add your own in `config/techs.yaml`: an entry with the same name replaces the built-in one, and `disabled: true` removes it. A technology can bring its vendor's advisory feed (for example CSAF), which turns on when a project declares it.
@@ -88,9 +90,11 @@ The header also shows what is going on. `refreshing...` means the data is being 
 
 The screens re-read the state every `refresh` (`tui.refresh` in `config.yaml`, 30 seconds by default, at least 1s). Reading never waits for the daemon.
 
-A re-read shows what is stored and fetches nothing, except that a change which needs older advisories fetches them (see [Changing the configuration](#changing-the-configuration)). The feeds are fetched when you press `F`, and `tui.fetch` (`0s` by default, which means only on request) makes the TUI fetch once at start and then every so often, while it runs. A running daemon already fetches every `interval`, so `tui.fetch` matters mainly when no daemon runs. Both values are on the Settings screen, under Core, and a change applies at the next re-read.
+A re-read shows what is stored and fetches nothing, except that a change which needs older advisories fetches them (see [Changing the configuration](#changing-the-configuration)). The feeds are fetched when you press `F`, which covers every project.
 
-A fetch runs in the background, one at a time, and the screens keep working. It needs write access to every project, like a daemon cycle. Its progress shows in the header as one small cell: `fetch 3/12` is three of twelve sources done, with a spinner. The matching, enriching, saving and alerting steps show their own word. When the run ends, a note says `fetched: 4 new, 2 findings`, and `, 1 source failed` when a source failed. Click the cell at any time to see the sources that failed.
+Without a running daemon the TUI also updates by itself, on the same schedule as the daemon (see [Update schedule per project](#update-schedule-per-project)): when a read shows a project due, it starts a background update of the due projects. This is the `tui.auto` setting, true by default. It does nothing when a daemon is alive, which means a heartbeat that is not overdue, because the daemon does that work, and it stops when `update.auto` in `config.yaml` is false. After a failed or busy attempt it waits a minute before it tries again. `tui.fetch` (`0s` by default) is the older way: a number above zero makes the TUI fetch everything once at start and then every so often, whatever the schedule and the daemon say. The values are on the Settings screen, under Core, and a change applies at the next re-read.
+
+A fetch runs in the background, one at a time, and the screens keep working. It needs write access to every project, like a daemon cycle. Its progress shows in the header as one small cell: `fetch 3/12` is three of twelve sources done, with a spinner. The matching, enriching, saving and alerting steps show their own word. When the run ends, a note says `fetched: 4 new, 2 findings`, and `, 1 source failed` when a source failed. An update on the schedule says `updated shop, blog: 4 new, 2 findings`, with the projects it covered. Click the cell at any time to see the sources that failed.
 
 If another cvewatch holds the data, such as a daemon cycle, the fetch waits for the next period, or for `F`, and the note says so. That is not an error.
 
@@ -208,7 +212,7 @@ Below the summary, the list holds every open issue. It is searched and sorted li
 | Enter | open the project: its problems, each with its fix, and its security issues. It also sets the project scope (see [Project scope](#project-scope)) |
 | `+` | add a project: from a folder, from a Dockerfile, compose or Kubernetes file, or an empty one (see [Adding a project](#adding-a-project-tui)) |
 | `-` | remove the selected project: it shows what it affects, asks for its name, and the file moves to the backups |
-| `c` | open the project's fields: environments, technologies, lockfiles, differences per environment, since (see [Editing a project](#editing-a-project)) |
+| `c` | open the project's fields: environments, technologies, lockfiles, differences per environment, since, updates (see [Editing a project](#editing-a-project)) |
 | `H` | work through the project's hints (see [Hints](#hints)) |
 | `e` | edit the project step by step in the guided form |
 | `a` | add a project in the guided form (`n` too) |
@@ -465,6 +469,8 @@ cvewatch project shop -set php=8.3 -save                # write it; a backup goe
 | `-lock-dev TYPE:PATH[:ENV]` | change an existing entry to count its development-only packages in every environment |
 | `-lock-nodev TYPE:PATH[:ENV]` | change an existing entry to stop counting them outside development-like environments |
 | `-since DATE` | advisories count from this day (`YYYY-MM-DD`); `-since ""` clears it |
+| `-update-every SPAN` | how often the project is refreshed, such as `30m`, `1h` or `2d` (at least 5m); `default` removes it (see [Update schedule per project](#update-schedule-per-project)) |
+| `-update-auto BOOL` | `false` leaves the project out of scheduled runs, `true` puts it back |
 | `-save` | write the change |
 
 Only a trailing `dev` or environment name is read as one, so a path with colons, such as `C:\repo\composer.lock`, stays whole. `-lock-dev` and `-lock-nodev` change entries that exist; they do not add one.
@@ -572,6 +578,26 @@ techs: [{name: php, version: "8.2"}]
 - An item that every project skips is kept as a record with its title, IDs, a short summary and up to 20 product names, but no findings and no report. That lets a project or technology added later pick it up without a new download.
 - A value that is not a `YYYY-MM-DD` date stops the configuration from loading.
 
+## Update schedule per project
+
+A project file can say how it is kept up to date:
+
+```yaml
+name: shop
+update:
+  every: 1h                    # how often this project is refreshed; at least 5m (default: interval in config.yaml)
+  auto: true                   # false leaves the project out of scheduled runs
+```
+
+- Without an `update:` block a project is refreshed every `interval` of `config.yaml`, and the block is not needed. The block is read in both spellings of the file (`when@<env>` and `environments:`) and does not touch the generic and per-environment layout.
+- A project is due one `every` after its last refresh, and at once when it never was. The last refresh is kept in the state and shown in `cvewatch status` and on the TUI Status screen, together with the next due time. The TUI Projects screen shows each project as `every 1h · next 14:05`, `every 1h · due now`, `paused` (`auto: false`) or `manual` (scheduled updates are off).
+- The daemon sleeps until the first project is due, but at most `interval`, so changes to the configuration are looked at. It never sleeps less than a minute, and after a failed cycle it waits at least 5 minutes.
+- A scheduled cycle fetches the feeds once and judges, writes reports and alerts only for the projects that are due. Advisories fetched earlier are judged for a project when it becomes due, so it misses nothing, and its alerts go out then.
+- `cvewatch update`, `cvewatch run` and `F` in the TUI refresh every project, including the ones with `auto: false`, and count as an update for each. A back-fill or revalidation after a configuration change looks at every project and is not an update.
+- `update: {auto: true}` in `config.yaml` is the main switch, true by default. False turns scheduled refreshes off for everything, in the daemon and the TUI; only `cvewatch update` and `F` refresh then.
+- Edit the block with `cvewatch project NAME -update-every 2h -update-auto false`, with the Updates field of the TUI field editor (`c` on a project), or with `set_update` in the MCP `edit_project` tool. `-update-every default` removes the period, and `auto: true` is not written because it is the default.
+- A period under 5 minutes stops the configuration from loading and is an error in `cvewatch check` and `cvewatch doctor`. A period over 30 days is a warning, and `auto: false` is a hint: scheduled runs skip the project. A missing block is not a hint.
+
 ## Alert horizon
 
 `horizon` in `config.yaml` limits which vulnerabilities are judged, alerted and put in digests, by their publication date, like Google's time filter:
@@ -629,7 +655,7 @@ A back-fill that fails, or is cancelled, stays owed and is tried again at the ne
 
 ## Is it working?
 
-`cvewatch status` shows the daemon (running, overdue, or only manual runs), each feed (last success, failures in a row), each channel and the last cycles. It exits non-zero when something fails. `cvewatch dashboard` writes a static HTML page with the same plus open findings. Set `dashboard: {enabled: true}` in `config.yaml` and the daemon refreshes it every cycle. The page has no scripts and makes no external requests.
+`cvewatch status` shows the daemon (running, overdue, or only manual runs), each feed (last success, failures in a row), each channel, the last update and next due time of each project, and the last cycles. It exits non-zero when something fails. `cvewatch dashboard` writes a static HTML page with the same plus open findings. Set `dashboard: {enabled: true}` in `config.yaml` and the daemon refreshes it every cycle. The page has no scripts and makes no external requests.
 
 ## Vendor records (CVE Program)
 
