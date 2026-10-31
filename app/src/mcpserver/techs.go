@@ -15,7 +15,7 @@ import (
 func addTechTools(srv *mcp.Server, s *server, allowWrite bool) {
 	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
 	mcp.AddTool(srv, &mcp.Tool{Name: "suggest_tech", Annotations: ro,
-		Description: "Find which catalog technology a typed term means, tolerating typos (rabbitMW finds rabbitmq). When nothing is close, found is false and suggestions is empty: the term is not in the catalog, and add_tech can add it as the user's own keyword."}, s.suggestTech)
+		Description: "Find which catalog technology a typed term means, tolerating typos (rabbitMW finds rabbitmq). When nothing is close, found is false and suggestions is empty: the term is not in the catalog, and edit_tech (action add) can add it as the user's own keyword."}, s.suggestTech)
 	mcp.AddTool(srv, &mcp.Tool{Name: "preview_tech_change", Annotations: ro,
 		Description: "Show what adding, editing or removing one of the user's own technologies would do to techs.yaml (diff and problems) without writing anything. Same input as edit_tech."}, s.previewTech)
 	if allowWrite {

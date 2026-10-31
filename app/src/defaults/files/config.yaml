@@ -51,4 +51,4 @@ slack:
 # horizon:
 #   window: unlimited   # unlimited | hour | day | week | month | year | custom
 #   from: 2026-01-01    # custom only: YYYY-MM-DD or RFC3339; empty means no start
-#   to: ""              # custom only: YYYY-MM-DD (that whole day) or RFC3339; empty means now
+#   to: ""              # custom only: YYYY-MM-DD (that whole day) or RFC3339; empty means no end

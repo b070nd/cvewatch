@@ -31,9 +31,51 @@ A failed source keeps its cursor and is retried next cycle. A finding counts as 
 
 The built-in catalog lists open and closed source technologies: runtimes, frameworks, databases, servers, platforms, appliances and more. Search it with `cvewatch catalog WORDS`. A technology is judged only when a project declares it, so a big catalog adds no noise. Add your own in `config/techs.yaml`: an entry with the same name replaces the built-in one, and `disabled: true` removes it. A technology can bring its vendor's advisory feed (for example CSAF), which turns on when a project declares it.
 
-`cvewatch discover DIR|FILE` shows what a repository uses and why. It reads lockfiles and their packages, `.tool-versions`, `go.mod`, `package.json`, Dockerfiles, compose files, Kubernetes manifests, Terraform and marker files. Each proposal has evidence and a confidence (high, medium, low). Low ones are asked about, never declared silently. It only reads files, never follows symlinks, and limits depth, file count and file size.
+`cvewatch discover DIR|FILE` shows what a repository uses and why. It reads lockfiles and their packages, `.tool-versions`, `go.mod`, `package.json`, Dockerfiles, compose files, Kubernetes manifests, Terraform and marker files. Each proposal has evidence and a confidence (high, medium, low). Low ones are asked about, never declared silently. It only reads files, never follows symlinks, and limits depth, file count and file size. Paths that `.gitignore` ignores are skipped too (see [Ignored paths](#ignored-paths)).
 
 A single Dockerfile, Containerfile, compose file or Kubernetes manifest can be the source too (`cvewatch discover FILE`, `cvewatch setup FILE`, and the `discover_stack` MCP tool). Its base images (`FROM`, with `ARG` defaults filled in), compose services, Kubernetes images and packages installed in a Dockerfile are proposals marked as infrastructure, with their catalog category. A project proposed from such a file is named after the file's folder.
+
+### Ignored paths
+
+`discover` and `setup` skip the paths git would ignore: the `.gitignore` files from the repository root (the nearest folder above with a `.git`) down to each folder, and `.git/info/exclude`. The rules are git's: `!` negation, a trailing `/` for folders, anchored and unanchored patterns, `*`, `?`, `**` and character classes. The matcher is built in, so no git binary runs. A folder with no `.gitignore` is read as before. The notes of a scan say how many paths were left out.
+
+`-all` reads the ignored paths too: `cvewatch discover DIR -all` and `cvewatch setup DIR -all`. A file given directly (`cvewatch discover FILE`) that is ignored is refused unless `-all` is given. Lockfiles follow the same rule, so a committed lockfile is proposed and one that the repository ignores is not. The TUI folder box does not list ignored entries.
+
+### Technologies not in the catalog
+
+A term the catalog does not know gets help instead of a silent miss:
+
+- The catalog ranks what a term most likely means: an exact name or alias first, then names that start with it or contain it, then close spellings (a swapped or missing letter). Unrelated names are never offered. `rabbitMW` finds `rabbitmq`. `algolia` finds nothing, and the message says it is not in the catalog and offers to add it as your own keyword.
+- To keep it, add it as your own keyword: type `+algolia` in setup's technology step; in the TUI add-technologies step press `ctrl+o` for the word under the cursor (or the first one the catalog does not know); on the Technologies field of the project editor press `K`; or on the command line:
+
+  ```bash
+  cvewatch tech add algolia -yes                       # the name is the keyword
+  cvewatch tech add grafana -cpe grafana:grafana -yes  # a CPE name adds NVD product matching and version checks
+  cvewatch tech edit grafana -alias grafana -alias grafana-server -yes   # a flag that is given replaces that list
+  cvewatch tech list
+  cvewatch tech remove grafana -yes
+  ```
+
+- Keywords match as whole words. An advisory matches when its title or text names one of them (the default is the name). Without a CPE name the match is by text only, and a hint says so.
+- Each change is previewed: without `-yes` the command shows the diff of `config/techs.yaml`. In setup and the TUI, your entries are written together with the project file, after the review.
+- An entry with the same name as a shipped one replaces it; `disabled: true` removes the shipped one. In the TUI, Settings, Tech catalog lists your technologies: `a` adds one, `e` changes its keywords, category and CPE, and `x` removes it.
+- Over MCP, `suggest_tech` returns the closest names for a term, `preview_tech_change` shows a change, and `edit_tech` writes it (with `-allow-write`).
+
+### Hints
+
+Hints are advice about a project that is not an error. They say what may not be covered or may make the monitor noisy, and give the fix when there is one:
+
+- an unknown technology, with the closest catalog names or the keyword to add;
+- nothing that can match yet: no known technology and no lockfile;
+- a lockfile that is missing, unreadable, of the wrong type or outside the repository folder;
+- environments: no `envs` (the old default is used), no prod environment, or the old `environments:` spelling;
+- a technology without a version, so advisories naming it are reported as "version could not be checked";
+- a broad technology when the catalog has more specific names (`cisco-ios` and `cisco-ios-xe`);
+- your own keyword without a CPE name;
+- a language, runtime or framework with no lockfile, so its packages are not checked;
+- no start date (`since`).
+
+Hints show in the setup review, in `cvewatch project NAME`, in the `hints` of `check_projects` and `preview_project_change`, and in the TUI: the Hints section of a project and of the review, and `H`, which works through them. Enter on a hint applies its fix through the usual preview. For an unknown technology it offers the keyword prompt or the closest names to replace it. The Projects screen counts the hints of each project.
 
 ## Terminal UI
 
@@ -85,6 +127,14 @@ The mouse is optional. Every action works from the keys.
 
 Enter on a project on the Projects screen sets the project scope. The Overview and the Findings then list only that project's issues, with only its environments, and the counts and severity bars follow them. The breadcrumb line shows the chip `scope: shop ×`. `0`, or a click on the chip, shows all projects again. The scope survives a re-read, and it is dropped when its project is deleted or disabled. Opening one of a project's security issues (`s`, then Enter) sets it too.
 
+### Environments in lists
+
+Lists name environments only where it matters. An issue that is open in every environment its project monitors shows the project's name alone. Otherwise the cell names the environments it is open in, prod first, such as `shop:prod,dev`, and `+2` counts the ones not named. The column is `PROJECTS (ONLY IN)`. On Overview, the `by environment` line reads `all 4 environments alike (18 open each)` when every environment has the same count, and draws one bar per count when they differ.
+
+### Time filter
+
+`t` on Overview and Findings cycles the filter on the publication date: any time, past hour, past 24 hours, past week, past month and past year. The chip `published: past week ×` on the breadcrumb line shows it; `0`, or a click on the chip, clears it. Counts and bars follow it, as they follow the project scope. A custom range is typed into the search, such as `published:2026-01-01..2026-03-01`, and the chip shows that too. The search syntax is in [search.md](search.md).
+
 ### Keys by screen
 
 The footer at the bottom shows the keys for where you are. Keys in brackets also work, but the footer and the help leave them out.
@@ -102,7 +152,8 @@ Below the summary, the list holds every open issue. It is searched and sorted li
 | `/` | filter by words or fields, with the same syntax as Findings. Enter keeps the filter, Esc clears it |
 | `s` | cycle the minimum severity |
 | `v` | show the policy violations and the warnings, in place of the list. Enter on a violation opens its issue; Esc goes back to the list |
-| `0` | show all projects again, when a project scope is set |
+| `t` | cycle the time filter on the publication date (see [Time filter](#time-filter)) |
+| `0` | clear the project scope when one is set, otherwise the time filter |
 
 **Status**
 
@@ -120,6 +171,8 @@ Below the summary, the list holds every open issue. It is searched and sorted li
 | Enter | open the selected issue |
 | `/` | filter by words or fields such as `severity:high`. The list narrows as you type. Enter keeps the filter, Esc clears it |
 | `s` | cycle the minimum severity: all, low+, medium+, high+, critical+ |
+| `t` | cycle the time filter on the publication date (see [Time filter](#time-filter)) |
+| `0` | clear the project scope when one is set, otherwise the time filter |
 | Space | mark or unmark the issue, then move down (see Triage) |
 | Ctrl+A | mark every issue in the list, or clear the marks when all are marked |
 | `f` `i` `n` `o` | with marks: set every marked issue fixed, ignored, not affected, or open again |
@@ -152,7 +205,8 @@ Below the summary, the list holds every open issue. It is searched and sorted li
 | Enter | open the project: its problems, each with its fix, and its security issues. It also sets the project scope (see [Project scope](#project-scope)) |
 | `+` | add a project: from a folder, from a Dockerfile, compose or Kubernetes file, or an empty one (see [Adding a project](#adding-a-project-tui)) |
 | `-` | remove the selected project: it shows what it affects, asks for its name, and the file moves to the backups |
-| `c` | open the project's fields: environments, technologies, lockfiles, versions, images, since (see [Editing a project](#editing-a-project)) |
+| `c` | open the project's fields: environments, technologies, lockfiles, differences per environment, since (see [Editing a project](#editing-a-project)) |
+| `H` | work through the project's hints (see [Hints](#hints)) |
 | `e` | edit the project step by step in the guided form |
 | `a` | add a project in the guided form (`n` too) |
 | `N` | new empty project: a name and its environments, no folder needed |
@@ -172,6 +226,7 @@ Below the summary, the list holds every open issue. It is searched and sorted li
 | Enter, Right, `x` | preview the fix of the selected problem |
 | `[`, `]` | choose another fix, when the problem has several |
 | `c` | open the project's fields and change them directly |
+| `H` | work through the project's hints (see [Hints](#hints)) |
 | `e` | edit the project step by step in the guided form |
 | `E` | open the file in `$EDITOR` at the problem's line (see below) |
 | `s` | select among the project's security issues; Enter opens the one selected, and back returns here |
@@ -191,6 +246,7 @@ The section list shows how many values each section of `config.yaml`, `techs.yam
 | Enter, Right | open a section, a list or an item; change a value (a number, text, a duration, a name of an environment variable; a choice opens a list) |
 | Space | turn an on/off setting over |
 | `a`, `x` | add an item to a list or map (a feed, a technology, a policy rule, an access rule), or remove the selected one |
+| `e` on one of your technologies | change its keywords, category and CPE (Tech catalog section) |
 | `u` | restore the default: the value is removed from the file |
 | `/` | find a setting by label, path or value. On the section list it searches every section |
 | `E` | open the file in `$EDITOR` at the line of the selected problem, then read it again |
@@ -319,7 +375,7 @@ On the Projects screen, `+` asks where the project comes from:
 
 - **From a folder:** the folder box described below, which `d` opens too.
 - **From a Dockerfile or compose file:** a path box that takes one file: a Dockerfile, Containerfile, compose file, Kubernetes manifest or Terraform file. Tab completes it. The project is proposed from that file alone. Its base images, services and packages are listed as infrastructure, and the review groups them under "Infrastructure". The project is named after the file's folder, as a folder project is.
-- **Empty:** a name and its environments, as `N` asks.
+- **Empty:** a name and its environments, as `N` asks. A new project starts with `local`.
 
 In the lockfiles step and on the review, `+` adds a lockfile. Pick its file, with Tab completion; its type is read from the name (`package-lock.json`, `composer.lock`, `go.sum` and the other names the detector knows) and asked only when the name does not tell it. `-` leaves the selected lockfile out of the project, after a question. Nothing is written until you save from the review.
 
@@ -331,7 +387,7 @@ The folder box works like this:
 - PgUp and PgDn page through the list. Esc cancels, and nothing is added.
 - Each row shows the lockfiles and manifests found directly inside it, for example `composer.lock` or `go.mod`. A `project` tag marks a folder that has a lockfile or a manifest. Only the first 300 subfolders of a folder are looked into for marks, and at most 200 rows are listed.
 
-Picking a folder reads folder and file names only. Nothing in the folder is run.
+Picking a folder reads folder and file names only. Nothing in the folder is run. Entries that `.gitignore` ignores are not listed (see [Ignored paths](#ignored-paths)).
 
 ### Fixing projects (TUI)
 
@@ -350,14 +406,13 @@ On the Projects screen, `c` opens the fields of the selected project. Inside a p
 
 | Field | What it holds | Keys |
 |---|---|---|
-| Environments | the environments the project runs in | Enter opens a list to tick |
-| Technologies | each technology and its version | Enter changes the version; `+` (or `a`) adds a technology from the catalog; `-` (or `x`) removes it after a question |
+| Environments | the environments the project runs in, by name; the suggested names come first | `+` adds a name (the prompt says local is the default; names are free); `r` renames one, and the preview says how many findings move; `-` (or `x`) removes it with its differences, after a question; `f` writes the old default into a file that has no `envs`, or starts from local |
+| Technologies | each generic technology and its version | Enter changes the version; `+` (or `a`) adds a technology from the catalog; `K` adds one of your own; `e` chooses where it runs, in every environment or only in the ones you pick; `-` (or `x`) removes it after a question |
+| Differences per environment | only what differs in an environment, one row each: another version (`prod  php 8.2.30`), a technology that runs only there (`+varnish 7.4`), a technology it leaves out (`-xdebug`) or its image | `+` (or `a`) adds one: pick the environment, then the technology and version, the technology to leave out, or the image; Enter changes one; `-` (or `x`) removes one after a question; `m` rewrites an old `environments:` block as `when@<env>` blocks |
 | Lockfiles | the type, path, environment and dev flag of each lockfile | Enter or `d` toggles dev; `+` (or `a`) adds a lockfile by picking its file with Tab completion: the type comes from the name, then the prompt asks for the environment (empty means every environment) and dev (yes or no); `-` (or `x`) removes it after a question |
-| Versions per environment | the version deployed in an environment, where it differs from the declared one | Enter sets it, and an empty value removes it; `-` (or `x`) removes it after a question |
-| Image per environment | an image tag or digest, recorded only | Enter sets it, and an empty value clears it; `-` (or `x`) clears it after a question |
 | Since | the first day advisories count from | Enter opens a date prompt (`YYYY-MM-DD`); an empty value clears it |
 
-A lockfile with dev set to yes counts its development-only packages in every environment. By default they count in dev and int only.
+A lockfile with dev set to yes counts its development-only packages in every environment. By default they count only in development-like environments (`local`, `dev`, `int`, `development` and `test`). The format of the differences is described in [Environments and differences](#environments-and-differences).
 
 Every change is shown as a diff of the file, under the title "Edit project". Enter or `y` saves it. Esc cancels, and nothing is saved. A change that adds an error is refused, and the prompt keeps what you typed with the reason. An unknown technology only warns. Comments in the file are kept. The old file is copied to `data/project-backups/` before it is replaced, and the save goes to the audit log as `project`.
 
@@ -369,7 +424,7 @@ These keys act on a whole project. Each one shows its consequences first, and no
 
 A project is found by the `name:` its file declares, not by the file's name. A file `magento2-shop.yaml` that declares `name: shop` is the project `shop`, and rename, delete, disable, edit and the CLI commands work on it. Its problems carry a warning, `file magento2-shop.yaml declares shop`, so the mismatch is visible; making the file name and the `name:` match clears it. A new project's file is named after the project.
 
-- **New (`N`):** a name, then the environments, separated by commas. An empty answer means all four. No folder is needed. Creating a project needs write access to every project.
+- **New (`N`):** a name, then the environments, separated by commas. An empty answer means `local`. No folder is needed. Creating a project needs write access to every project.
 - **Rename (`R`):** a new name. The findings move to the new name, the access rules that name the project follow it, and the reports of its issues are rewritten. The old name stays in the audit log and in past evidence. The new name must be free, and the ledger must not already hold a finding under that name for the same issue and environment.
 - **Duplicate (`D`):** a name, which starts as the name plus `-copy`. The copy has the same technologies and lockfiles, so it finds the same issues. It is in no access rule.
 - **Delete (`X`):** the project's file moves to `data/project-backups/`. Nothing else is erased, but the access rules that name the project drop it. The findings stay in the ledger unchanged. They are no longer checked again, but open ones still show in lists and digests. You type the project's name to confirm. On the consequences, `c` also marks the project's open findings ignored, with the note "project deleted".
@@ -382,7 +437,7 @@ Each step that succeeded is undone, newest first, when a later step fails. The m
 
 ## Command line: projects and settings
 
-Every project edit is a flag list. Without `-save` the command only shows the diff. Several flags can be given together. They apply grouped by flag, in this order: technologies, lockfiles, environments, lockfile dev flags, since, deployed versions, then images. If one fails, nothing is written.
+Every project edit is a flag list. Without `-save` the command only shows the diff. Several flags can be given together. They apply grouped by flag, in this order: technologies, lockfiles, environments, lockfile dev flags, since, the versions and exclusions per environment, the scope of technologies, `-migrate-envs`, then images. If one fails, nothing is written.
 
 ```bash
 cvewatch project list                                   # the monitored projects; disabled ones are marked
@@ -394,14 +449,18 @@ cvewatch project shop -set php=8.3 -save                # write it; a backup goe
 |---|---|
 | `-set TECH[=VERSION]` | declare a technology, or change its version; an empty version means unknown |
 | `-remove TECH` | stop declaring a technology |
-| `-envs E,E` or `-envs all` | the environments the project runs in |
-| `-env-set ENV:TECH=VERSION` | the version deployed in one environment, such as `prod:php=8.3` |
-| `-env-unset ENV:TECH` | drop the version deployed in one environment |
+| `-envs E,E` or `-envs all` | the environments the project runs in, by any names; `all` means the old default dev, int, staging, prod |
+| `-env-add ENV`, `-env-remove ENV`, `-env-rename OLD=NEW` | add, remove or rename an environment. A rename moves its findings and follows into its lockfiles and scoped technologies |
+| `-env-set ENV:TECH=VERSION` | the version of a technology in one environment (its `when@ENV` block), such as `prod:php=8.3` |
+| `-env-unset ENV:TECH` | drop that version, so the generic one applies again |
+| `-env-exclude ENV:TECH`, `-env-include ENV:TECH` | a generic technology does not run in one environment, or runs there again |
+| `-tech-envs TECH=ENV,ENV` | limit a generic technology to some environments; `TECH=` lifts the limit |
+| `-migrate-envs` | rewrite the old `environments:` block as `when@ENV` blocks; nothing else changes |
 | `-image ENV=TAG` | the image of one environment; `ENV=` clears it |
 | `-lock TYPE:PATH[:ENV][:dev]` | add a lockfile. `ENV` limits it to one environment; `dev` counts its development-only packages in every environment |
 | `-unlock TYPE:PATH[:ENV]` | remove a lockfile entry |
 | `-lock-dev TYPE:PATH[:ENV]` | change an existing entry to count its development-only packages in every environment |
-| `-lock-nodev TYPE:PATH[:ENV]` | change an existing entry to stop counting them outside dev and int |
+| `-lock-nodev TYPE:PATH[:ENV]` | change an existing entry to stop counting them outside development-like environments |
 | `-since DATE` | advisories count from this day (`YYYY-MM-DD`); `-since ""` clears it |
 | `-save` | write the change |
 
@@ -438,6 +497,53 @@ cvewatch settings schema [-json] [SECTION]      # every setting: path, type, all
 - Secret values show as `(set)`.
 - A section name is case-insensitive. Quote a name with a space, such as `"Tech catalog"`.
 
+## Environments and differences
+
+Every project has environments, and their names are free: lowercase letters, digits, `-` and `_`, starting with a letter, up to 32 characters. `local`, `dev`, `int`, `staging` and `prod` are suggested and sorted first, but any other name works in project files, lockfiles, search (`env:qa-2`), the `-env` flags and the TUI. The names `prod` and `production` count as production for the "open in prod" ordering, and `local`, `dev`, `int`, `development` and `test` count as development-like, where development-only packages count by default.
+
+- A new project starts with `local`. Add `prod` and any others you deploy to. Setup offers the suggested names as a list, then `other...` for your own.
+- A project file without an `envs` key keeps its old meaning, `dev`, `int`, `staging` and `prod`, so its findings do not change. The review says so with a hint, `envs not set: using the old default dev, int, staging, prod`, and offers to write the list.
+- Adding, removing and renaming are edits: `cvewatch project shop -env-add qa -save`, `-env-remove qa -save`, `-env-rename staging=stage -save`. Removing an environment drops its `when@` block; a lockfile that names it stays in the file and is reported. The last environment cannot be removed. Renaming moves the findings of the old name, and the preview says how many. The TUI field editor does the same with `+`, `-` and `r`.
+
+### Generic configuration and differences
+
+The top level of a project file applies to every environment. A `when@<env>:` block holds only what differs in that environment, as Symfony's `when@prod:` blocks hold only the differences from the generic configuration:
+
+```yaml
+name: shop
+envs: [local, dev, prod]
+techs:                                  # generic: every environment runs these
+  - {name: php, version: "8.3"}
+  - {name: redis, version: "7.2"}
+  - {name: phpmyadmin, version: "5.2", envs: [local, dev]}   # present only in these environments
+lockfiles:
+  - {type: composer, path: /repos/shop/composer.lock}
+when@prod:                              # only what differs in prod
+  techs: {php: "8.2.30", varnish: "7.4"}   # another version; varnish runs only in prod
+  exclude: [redis]                         # a generic technology that does not run here
+  image: "registry.example/shop@sha256:ab12..."   # recorded, not scanned
+```
+
+- `techs` in a block sets the version of a generic technology in that environment, or adds a technology that runs only there.
+- `exclude` lists generic technologies that do not run in that environment. When a block both excludes and versions one technology, the exclusion wins and validation warns.
+- `image` is recorded for the environment only; no registry is queried.
+- A technology's `envs` limits it to the environments listed. Without `envs` it runs everywhere. A lockfile keeps its own `env`.
+- The order is: the generic list, limited by each technology's `envs`; then the block's `techs` laid over it; then `exclude` removes what it names.
+- A block for an environment the project does not have is an error, with fixes that add the environment to `envs` or drop its differences. Under the old spelling it is a warning.
+
+The old `environments:` key still loads with the same meaning, and a hint says it is the old spelling. `migrate_envs` rewrites it as `when@` blocks in one previewed step and changes nothing else: `cvewatch project shop -migrate-envs -save`, `m` on the Differences list in the TUI, or the MCP kind `migrate_envs`. Any edit to the differences converts the whole old block too. New files are written with `when@` blocks.
+
+| Edit kind | CLI flag | What it does |
+|---|---|---|
+| `set_env_tech` | `-env-set ENV:TECH=VERSION` | the version in one environment, or a technology that runs only there |
+| `remove_env_tech` | `-env-unset ENV:TECH` | drops that version; the generic one applies again |
+| `exclude_env_tech`, `include_env_tech` | `-env-exclude`, `-env-include` | a generic technology does not run in an environment, or runs there again |
+| `set_tech_envs` | `-tech-envs TECH=ENV,ENV` | limits a generic technology to some environments |
+| `set_image` | `-image ENV=TAG` | the image of one environment |
+| `migrate_envs` | `-migrate-envs` | rewrites the old `environments:` block |
+
+Setup asks once, after the environments, whether an environment differs from the rest (default no). It is asked only with more than one environment. Yes asks per environment for the differences only: another version, an extra technology, an excluded one or an image. No removes the differences the project has.
+
 ## Start date per project
 
 A project file can set `since`, the first day its items count:
@@ -463,6 +569,27 @@ techs: [{name: php, version: "8.2"}]
 - An item that every project skips is kept as a bare record: its title and IDs, with no summary, no findings and no report.
 - A value that is not a `YYYY-MM-DD` date stops the configuration from loading.
 
+## Alert horizon
+
+`horizon` in `config.yaml` limits which vulnerabilities are judged, alerted and put in digests, by their publication date, like Google's time filter:
+
+```yaml
+horizon:
+  window: week                 # unlimited (the default) | hour | day | week | month | year | custom
+# window: custom
+# from: 2026-01-01             # custom only: YYYY-MM-DD or RFC3339; empty means no start
+# to: 2026-03-01               # custom only: YYYY-MM-DD (the whole day counts) or RFC3339; empty means no end
+```
+
+- Rolling windows count back from each cycle's time: `hour` is one hour, `day` 24 hours, `week` 7 days, `month` 30 days and `year` 365 days. `from` and `to` are checked only while the window is `custom`; they are kept when another window is chosen.
+- A vulnerability published outside the window is not judged. It creates no new finding, is not alerted and is not in a digest. Findings that already exist stay and stay visible, and can still be fixed, ignored or assigned.
+- An item without a publication date is always inside.
+- It works with `since`: an item has to pass both, so the later start wins.
+- A source's first run reaches back only as far as `lookback` (7 days by default). A window that reaches further back gives a warning in `cvewatch check`: the older items are not seen until you raise `lookback`. Keep `lookback` at least as long as the window.
+- The Settings screen shows the windows with Google's names (Any time, Past hour, Past 24 hours, Past week, Past month, Past year, Custom range) and says the change applies from the next fetch or cycle. On the command line: `cvewatch settings set horizon.window week -yes`.
+- Overview and Status show `alert horizon: past week (only vulnerabilities published then are judged and alerted)` when the window is not unlimited.
+- Lists and search are not limited by it. To narrow what you look at, use the time filter (`t`) or `published:` (see [search.md](search.md)).
+
 ## Is it working?
 
 `cvewatch status` shows the daemon (running, overdue, or only manual runs), each feed (last success, failures in a row), each channel and the last cycles. It exits non-zero when something fails. `cvewatch dashboard` writes a static HTML page with the same plus open findings. Set `dashboard: {enabled: true}` in `config.yaml` and the daemon refreshes it every cycle. The page has no scripts and makes no external requests.
@@ -482,7 +609,7 @@ How it works, in short:
 
 | Source | `type:` | Notes |
 |---|---|---|
-| Declared techs | `techs:` | `php: "8.2.30"`; per environment under `environments:` |
+| Declared techs | `techs:` | `php: "8.2.30"`; per environment in a `when@<env>` block (see [Environments and differences](#environments-and-differences)) |
 | composer.lock | `composer` | `packages-dev` counts as development |
 | package-lock.json | `npm` | v1, v2 and v3; `"dev": true` counts as development |
 | go.mod | `go` | `replace` applied; indirect requirements included |
@@ -491,7 +618,7 @@ How it works, in short:
 | gradle.lockfile, pom.xml | `gradle`, `maven` | pom properties resolved; parent poms are not read |
 | CycloneDX / SPDX JSON | `cyclonedx`, `spdx` | packages by purl: npm, composer, go, pypi, maven |
 
-Lockfiles can be limited to one environment (`env: prod`, so a prod SBOM differs from dev) and read every cycle. A lockfile whose `env` is not in the project's `envs` is never read; the project editor and `check_projects` warn about it. Development-only packages count in `dev` and `int` unless the lockfile sets `dev: true`. Per environment you can also record the deployed versions and an image reference (`image:` is recorded only; no registry is queried).
+Lockfiles can be limited to one environment (`env: prod`, so a prod SBOM differs from dev) and read every cycle. A lockfile whose `env` is not in the project's `envs` is never read; the project editor and `check_projects` warn about it. Development-only packages count in development-like environments (`local`, `dev`, `int`, `development` and `test`) unless the lockfile sets `dev: true`. Per environment you can also record the versions that differ and an image reference, in a `when@<env>` block (`image:` is recorded only; no registry is queried).
 
 ```yaml
 name: shop
@@ -500,8 +627,9 @@ techs: [{name: php, version: "8.3"}]
 lockfiles:
   - {type: composer, path: /repos/shop/composer.lock}
   - {type: cyclonedx, path: /releases/shop-prod.cdx.json, env: prod}
-environments:
-  prod: {techs: {php: "8.2.30"}, image: "registry.example/shop@sha256:..."}
+when@prod:
+  techs: {php: "8.2.30"}
+  image: "registry.example/shop@sha256:..."
 ```
 
 `cvewatch inventory` shows what the tool believes runs where, and what could not be read. Package names and versions are compared per ecosystem: `pip` equals `PyPI`, PyPI names are normalized (PEP 503), Maven uses `group:artifact`, and each ecosystem orders versions by its own rules (PEP 440, Maven, semver for Go, npm and Composer).
@@ -538,7 +666,7 @@ cvewatch not-affected CVE-2026-1234 -project shop -env dev -note "feature disabl
 cvewatch evidence CVE-2026-1234          # timeline: detection, alerts, status, owners, evidence, per-environment matrix
 ```
 
-`cvewatch show ID` opens one issue. `cvewatch search` finds issues by words, IDs and fields such as `project:shop`. See [search.md](search.md).
+`cvewatch show ID` opens one issue. `cvewatch search` finds issues by words, IDs and fields such as `project:shop` or `published:week`. See [search.md](search.md).
 
 ## Priority and policy
 
@@ -566,8 +694,8 @@ Channels switch on when their secret is in the environment, so one config file i
 
 | Path | Purpose |
 |---|---|
-| `config/config.yaml` | interval, HTTP limits, Slack, notify, policy, enrich, storage, access, tui (refresh and fetch periods) |
-| `config/techs.yaml` | your additions to the built-in technology catalog |
+| `config/config.yaml` | interval, HTTP limits, Slack, notify, policy, enrich, storage, access, horizon, tui (refresh and fetch periods) |
+| `config/techs.yaml` | your additions to the built-in technology catalog, including your own keywords (`cvewatch tech`) |
 | `config/projects/*.yaml` | one file per project |
 | `sources/*.yaml` | your additions to the built-in feeds (same `id` replaces; `disabled: true` switches one off) |
 | `data/` | state (`state.json`, or `state.db` with the SQLite backend), `audit.log`, `project-backups/` |

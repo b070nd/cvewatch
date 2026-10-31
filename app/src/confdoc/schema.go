@@ -118,7 +118,7 @@ func fields() []Field {
 	f.Enum = config.Windows
 	add(f)
 	add(core("horizon.from", "Horizon from", TypeString, "Custom window only: YYYY-MM-DD or RFC3339. Empty means no start."))
-	add(core("horizon.to", "Horizon to", TypeString, "Custom window only: YYYY-MM-DD (that whole day) or RFC3339. Empty means now."))
+	add(core("horizon.to", "Horizon to", TypeString, "Custom window only: YYYY-MM-DD (that whole day) or RFC3339. Empty means no end."))
 
 	add(httpF("user_agent", "User agent", TypeString, "Sent with every request."))
 	add(httpF("timeout", "Timeout", TypeDuration, "Per request."))
