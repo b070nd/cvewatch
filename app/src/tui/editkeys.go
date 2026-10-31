@@ -69,7 +69,7 @@ func init() {
 		binds: []binding{
 			{keys: ks("enter", "right", "l"), disp: "enter", help: "change the field: since opens an editor, the others open their list", short: "edit", prio: 1, do: plain((*app).fieldOpen)},
 			bindBack("back to the problems of the project", (*app).closeFields),
-			bindJump(), bindRefresh(), bindTabs(), bindHelp(),
+			bindJump(), bindContext(), bindRefresh(), bindTabs(), bindHelp(),
 		},
 		notes: []string{"Every change is previewed as a change to the file before it is saved; esc in the preview saves nothing."},
 	}
@@ -88,7 +88,7 @@ func init() {
 			{keys: ks("-", "x", "delete"), disp: "-", help: "remove the selected item after asking (an environment, a technology, a lockfile, a difference of an environment: its version, its image, or an exclusion goes); x does the same", short: "remove", prio: 2, when: canRemove, do: plain((*app).fieldRemove)},
 			{keys: ks("K"), help: "technologies: add one of your own that the catalog does not have, with the keywords advisories are matched on; it is written to techs.yaml and added to the project", short: "own tech", prio: 3, when: canOwnTech, do: plain((*app).fieldOwnTech)},
 			bindBack("back to the list of fields", (*app).closeFieldList),
-			bindJump(), bindRefresh(), bindTabs(), bindHelp(),
+			bindJump(), bindContext(), bindRefresh(), bindTabs(), bindHelp(),
 		},
 	}
 	mo.picker = &mode{name: "picker", title: "Keys in a list to choose from",

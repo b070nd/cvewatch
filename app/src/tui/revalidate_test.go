@@ -166,8 +166,8 @@ func TestRevalidatingForRealJudgesTheFindingsAgain(t *testing.T) {
 		t.Fatalf("%d back-fills", b.backfilled())
 	}
 	a := d.m.(*app)
-	if len(a.data.Issues) != 1 || a.data.Stale.Stale {
-		t.Fatalf("%d issues left, stale %+v", len(a.data.Issues), a.data.Stale)
+	if len(a.data.ByProject["shop"]) != 0 || len(a.data.ByProject["mw"]) != 1 || a.data.Stale.Stale {
+		t.Fatalf("issues left %v, stale %+v", a.data.ByProject, a.data.Stale)
 	}
 	d.screen("projects")
 	d.wantNot("shop*")

@@ -192,7 +192,7 @@ func TestTickAndRefreshReloadTheOpenIssue(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
 	d.screen("findings")
-	d.press("down", "enter", "down") // CVE-2026-1, shop selected
+	d.press("down", "enter") // CVE-2026-1, shop selected
 	d.want("> shop")
 	resolve := func(project string, st model.Status) {
 		t.Helper()
@@ -204,6 +204,9 @@ func TestTickAndRefreshReloadTheOpenIssue(t *testing.T) {
 		}
 	}
 	resolve("mw", model.StatusIgnored)
+	d.send(tickMsg{})
+	d.wantNot("ignored", "by someone else") // a project outside the context is never on the page
+	resolve("shop", model.StatusIgnored)
 	d.wantNot("ignored")
 	d.send(tickMsg{})
 	d.want("ignored", "by someone else", "> shop") // the page and the selected row both held

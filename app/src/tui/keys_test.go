@@ -152,9 +152,9 @@ func TestFetchIsOnUAndCapitalFOnlyGoesToFindings(t *testing.T) {
 }
 
 func TestAssignAllEnvironmentsHasAnAlternativeInThePrompt(t *testing.T) {
-	d := start(t, newFake(t, nil), Options{})
+	d := startIn(t, newFake(t, nil), Options{}, tenant{project: "mw"})
 	d.screen("findings")
-	d.press("down", "enter", "a")
+	d.press("enter", "a")
 	d.want("Assign CVE-2026-1 in mw/prod")
 	d.press("ctrl+p")
 	d.want("Assign CVE-2026-1 in mw (all environments)")
@@ -175,5 +175,33 @@ func TestHintsAreOnWAndHIsTheHealthScreen(t *testing.T) {
 	d.press("H")
 	if screenOf(d) != scrStatus {
 		t.Fatalf("H is the Health screen: %s", screens[screenOf(d)].name)
+	}
+}
+
+func TestContextKeyIsOnEveryScreenAndNothingElseUsesIt(t *testing.T) {
+	for _, md := range allModes() {
+		if !md.switches() || md == mo.noData {
+			continue
+		}
+		n := 0
+		for i := range md.binds {
+			if b := &md.binds[i]; b.has("C") {
+				n++
+				if !strings.Contains(b.help, "context") {
+					t.Errorf("%s: C is bound to %q, which is the context choice", md.name, b.help)
+				}
+			}
+		}
+		if n != 1 {
+			t.Errorf("%s: C is bound %d times, want the context choice once", md.name, n)
+		}
+	}
+	d := start(t, newFake(t, nil), Options{})
+	for _, sc := range screens {
+		d.press(sc.key)
+		d.press("C")
+		d.want("Choose the context")
+		d.press("esc")
+		d.wantNot("Choose the context")
 	}
 }

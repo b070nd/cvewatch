@@ -21,21 +21,21 @@ func crumbsText(d *driver) string {
 func TestDetailGoesToItsProjectAndBackWithEsc(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
 	d.screen("findings")
-	d.press("down", "enter") // CVE-2026-1: mw/prod is the first environment, shop/prod the second
-	d.want("> mw", "p to project")
+	d.press("down", "enter") // CVE-2026-1: the page starts on shop/prod
+	d.want("> shop", "p to project")
 	d.press("p")
-	d.want("▸[P]rojects", "> mw")
+	d.want("▸[P]rojects", "> shop")
 	if got := crumbsText(d); got != "Projects" {
 		t.Fatalf("crumbs %q", got)
 	}
 	d.want("esc back")
 	d.press("esc")
-	d.want("▸[F]indings (3)", "CVE-2026-1", "Environments", "> mw")
-	if got := crumbsText(d); got != "Findings > CVE-2026-1 > mw:prod" {
+	d.want("▸[F]indings (3)", "CVE-2026-1", "Environments", "> shop")
+	if got := crumbsText(d); got != "Findings > CVE-2026-1 > shop:prod" {
 		t.Fatalf("crumbs %q", got)
 	}
 
-	d.press("down", "p")
+	d.press("p")
 	d.want("▸[P]rojects", "> shop")
 	d.press("backspace")
 	d.want("Environments", "> shop") // the environment row comes back too
@@ -59,27 +59,27 @@ func TestJumpBackIsForgottenWhenTheScreenChanges(t *testing.T) {
 	d.want("▸[P]rojects")
 }
 
-func TestProjectGoesToItsFindingsFiltered(t *testing.T) {
+func TestProjectGoesToItsFindingsInItsContext(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
 	d.screen("projects")
 	d.press("down") // mw
 	d.want("> mw", "i issues")
 	d.press("i")
-	d.want("▸[F]indings (3)", "1 of 3 open issues", "filter: project:mw", "CVE-2026-1")
+	d.want("▸[F]indings (1)", "1 of 1 open issues", "context: mw", "CVE-2026-1")
 	d.wantNot("CVE-2026-3", "CVE-2026-4")
-	d.press("esc") // back to the project; the filter it set goes with it
-	d.want("▸[P]rojects", "> mw")
+	d.press("esc") // back to the project; the context stays
+	d.want("▸[P]rojects", "> mw", "context: mw")
 	d.screen("findings")
-	d.want("3 of 3 open issues")
-	d.wantNot("project:mw")
+	d.want("1 of 1 open issues")
 
+	scopeTo(d, "shop")
 	d.screen("projects")
 	d.press("up", "enter", "i") // from inside the project too
-	d.want("▸[F]indings (3)", "filter: project:shop", "3 of 3")
+	d.want("▸[F]indings (3)", "context: shop", "3 of 3")
 	d.press("/")
-	d.typ(" env:prod")
+	d.typ("env:prod")
 	d.press("enter")
-	d.want("filter: project:shop env:prod")
+	d.want("filter: env:prod", "1 of 3")
 	d.press("esc") // a filter typed afterwards is cleared first
 	d.wantNot("filter:")
 	d.want("▸[F]indings (3)")
@@ -133,14 +133,14 @@ func TestStatusErrorsOpenDetailsOrTheProjectTheyName(t *testing.T) {
 	d := start(t, newFake(t, st), Options{})
 	d.screen("health")
 	d.want("error: could not read", "enter details")
-	d.press("enter")
+	d.press("enter") // the first row is the problem of the feed, which names the project
 	d.want("▸[P]rojects", "> mw")
 
 	st = seed(t, func(l *ledger.Ledger) { l.SourceOutcome("hn", "hn", tNow, 0, errors.New("dial tcp: no route")) })
 	d = start(t, newFake(t, st), Options{})
 	d.screen("health")
 	d.press("enter")
-	d.want("▸[H]ealth", "Feed hn: error", "dial tcp: no route", "enter or esc: close")
+	d.want("▸[H]ealth", "feed hn had a failed fetch", "dial tcp: no route", "enter or esc: close")
 	d.press("esc")
 	d.wantNot("enter or esc: close")
 	d.want("▸[H]ealth")

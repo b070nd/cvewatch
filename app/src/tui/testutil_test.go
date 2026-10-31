@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -318,12 +319,27 @@ type driver struct {
 	timers []tea.Msg // what the model asked a timer to deliver; tests send them by hand
 }
 
+// start opens the program in the context of the project shop, the way most
+// tests read the seed; startAll opens it on the portfolio of all projects.
 func start(t *testing.T, b Backend, o Options) *driver {
+	t.Helper()
+	return startIn(t, b, o, tenant{project: "shop"})
+}
+
+func startAll(t *testing.T, b Backend, o Options) *driver {
+	t.Helper()
+	return startIn(t, b, o, tenant{})
+}
+
+func startIn(t *testing.T, b Backend, o Options, tn tenant) *driver {
 	t.Helper()
 	if o.Refresh == 0 {
 		o.Refresh = time.Hour
 	}
 	d := &driver{t: t, m: New(b, o), b: b}
+	if f, ok := b.(*fake); ok && f.cfg != nil && len(f.cfg.Projects) > 1 && (tn.project == "" || slices.ContainsFunc(f.cfg.Projects, func(p model.Project) bool { return p.Name == tn.project })) {
+		d.m.(*app).tenant = tn
+	}
 	d.m.(*app).sys = &fakeDesktop{}
 	d.m.(*app).after = func(_ time.Duration, msg tea.Msg) tea.Cmd { d.timers = append(d.timers, msg); return nil }
 	d.send(tea.WindowSizeMsg{Width: 120, Height: 40})

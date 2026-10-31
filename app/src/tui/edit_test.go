@@ -150,6 +150,22 @@ func TestFieldEditorEditsEveryKindOfFieldAndKeepsComments(t *testing.T) {
 		t.Fatalf("update:\n%s", got)
 	}
 
+	// the vendor, which the findings, the lists and the access rules keep apart
+	d.toField(6)
+	d.press("enter")
+	d.want("Vendor of shop")
+	d.typ("Acme Corp")
+	d.press("enter")
+	d.want("problem: a vendor is lowercase letters")
+	d.press("ctrl+u")
+	d.typ("acme")
+	d.press("enter")
+	save("set the vendor to acme", "set_vendor")
+	if got := fileAt(t, root, "config/projects/shop.yaml"); !strings.Contains(got, "vendor: acme") {
+		t.Fatalf("vendor:\n%s", got)
+	}
+	d.want("Edit fields of shop", "acme")
+
 	// environments: free names, added, renamed and removed one at a time
 	d.toField(0)
 	d.press("enter")

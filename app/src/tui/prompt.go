@@ -149,7 +149,7 @@ func (m *app) startStatus(st model.Status) {
 		label = "Reason (required)"
 	}
 	retitle := func(env model.Env) string {
-		return oneLine(c.ID + " " + changeWords[st] + ": " + where(c.Project, env) + m.scopeNote(c.Project))
+		return oneLine(c.ID + " " + changeWords[st] + ": " + where(c.Project, env))
 	}
 	m.prm = &prompt{kind: pkStatus, title: retitle(c.Env), change: c, selEnv: t.Env, retitle: retitle, fields: []field{{label: label}}, hint: noteHint(st) + wholeHint}
 }
@@ -176,18 +176,6 @@ func (p *prompt) toggleWhole() {
 
 func canWhole(m *app) bool { return m.prm != nil && m.prm.retitle != nil }
 
-// scopeNote names the project a prompt acts on when a scope is set, and says
-// when that project is not the scope.
-func (m *app) scopeNote(project string) string {
-	switch {
-	case m.scope == "":
-		return ""
-	case project != m.scope:
-		return " (project " + project + ", outside scope)"
-	}
-	return " (project " + project + ")"
-}
-
 // noteHint is what the prompt says about the note: enter saves at once unless
 // the status is a human assertion that needs its reason.
 func noteHint(st model.Status) string {
@@ -202,7 +190,7 @@ func noteHint(st model.Status) string {
 func (m *app) bulkChanges(st model.Status, note string) []ops.Change {
 	var out []ops.Change
 	for _, is := range m.dataIssues() {
-		if !m.fnd.sel[is.ID] {
+		if !m.fnd.sel[issueKey(is)] {
 			continue
 		}
 		for _, t := range is.Targets {
@@ -241,7 +229,7 @@ func (m *app) startEvidence() {
 	}
 	t := d.is.Targets[d.sel.at()]
 	a := ops.Attachment{ID: d.is.ID, Project: t.Project, Env: t.Env}
-	m.prm = &prompt{kind: pkEvidence, attach: a, title: oneLine("Add evidence to " + a.ID + " in " + where(a.Project, a.Env) + m.scopeNote(a.Project)),
+	m.prm = &prompt{kind: pkEvidence, attach: a, title: oneLine("Add evidence to " + a.ID + " in " + where(a.Project, a.Env)),
 		hint:   "a note, a link or both; the link must be a plain http(s) address",
 		fields: []field{{label: "Note"}, {label: "Link"}}}
 }
@@ -255,7 +243,7 @@ func (m *app) startAssign(whole bool) {
 	t := d.is.Targets[d.sel.at()]
 	a := ops.Assignment{ID: d.is.ID, Project: t.Project, Env: t.Env}
 	retitle := func(env model.Env) string {
-		return oneLine("Assign " + a.ID + " in " + where(a.Project, env) + m.scopeNote(a.Project))
+		return oneLine("Assign " + a.ID + " in " + where(a.Project, env))
 	}
 	p := &prompt{kind: pkAssign, assign: a, selEnv: t.Env, retitle: retitle,
 		hint:   "empty keeps a value, - clears it; due is YYYY-MM-DD" + wholeHint,

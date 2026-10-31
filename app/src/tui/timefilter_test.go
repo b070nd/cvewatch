@@ -56,23 +56,19 @@ func TestTimeFilterNarrowsBothListsTheBarsAndTheBadge(t *testing.T) {
 	d.want("published: past week") // the chip is on every screen
 }
 
-func TestTimeFilterWorksWithTheScopeAndEachOneClearsOnItsOwn(t *testing.T) {
+func TestTimeFilterWorksInTheContextAndZeroClearsOnlyTheTimeFilter(t *testing.T) {
 	d := start(t, agedSeed(t), Options{})
 	a := d.m.(*app)
 	scopeTo(d, "shop")
 	d.press("t", "t", "t")
-	d.want("scope: shop", "published: past week", "open issues 2")
+	d.want("context: shop", "published: past week", "open issues 2")
 	scopeTo(d, "mw")
 	d.want("open issues 1", "CVE-2026-1")
-	d.press("0") // the scope goes first
-	if a.scope != "" || a.published.Any() {
-		t.Fatalf("scope %q, time filter %v", a.scope, a.published.Label())
-	}
 	d.press("0")
-	if !a.published.Any() {
-		t.Fatalf("0 clears the time filter: %v", a.published.Label())
+	if !a.published.Any() || a.tenant.project != "mw" {
+		t.Fatalf("0 clears the time filter and keeps the context: %v, %q", a.published.Label(), a.tenant.project)
 	}
-	d.want("time filter cleared", "open issues 3")
+	d.want("time filter cleared", "context: mw", "open issues 1")
 	d.wantNot("published:")
 }
 
@@ -89,12 +85,13 @@ func TestTimeChipIsClearedByAClick(t *testing.T) {
 	scopeTo(d, "mw")
 	d.press("t")
 	line = crumbLineOf(d)
-	if !strings.Contains(line, "published: past hour") || !strings.Contains(line, "scope: mw") {
+	if !strings.Contains(line, "published: past hour") || !strings.Contains(line, "context: mw") {
 		t.Fatalf("both chips are on the line: %q", line)
 	}
-	d.click(width(line[:strings.Index(line, "scope: mw")])+2, 1)
-	if a.scope != "" || a.published.Any() {
-		t.Fatalf("a click on the scope chip clears only the scope: %q %q", a.scope, a.published.Label())
+	d.click(width(line[:strings.Index(line, "context: mw")])+2, 1)
+	d.want("Choose the context")
+	if a.tenant.project != "mw" || a.published.Label() != "past hour" {
+		t.Fatalf("a click on the context chip opens the choice and changes nothing: %q %q", a.tenant.project, a.published.Label())
 	}
 }
 
@@ -124,11 +121,11 @@ func TestSearchPublishedTermShowsInTheChip(t *testing.T) {
 func TestTimeFilterSaysWhenNothingIsInIt(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{}) // every issue is two days old
 	d.press("t")
-	d.want("Nothing open published past hour", "0 for any time")
+	d.want("Nothing open in shop published past hour", "0 for any time")
 	d.screen("findings")
-	d.want("Nothing open published past hour")
+	d.want("Nothing open in shop published past hour")
 	scopeTo(d, "mw")
-	d.want("Nothing open in project mw published past hour")
+	d.want("Nothing open in mw published past hour")
 }
 
 func TestJumpingToAnIssueOutsideTheTimeFilterShowsIt(t *testing.T) {

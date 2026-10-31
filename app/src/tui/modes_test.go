@@ -133,7 +133,7 @@ func TestFootersFitInEveryLiveState(t *testing.T) {
 
 func crumbOf(d *driver) string {
 	line := strings.Split(d.view(), "\n")[1]
-	if i := strings.LastIndex(line, " scope: "); i >= 0 { // the chip of the scope sits at the right end
+	if i := strings.LastIndex(line, " context: "); i >= 0 { // the chip of the context sits at the right end
 		line = line[:i]
 	}
 	return strings.TrimSpace(strings.TrimRight(line, "─ "))
@@ -151,12 +151,8 @@ func TestBreadcrumbAtEveryLevel(t *testing.T) {
 	}
 	d.screen("findings")
 	d.press("down", "enter")
-	if got := crumbOf(d); got != "Findings › CVE-2026-1 › mw:prod" {
-		t.Errorf("detail: %q", got)
-	}
-	d.press("down")
 	if got := crumbOf(d); got != "Findings › CVE-2026-1 › shop:prod" {
-		t.Errorf("detail row: %q", got)
+		t.Errorf("detail: %q", got)
 	}
 	d.press("esc", "P")
 	d.press("enter")
@@ -198,8 +194,8 @@ func TestBreadcrumbIsTruncatedFromTheLeft(t *testing.T) {
 		}
 	}
 	d.send(tea_window(30, 20))
-	line := strings.TrimRight(strings.Split(d.view(), "\n")[1], "─ ")
-	if !strings.HasPrefix(line, "…") || !strings.HasSuffix(line, "mw:prod") {
+	line := crumbOf(d)
+	if !strings.HasPrefix(line, "…") || !strings.HasSuffix(line, "shop:prod") {
 		t.Errorf("a long path loses its start: %q", line)
 	}
 	d.send(tea_window(80, 20))

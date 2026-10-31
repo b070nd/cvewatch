@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"strings"
-
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/b070nd/cvewatch/app/src/model"
@@ -28,8 +26,8 @@ type target struct {
 	scr     screen // tgScreen
 	issue   string // tgIssue
 	open    bool   // tgIssue: open its page, else only put the list cursor on it
-	row     string // tgIssue: the environment row to select on the page, as targetID names it
-	project string // tgProject
+	row     string // tgIssue: the environment row to select on the page, as targetID names it; tgScreen: the row of the page to select, by its key
+	project string // tgProject; tgIssue: the project whose row it is, empty while the context decides
 	field   string // tgProject: the problem on this field of the project's file
 	deep    bool   // tgProject: inside the project
 	issues  bool   // tgProject: with the focus on its security issues
@@ -37,8 +35,11 @@ type target struct {
 	setting string // tgSetting: its path
 }
 
-func issueTarget(id string, open bool) target {
-	return target{kind: tgIssue, issue: id, open: open}
+func issueTarget(id string, open bool) target { return issueIn("", id, open) }
+
+// issueIn is an issue as it is in one project.
+func issueIn(project, id string, open bool) target {
+	return target{kind: tgIssue, issue: id, project: project, open: open}
 }
 func projectTarget(name, field string) target {
 	return target{kind: tgProject, project: name, field: field}
@@ -95,14 +96,15 @@ func (m *app) here() (target, bool) {
 	switch m.scr {
 	case scrFindings:
 		if d := m.fnd.det; d != nil {
-			t := issueTarget(d.id, true)
+			t := issueIn(d.project, d.id, true)
 			if !d.loading && d.err == nil && d.sel.at() >= 0 && d.sel.at() < len(d.is.Targets) {
 				t.row = targetID(d.is.Targets[d.sel.at()])
 			}
 			return t, true
 		}
 		if len(m.fnd.vis) > 0 {
-			return issueTarget(m.fnd.vis[m.fnd.vp.at()].ID, false), true
+			is := m.fnd.vis[m.fnd.vp.at()]
+			return issueIn(rowProject(is), is.ID, false), true
 		}
 	case scrProjects:
 		p, ok := m.selectedProject()
@@ -134,26 +136,33 @@ func (m *app) goTo(t target) tea.Cmd {
 	switch t.kind {
 	case tgScreen:
 		m.scr = t.scr
+		if t.row != "" {
+			m.pageSel[t.scr].key = t.row // the page selects it once it is laid out
+			m.reveal = true
+		}
 	case tgIssue:
 		m.scr = scrFindings
 		m.fnd.filtering, m.fnd.det = false, nil
-		i := m.visibleIssue(t.issue)
+		if t.project != "" && m.tenant.all() { // an issue of the portfolio opens in its project
+			m.setTenant(tenant{project: t.project}, true)
+		}
+		i := m.visibleIssue(t.project, t.issue)
 		if i < 0 && !t.open { // the cursor has to land somewhere: show everything
 			m.fnd.text, m.fnd.min = "", model.SevUnknown
 			m.fnd.refit(m.dataIssues())
-			i = m.visibleIssue(t.issue)
+			i = m.visibleIssue(t.project, t.issue)
 		}
 		if i < 0 && !t.open && !m.published.Any() { // it may be outside the time filter
 			m.published = query.TimeRange{}
 			m.rescope()
-			i = m.visibleIssue(t.issue)
+			i = m.visibleIssue(t.project, t.issue)
 		}
 		if i >= 0 {
 			m.fnd.vp.to(i)
 		}
 		if t.open {
 			level = lvDetail
-			cmd = m.openIssueID(t.issue)
+			cmd = m.openIssueIn(t.project, t.issue)
 			m.fnd.det.sel.key = t.row // the page selects it once it is read
 		}
 	case tgFindings:
@@ -203,10 +212,11 @@ func (m *app) goTo(t target) tea.Cmd {
 	return cmd
 }
 
-// visibleIssue is the row of issue id in the filtered list, -1 for none.
-func (m *app) visibleIssue(id string) int {
+// visibleIssue is the row of issue id in the filtered list, -1 for none. A
+// project names the row among those of several; without one the first has it.
+func (m *app) visibleIssue(project, id string) int {
 	for i, is := range m.fnd.vis {
-		if is.ID == id {
+		if is.ID == id && (project == "" || rowProject(is) == project) {
 			return i
 		}
 	}
@@ -225,12 +235,14 @@ func (m *app) goProject() tea.Cmd {
 	return m.goTo(projectTarget(d.is.Targets[d.sel.at()].Project, ""))
 }
 
-// goFindings is i on Projects: the issues of the project, found with the
-// filter language the findings screen already has.
+// goFindings is i on Projects: the issues of the project, which becomes the context.
 func (m *app) goFindings() tea.Cmd {
 	p, ok := m.selectedProject()
 	if !ok {
 		return nil
 	}
-	return m.goTo(findingsTarget("project:" + strings.TrimSpace(p.Name)))
+	if !p.Disabled {
+		m.setTenant(tenant{project: p.Name}, true)
+	}
+	return m.goTo(findingsTarget(""))
 }

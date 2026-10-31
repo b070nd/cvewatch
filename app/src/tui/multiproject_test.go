@@ -361,20 +361,20 @@ func TestNewProjectFlowAddsAndRemovesLockfiles(t *testing.T) {
 	}
 }
 
-func TestSelectingAProjectSetsTheScopeAndShowsItsSecurityIssues(t *testing.T) {
+func TestSelectingAProjectSetsTheContextAndShowsItsSecurityIssues(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
 	d.screen("projects")
 	d.press("down") // mw
-	d.wantNot("scope: mw")
+	d.wantNot("context: mw")
 	d.press("enter")
-	d.want("scope: mw", "Security issues", "1 open security issue: 1 high", "CVE-2026-1", "Tracked PHP bug")
+	d.want("context: mw", "ok: context: mw", "Security issues", "1 open security issue: 1 high", "CVE-2026-1", "Tracked PHP bug")
 	d.wantNot("CVE-2026-3")
 	a := d.m.(*app)
-	if a.scope != "mw" {
-		t.Fatalf("scope %q", a.scope)
+	if a.tenant.project != "mw" {
+		t.Fatalf("context %q", a.tenant.project)
 	}
 	d.screen("overview")
-	d.want("scope: mw")
+	d.want("context: mw")
 	d.screen("findings")
 	d.want("1 of 1 open issues")
 	d.wantNot("CVE-2026-3")
@@ -399,11 +399,12 @@ func TestSelectingAProjectSetsTheScopeAndShowsItsSecurityIssues(t *testing.T) {
 	d.press("esc")
 	d.want("c edits the fields")
 	d.press("esc")
-	d.want("PROJECT", "scope: mw")
-	d.press("0")
-	d.wantNot("scope: mw")
-	if a.scope != "" {
-		t.Fatal("0 clears the scope")
+	d.want("PROJECT", "context: mw")
+	d.press("C", "home", "enter") // all projects again
+	d.want("context: all projects")
+	d.wantNot("context: mw")
+	if !a.tenant.all() {
+		t.Fatal("the context is all projects")
 	}
 }
 
@@ -413,7 +414,7 @@ func TestProjectWithoutProblemsOpensItsIssuesWithEnter(t *testing.T) {
 	d.press("down", "enter", "enter")
 	d.want("Security issues of mw", "> high")
 	d.press("i")
-	d.want("▸[F]indings", "project:mw")
+	d.want("▸[F]indings", "context: mw", "1 of 1 open issues")
 }
 
 func TestProjectsKeysAreTheSameInTheTablesAndTheHelp(t *testing.T) {

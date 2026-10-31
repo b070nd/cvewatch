@@ -46,7 +46,7 @@ func TestUntrustedTextIsStripped(t *testing.T) {
 		v.Fixes = []model.Fix{{Kind: model.FixPatch, Detail: "fix\x1b]52;c;QQ==\x07it", Source: "x\u009b31m"}}
 		l.AddFinding(model.Finding{VulnID: v.ID, Project: "mw", Env: model.EnvProd, Status: model.StatusOpen, Note: "n\x1b[1mote", Owner: "ow\x1bner"})
 	})
-	d := start(t, newFake(t, st), Options{})
+	d := startIn(t, newFake(t, st), Options{}, tenant{project: "mw"})
 	const bad = "\x1b\x07\x00\x08\u202e\u009b\ufffd"
 	d.screen("findings")
 	if v := d.view(); strings.ContainsAny(v, bad) {
@@ -56,7 +56,7 @@ func TestUntrustedTextIsStripped(t *testing.T) {
 	// and keeps the rest, which can do nothing without it); the TUI removes
 	// whole sequences from the fields that arrive raw.
 	d.want("Pwn", "evil end")
-	d.press("down", "down", "enter")
+	d.press("down", "enter")
 	d.want("Pwn", "evil end", "desc", "screen", "note: note", "owner ower")
 	if v := d.view(); strings.ContainsAny(v, bad) {
 		t.Fatalf("control characters reached the detail view: %q", v)
@@ -208,7 +208,9 @@ func TestHelpToggle(t *testing.T) {
 	d.press("?", "esc")
 	d.want("3 of 3 open issues")
 	d.press("enter", "?")
-	d.want("Keys in an issue", "not-affected needs a reason", "NO_COLOR")
+	d.want("Keys in an issue", "not-affected needs a reason")
+	d.press("end")
+	d.want("NO_COLOR")
 	d.press("q") // q closes a popup, it does not quit
 	if d.quit {
 		t.Fatal("q in the help quit the program")
@@ -312,8 +314,8 @@ func (f *flaky) busy() bool {
 }
 
 func TestEmptyLedger(t *testing.T) {
-	d := start(t, newFake(t, store.NewMemory()), Options{})
-	d.want("open issues", "none") // no violations
+	d := startAll(t, newFake(t, store.NewMemory()), Options{})
+	d.want("policy violations 0", "2 projects") // no violations
 	d.screen("findings")
 	d.want("Nothing open. No open vulnerabilities to act on.")
 	d.press("enter", "s", "/", "esc")
@@ -370,9 +372,19 @@ func TestCountsOf(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		c := countsOf(sn.Issues)
-		if c.Issues != 3 || c.Findings != 4 || c.BySev[4] != 1 || c.BySev[3] != 1 || c.BySev[1] != 1 || c.ByEnv[model.EnvProd] != 2 || c.ProdOpen != 1 || c.KEV != 0 {
+		c := countsOf(sn.ByProject["shop"])
+		if c.Issues != 3 || c.Findings != 3 || c.BySev[4] != 1 || c.BySev[3] != 1 || c.BySev[1] != 1 || c.ByEnv[model.EnvProd] != 1 || c.ProdOpen != 1 || c.KEV != 0 {
 			t.Fatalf("%+v", c)
+		}
+		if c := countsOf(sn.ByProject["mw"]); c.Issues != 1 || c.Findings != 1 || c.ByEnv[model.EnvProd] != 1 {
+			t.Fatalf("mw %+v", c)
+		}
+		for name, rows := range sn.ByProject {
+			for _, is := range rows {
+				if len(projectsOf(is)) != 1 || rowProject(is) != name {
+					t.Fatalf("%s: a row of %v", name, projectsOf(is))
+				}
+			}
 		}
 		if len(sn.Projects) != 2 || sn.Projects[0].Name != "shop" || len(sn.Projects[1].Envs) != 1 || len(sn.Projects[0].Envs) != 4 {
 			t.Fatalf("projects %+v", sn.Projects)

@@ -150,10 +150,7 @@ func (d *detail) build(w int) *detailLayout {
 	if len(is.Targets) == 0 {
 		add("  (no environment is tracked for this issue)")
 	}
-	for i, t := range is.Targets {
-		if d.scope != "" && t.Project != d.scope && (i == 0 || is.Targets[i-1].Project == d.scope) {
-			add(stMuted.Render("  other projects"))
-		}
+	for _, t := range is.Targets {
 		due := "-"
 		if !t.Due.IsZero() {
 			due = day(t.Due)

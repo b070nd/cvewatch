@@ -57,7 +57,7 @@ func (m *app) overviewHead(w, h int) []string {
 	const listMin = 7 // count line, column heads and a few rows
 	var blocks []summaryBlock
 
-	state := section("Health") + "  " + levelText(rep.Level) + reasonText(rep)
+	state := section("Health") + "  " + summaryText(rep, sn.At)
 	blocks = append(blocks, summaryBlock{0, []string{state + trunc("  daemon: "+orDash(oneLine(rep.Daemon.Message)), max(w-width(state), 0))}})
 
 	cycle := []string{"last cycle: none yet"}
@@ -76,33 +76,42 @@ func (m *app) overviewHead(w, h int) []string {
 		blocks = append(blocks, summaryBlock{2, []string{trunc("alert horizon: "+h+" (only vulnerabilities published then are judged and alerted)", w)}})
 	}
 
-	blocks = append(blocks, summaryBlock{1, flow([]string{
-		fmt.Sprintf("open issues %d", c.Issues), fmt.Sprintf("open findings %d", c.Findings),
-		fmt.Sprintf("critical + high %d", c.BySev[4]+c.BySev[3]), fmt.Sprintf("known exploited (KEV) %d", c.KEV),
-		fmt.Sprintf("in prod %d", c.ProdOpen), fmt.Sprintf("overdue %d", c.Overdue),
-		fmt.Sprintf("policy violations %d", len(m.violations()))}, w, "  ")})
-
-	barW := max(min((w-60)/8, 8), 0)
-	most := 0
-	for _, n := range c.BySev {
-		most = max(most, n)
+	if m.tenant.multi() {
+		names := m.tenantNames()
+		blocks = append(blocks, summaryBlock{1, flow([]string{plural(len(names), "project", "projects"),
+			"each is listed apart below with its counts and its top issues, the Findings screen has all of them",
+			fmt.Sprintf("policy violations %d", len(m.violations()))}, w, "  ")})
+	} else {
+		blocks = append(blocks, summaryBlock{1, flow([]string{
+			fmt.Sprintf("open issues %d", c.Issues), fmt.Sprintf("open findings %d", c.Findings),
+			fmt.Sprintf("critical + high %d", c.BySev[4]+c.BySev[3]), fmt.Sprintf("known exploited (KEV) %d", c.KEV),
+			fmt.Sprintf("in prod %d", c.ProdOpen), fmt.Sprintf("overdue %d", c.Overdue),
+			fmt.Sprintf("policy violations %d", len(m.violations()))}, w, "  ")})
 	}
-	var sev []string
-	for _, s := range severities {
-		n := c.BySev[s.Rank()]
-		sev = append(sev, sevText(s, len(sevWord(s)))+fmt.Sprintf(" %d ", n)+sevStyles[s.Rank()].Render(bar(n, most, barW)))
-	}
-	blocks = append(blocks, summaryBlock{3, []string{"  by severity  " + strings.Join(sev, "  ")}})
 
-	var inScope []model.Env // the environments of the projects in scope; findings may name more
-	for _, p := range sn.Projects {
-		if m.scope == "" || p.Name == m.scope {
-			for _, e := range p.Envs {
-				inScope = append(inScope, model.Env(e))
+	if !m.tenant.multi() {
+		barW := max(min((w-60)/8, 8), 0)
+		most := 0
+		for _, n := range c.BySev {
+			most = max(most, n)
+		}
+		var sev []string
+		for _, s := range severities {
+			n := c.BySev[s.Rank()]
+			sev = append(sev, sevText(s, len(sevWord(s)))+fmt.Sprintf(" %d ", n)+sevStyles[s.Rank()].Render(bar(n, most, barW)))
+		}
+		blocks = append(blocks, summaryBlock{3, []string{"  by severity  " + strings.Join(sev, "  ")}})
+
+		var inScope []model.Env // the environments of the project in the context; findings may name more
+		for _, p := range sn.Projects {
+			if p.Name == m.tenant.project {
+				for _, e := range p.Envs {
+					inScope = append(inScope, model.Env(e))
+				}
 			}
 		}
+		blocks = append(blocks, summaryBlock{4, []string{trunc("  by environment  "+envSummary(c.ByEnv, inScope, barW), w)}})
 	}
-	blocks = append(blocks, summaryBlock{4, []string{trunc("  by environment  "+envSummary(c.ByEnv, inScope, barW), w)}})
 
 	var warns []string
 	warns = append(warns, rep.Warnings...)
@@ -144,7 +153,7 @@ func overviewBody(m *app, w, h int) []string {
 		start, end := m.txt[scrOverview].window(room)
 		return append(head, m.page(scrOverview, w).view(start, end, m.pageSel[scrOverview].at())...)
 	}
-	return append(head, renderFindings(len(m.dataIssues()), &m.ovw.issueList, m.noneText(), m.data.monitored(), w, room)...)
+	return append(head, renderFindings(len(m.dataIssues()), &m.ovw.issueList, m.listView(), m.noneText(), m.data.monitored(), w, room)...)
 }
 
 func overviewLayout(m *app, w, h int) {
@@ -160,7 +169,7 @@ func overviewLayout(m *app, w, h int) {
 		m.pageSel[scrOverview].fit(room)
 		return
 	}
-	m.ovw.vp.fit(findingsRoom(room))
+	m.ovw.fit(findingsRoom(room))
 }
 
 func overviewModes(m *app) []*mode {
@@ -182,21 +191,26 @@ func overviewCrumbs(m *app, cs []crumb) []crumb {
 	return cs
 }
 
-// openFromOverview opens the issue under the cursor on the Findings screen;
-// back returns to the Overview.
+// openFromOverview opens the row under the cursor: a problem on the Health
+// screen, an issue on the Findings screen, in the project the row is of. Back
+// returns to the Overview.
 func (m *app) openFromOverview() tea.Cmd {
 	l := &m.ovw
-	if len(l.vis) == 0 {
+	if p, ok := l.problemAt(); ok {
+		return m.goTo(target{kind: tgScreen, scr: scrStatus, row: problemRowKey(p.Key)})
+	}
+	is, ok := l.issueAt()
+	if !ok {
 		return nil
 	}
-	return m.goTo(issueTarget(l.vis[l.vp.at()].ID, true))
+	return m.goTo(issueIn(rowProject(is), is.ID, true))
 }
 
-// clickOverview selects the issue drawn on the given body row; a click on the
+// clickOverview selects the row drawn on the given body line; a click on the
 // selected one opens it.
 func (m *app) clickOverview(y int) tea.Cmd {
 	l := &m.ovw
-	i := rowAt(&l.vp, y-m.ovw.top-2)
+	i := l.rowAtLine(y - m.ovw.top)
 	switch {
 	case i < 0:
 		return nil
@@ -217,14 +231,14 @@ func init() {
 		move:  viewportOf(func(m *app) *viewport { return &m.ovw.vp }),
 		click: func(m *app, x, y int) tea.Cmd { return m.clickOverview(y) },
 		binds: rootBinds(
-			binding{keys: ks("enter"), help: "open the selected issue: its environments and what to do", short: "open", prio: 1, do: plain((*app).openFromOverview)},
+			binding{keys: ks("enter"), help: "open the selected row: a problem opens the Health screen on it, an issue its page with the environments and what to do", short: "open", prio: 1, do: plain((*app).openFromOverview)},
 			bindFilter(),
 			bindSeverity(),
 			bindTime(),
 			binding{keys: ks("v"), help: "show the policy violations and the warnings; enter opens the issue of a violation", short: "violations", prio: 2, do: plain((*app).openViolations)},
 			bindClearFilter(func(m *app) bool { return false }),
 		),
-		notes: []string{"The list holds every open issue (of the scope, when one is set); the filter takes the words and fields of cvewatch search."},
+		notes: []string{"The list starts with the health problems, red first; they stay until their cause is gone and cannot be hidden. Below are the open issues of the context, each project apart; the filter takes the words and fields of cvewatch search."},
 	}
 	mo.violations = &mode{name: "violations", title: "Keys in the policy violations", level: true, move: (*app).pageMove, moveShort: "select",
 		moveHelp: "up/down select a policy violation; pgup/pgdn, home/end scroll the page",
@@ -234,7 +248,7 @@ func init() {
 			{keys: ks("enter"), help: "open the issue of the selected policy violation", short: "open", prio: 1,
 				when: func(m *app) bool { _, ok := m.selectedRow(); return ok }, do: plain((*app).pageEnter)},
 			bindBack("back to the list of issues", func(m *app) tea.Cmd { m.ovw.viol = false; return nil }),
-			bindJump(), bindRefresh(), bindTabs(), bindHelp(),
+			bindJump(), bindContext(), bindRefresh(), bindTabs(), bindHelp(),
 		}}
 }
 
@@ -294,7 +308,7 @@ func violationKey(v priority.Violation) string {
 func violationTarget(v priority.Violation) target {
 	switch s := v.Subject; {
 	case s.VulnID != "":
-		return issueTarget(s.VulnID, true)
+		return issueIn(s.Project, s.VulnID, true)
 	case s.Project != "":
 		return projectTarget(s.Project, "")
 	}

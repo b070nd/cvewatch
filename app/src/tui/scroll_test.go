@@ -180,20 +180,22 @@ func TestTextScreensAndHelpScroll(t *testing.T) {
 }
 
 func TestDetailPageScrollsAndKeepsItsLayoutWhileTheRowMoves(t *testing.T) {
-	d := start(t, newFake(t, nil), Options{})
+	d := start(t, alikeFake(t, 3), Options{})
 	d.send(tea_window(100, 12))
 	d.screen("findings")
-	d.press("down", "enter")
+	d.press("enter")
 	a := d.m.(*app)
 	det := a.fnd.det
 	lay := det.lay
-	if lay == nil || len(lay.rows) != 2 {
+	if lay == nil || len(lay.rows) != 4 {
 		t.Fatalf("layout %+v", lay)
 	}
-	d.press("down")
-	d.want("> shop")
+	first := det.sel.at()
 	d.press("up")
-	d.want("> mw")
+	d.want("> shop")
+	if det.sel.at() != first-1 {
+		t.Fatalf("row %d after %d", det.sel.at(), first)
+	}
 	d.press("down", "down", "up")
 	if det.lay != lay {
 		t.Fatal("the page was laid out again for a move of the row")
@@ -203,7 +205,7 @@ func TestDetailPageScrollsAndKeepsItsLayoutWhileTheRowMoves(t *testing.T) {
 		t.Fatalf("scrolled to %d, a page is %d", det.body.at(), det.body.page())
 	}
 	d.press("home")
-	d.want("CVE-2026-1")
+	d.want("CVE-2026-100")
 	d.press("G")
 	d.want("first seen by cvewatch")
 	d.press("g")

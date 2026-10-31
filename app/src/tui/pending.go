@@ -139,8 +139,8 @@ func (m *app) result(msg tea.Msg) outcome {
 	case actionMsg:
 		return outcome{note: msg.info, warn: msg.warn, err: msg.err}
 	case bulkMsg:
-		for _, id := range msg.done {
-			delete(m.fnd.sel, id)
+		for _, key := range msg.done {
+			delete(m.fnd.sel, key)
 		}
 		return outcome{note: msg.info, warn: msg.warn, err: msg.err}
 	case desktopMsg:
@@ -199,7 +199,7 @@ func (m *app) refresh(set reloadSet) tea.Cmd {
 		cmds = append(cmds, loadLandCmd(m.b, m.stl, nil))
 	}
 	if d := m.fnd.det; set&reDetail != 0 && d != nil {
-		cmds = append(cmds, detailCmd(m.b, d.id))
+		cmds = append(cmds, detailCmd(m.b, d.id, d.filter))
 	}
 	return tea.Batch(cmds...)
 }

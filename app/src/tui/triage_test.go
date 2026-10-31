@@ -20,7 +20,7 @@ func TestNextAndPreviousIssueKeepTheDetailOpen(t *testing.T) {
 	d.want("CVE-2026-3", "ok: this is the first issue of the list")
 	d.press("]")
 	d.want("CVE-2026-1", "Tracked PHP bug")
-	if got := crumbsText(d); got != "Findings > CVE-2026-1 > mw:prod" {
+	if got := crumbsText(d); got != "Findings > CVE-2026-1 > shop:prod" {
 		t.Fatalf("the breadcrumb follows: %q", got)
 	}
 	d.press("]")
@@ -104,10 +104,10 @@ func TestSpaceSelectsAndStatusKeysApplyToTheSelection(t *testing.T) {
 	d.press(" ", " ") // CVE-2026-3 and CVE-2026-1; the cursor moves on
 	d.want("2 selected", "*  critical", "*  high", " > low", "f/i/n/o mark selected", "esc clear selection")
 	d.press("f")
-	d.want("2 issues, 3 findings: marked fixed", "Note (optional)")
+	d.want("2 issues, 2 findings: marked fixed", "Note (optional)")
 	d.typ("MR 7")
 	d.press("enter")
-	d.want("ok: marked fixed: 3 findings in 2 issues", "1 of 1 open issues")
+	d.want("ok: marked fixed: 2 findings in 2 issues", "1 of 1 open issues")
 	d.wantNot("selected", "CVE-2026-3")
 	if b.writes != 1 {
 		t.Fatalf("one write session for the whole selection, got %d", b.writes)
@@ -122,14 +122,14 @@ func TestSpaceSelectsAndStatusKeysApplyToTheSelection(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, tg := range is.Targets {
-				if tg.Status != model.StatusFixed || tg.Note != "MR 7" {
+				if tg.Project == "shop" && (tg.Status != model.StatusFixed || tg.Note != "MR 7") {
 					t.Errorf("%s %s/%s = %s %q", id, tg.Project, tg.Env, tg.Status, tg.Note)
 				}
 			}
 		}
 	})
 	log, _ := os.ReadFile(filepath.Join(b.cfg.DataDir, "audit.log"))
-	if n := strings.Count(string(log), `"status":"fixed"`); n != 3 || !strings.Contains(string(log), `"actor":"tui:`) {
+	if n := strings.Count(string(log), `"status":"fixed"`); n != 2 || !strings.Contains(string(log), `"actor":"tui:`) {
 		t.Fatalf("every change is in the audit log by a tui actor (%d):\n%s", n, log)
 	}
 }
@@ -148,7 +148,7 @@ func TestBulkNotAffectedNeedsAReasonAndKeepsThePrompt(t *testing.T) {
 	}
 	d.typ("internal only")
 	d.press("enter")
-	d.want("ok: marked not affected: 4 findings in 3 issues", "Nothing open")
+	d.want("ok: marked not affected: 3 findings in 3 issues", "Nothing open")
 	if b.writes != 2 {
 		t.Fatalf("writes %d", b.writes)
 	}
@@ -163,13 +163,13 @@ func TestBulkStopsAtTheFirstRefusalAndKeepsWhatLanded(t *testing.T) {
 	d.press("f")
 	a := d.m.(*app)
 	cs := a.bulkChanges(model.StatusFixed, "")
-	if len(cs) != 4 {
+	if len(cs) != 3 {
 		t.Fatalf("changes %+v", cs)
 	}
 	// ops refuses the change of a project that does not exist any more
 	cs[2].Project = "gone"
 	msg := bulkCmd(b, cs)().(bulkMsg)
-	if msg.err == nil || !strings.Contains(msg.err.Error(), "2 of 4 changes written") {
+	if msg.err == nil || !strings.Contains(msg.err.Error(), "2 of 3 changes written") {
 		t.Fatalf("msg %+v", msg)
 	}
 	if len(msg.done) == 0 || len(msg.done) == 3 {

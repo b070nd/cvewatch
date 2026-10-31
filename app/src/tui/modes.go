@@ -231,6 +231,7 @@ var everywhere = [][2]string{
 	{"q", "quit on the first level of a screen; inside a level or a popup it works like esc"},
 	{"ctrl+c", "quit at once, from anywhere"},
 	{"tab, shift+tab, " + screenKeys(), "switch screen: " + screenList()},
+	{"C", "choose the context: all projects, one vendor or one project; every screen and action works inside it only"},
 	{"mouse", "wheel scrolls, a click selects (a second click opens), breadcrumb and tabs are clickable"},
 }
 

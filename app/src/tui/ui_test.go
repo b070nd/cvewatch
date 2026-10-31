@@ -24,23 +24,23 @@ func TestOverviewShowsCounts(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
 	v := d.view()
 	for _, re := range []string{
-		`open issues 3`, `open findings 4`, `critical \+ high 2`, `in prod 1`,
+		`open issues 3`, `open findings 3`, `critical \+ high 2`, `in prod 1`,
 		`critical 1\s`, `high 1\s`, `medium 0\s`, `low 1\s`,
-		`dev,staging 1\s`, `prod 2\s`,
+		`dev,staging,prod 1\s`,
 		`policy violations 0`, `items 40  new 3`,
 	} {
 		if !regexp.MustCompile(re).MatchString(v) {
 			t.Errorf("overview lacks %q:\n%s", re, v)
 		}
 	}
-	d.want("cvewatch", "▸[O]verview", "[F]indings (3)", "[P]rojects", "[H]ealth", "GREEN", "updated")
+	d.want("cvewatch", "▸[O]verview", "[F]indings (3)", "[P]rojects", "[H]ealth", "GREEN", "last check")
 }
 
 func TestFindingsListAndSeverityFilter(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
 	d.screen("findings")
 	d.want("▸[F]indings (3)", "3 of 3 open issues", "SEVERITY", "CVE-2026-3", "critical", "Critical nginx bug", "CVE-2026-1", "high", "Tracked PHP bug",
-		"mw shop:prod", "CVE-2026-4", "low", "> critical")
+		"shop:prod", "CVE-2026-4", "low", "> critical")
 	if v := d.view(); strings.Index(v, "CVE-2026-3") > strings.Index(v, "CVE-2026-1") {
 		t.Errorf("the critical issue must come first:\n%s", v)
 	}
@@ -110,12 +110,11 @@ func TestDetailView(t *testing.T) {
 	d.screen("findings")
 	d.press("down", "enter")
 	d.want("CVE-2026-1", "high", "Tracked PHP bug", "Summary of CVE-2026-1",
-		"Environments", "mw", "shop", "prod", "open", "unknown",
+		"Environments", "shop", "prod", "open", "unknown",
 		"Fix evidence", "version 8.2.9 (official) via hn",
 		"Why it matched", "shop/prod: php 8.2 is installed [matched php@8.2]", "relevant under the current configuration")
-	d.want("> mw") // the first environment is selected
-	d.press("down")
-	d.want("> shop")
+	d.want("> shop") // the first environment is selected
+	d.wantNot("mw")
 	d.press("esc")
 	d.want("3 of 3 open issues")
 	d.wantNot("Fix evidence")
@@ -125,7 +124,7 @@ func TestMarkFixedPersistsThroughWrite(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
 	d.screen("findings")
-	d.press("down", "enter", "down", "f")
+	d.press("down", "enter", "f")
 	d.want("fixed: shop/prod")
 	d.typ("MR 42")
 	d.press("enter")
@@ -142,8 +141,10 @@ func TestMarkFixedPersistsThroughWrite(t *testing.T) {
 			if is.ID != "CVE-2026-1" {
 				continue
 			}
-			if len(is.Targets) != 1 || is.Targets[0].Project != "mw" {
-				t.Errorf("shop/prod must be closed, got %+v", is.Targets)
+			for _, tg := range is.Targets {
+				if tg.Project == "shop" {
+					t.Errorf("shop/prod must be closed, got %+v", is.Targets)
+				}
 			}
 		}
 		is, _, err := s.Show("CVE-2026-1")
@@ -166,9 +167,9 @@ func TestMarkFixedPersistsThroughWrite(t *testing.T) {
 
 func TestNotAffectedNeedsAReason(t *testing.T) {
 	b := newFake(t, nil)
-	d := start(t, b, Options{})
+	d := startIn(t, b, Options{}, tenant{project: "mw"})
 	d.screen("findings")
-	d.press("down", "enter", "n")
+	d.press("enter", "n")
 	d.want("Reason (required)")
 	d.press("enter") // no reason typed
 	d.want("error: a not-affected statement needs a reason")
@@ -191,9 +192,9 @@ func TestNotAffectedNeedsAReason(t *testing.T) {
 
 func TestIgnoreReopenAndWholeProject(t *testing.T) {
 	b := newFake(t, nil)
-	d := start(t, b, Options{})
+	d := startIn(t, b, Options{}, tenant{project: "mw"})
 	d.screen("findings")
-	d.press("down", "enter", "i")
+	d.press("enter", "i")
 	d.want("ignored: mw/prod")
 	d.press("ctrl+p")
 	d.want("ignored: mw (all environments)")
@@ -209,7 +210,7 @@ func TestAssignAsksOwnerDueTicket(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
 	d.screen("findings")
-	d.press("down", "enter", "down", "a")
+	d.press("down", "enter", "a")
 	d.want("Assign CVE-2026-1 in shop/prod", "Owner", "Due", "Ticket")
 	d.typ("bob")
 	d.press("enter")

@@ -119,7 +119,7 @@ func bindReturn(level string) binding {
 }
 
 func rootBinds(own ...binding) []binding {
-	return append(append(own, bindScreens(), bindTabs(), bindJump(), bindClearScope(), bindClearTime(), bindRefresh(), bindFetch(), bindRevalidate(), bindHelp()), bindQuit())
+	return append(append(own, bindScreens(), bindTabs(), bindJump(), bindContext(), bindClearTime(), bindRefresh(), bindFetch(), bindRevalidate(), bindHelp()), bindQuit())
 }
 
 func viewportOf(get func(m *app) *viewport) func(m *app, key string) bool {
@@ -159,7 +159,7 @@ func init() {
 	// ---- findings ----
 	mo.findings = &mode{name: "findings", title: "Keys on the findings screen", level: true,
 		move:  viewportOf(func(m *app) *viewport { return &m.fnd.vp }),
-		click: func(m *app, x, y int) tea.Cmd { return m.clickIssue(y - 2) },
+		click: func(m *app, x, y int) tea.Cmd { return m.clickIssue(y) },
 		binds: rootBinds(
 			binding{keys: ks("enter"), help: "open the selected issue: its environments and what to do", short: "open", prio: 1, do: plain((*app).openIssue)},
 			bindFilter(),
@@ -215,7 +215,7 @@ func init() {
 				m.fnd.det = nil
 				return nil
 			}),
-			bindJump(), bindRefresh(), bindTabs(), bindHelp(),
+			bindJump(), bindContext(), bindRefresh(), bindTabs(), bindHelp(),
 		}}
 
 	// ---- projects ----
@@ -229,7 +229,7 @@ func init() {
 		moveShort: "scroll", moveHelp: "scroll; pgup/pgdn page (or space), home/end first and last (k j g G work too)",
 		binds: []binding{
 			bindBack("back to the issue", (*app).closeDoc),
-			bindJump(), bindTabs(), bindHelp(),
+			bindJump(), bindContext(), bindTabs(), bindHelp(),
 		}}
 	mo.projects = &mode{name: "projects", title: "Keys on the projects screen", level: true,
 		move: func(m *app, key string) bool {
@@ -292,7 +292,7 @@ func init() {
 				m.prj.deep = false
 				return nil
 			}),
-			bindJump(), bindClearScope(), bindRefresh(), bindFetch(), bindRevalidate(), bindTabs(), bindHelp(),
+			bindJump(), bindContext(), bindRefresh(), bindFetch(), bindRevalidate(), bindTabs(), bindHelp(),
 		}}
 	mo.projectIssues = &mode{name: "project issues", title: "Keys in the security issues of a project", level: true,
 		move:      viewportOf(func(m *app) *viewport { return &m.prj.sec.vp }),
@@ -302,7 +302,7 @@ func init() {
 			{keys: ks("enter", "right", "l"), disp: "enter", help: "open the selected issue: its environments and what to do; back comes to this list", short: "open", prio: 0, do: plain((*app).openSecurityIssue)},
 			{keys: ks("i"), help: "the same issues on the findings screen", short: "findings", prio: 2, do: plain((*app).goFindings)},
 			bindBack("back to the project", (*app).leaveSecurity),
-			bindJump(), bindClearScope(), bindRefresh(), bindTabs(), bindHelp(),
+			bindJump(), bindContext(), bindRefresh(), bindTabs(), bindHelp(),
 		}}
 	mo.fix = &mode{name: "fix", title: "Keys in the fix preview", move: viewportOf(func(m *app) *viewport { return &m.prj.fix.vp }), moveShort: "scroll",
 		binds: []binding{

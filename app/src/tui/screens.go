@@ -77,6 +77,13 @@ func init() {
 			m.txt[m.scr].fit(h)
 			m.pageSel[m.scr].refit(len(pg.rows), func(i int) string { return pg.rows[i].key })
 			m.pageSel[m.scr].fit(h)
+			if m.reveal {
+				m.reveal = false
+				if r, ok := m.selectedRow(); ok {
+					m.txt[m.scr].show(r.at + r.n - 1)
+					m.txt[m.scr].show(r.at)
+				}
+			}
 		}
 		return sc
 	}
@@ -117,7 +124,7 @@ func init() {
 			d.body.refit(len(d.lay.lines), nil)
 			d.body.fit(h)
 		default:
-			m.fnd.vp.fit(findingsRoom(h))
+			m.fnd.fit(findingsRoom(h))
 		}
 	}
 	f.crumbs = findingsCrumbs

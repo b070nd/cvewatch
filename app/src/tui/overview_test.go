@@ -64,7 +64,7 @@ func TestOverviewSearchSelectOpenAndBack(t *testing.T) {
 
 func TestOverviewSearchSyntaxAndSeverityMatchTheFindings(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	for _, q := range []string{"severity:high", "env:dev", "project:mw", "CVE-2026-4", "bug -severity:critical"} {
+	for _, q := range []string{"severity:high", "env:dev", "project:shop", "CVE-2026-4", "bug -severity:critical"} {
 		d.press("/")
 		d.typ(q)
 		d.press("enter")

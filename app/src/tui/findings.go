@@ -4,25 +4,33 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/ops"
 	"github.com/b070nd/cvewatch/app/src/query"
+	"github.com/b070nd/cvewatch/app/src/status"
 )
 
 // issueList is the searchable, selectable list of issues that the Findings and
 // the Overview screen both show: the rows, the cursor, the severity floor and
 // the search text. Each screen has its own, so one search does not narrow the other.
 type issueList struct {
-	vp        viewport // over vis; follows its issue by id
+	vp        viewport // over the lead rows and then vis; follows its row by key
 	vis       []query.Issue
 	min       model.Severity
 	text      string
 	filtering bool
 	in        input
-	sel       map[string]bool // issues marked for a change of many; always among vis
+	sel       map[string]bool // issues marked for a change of many, by issueKey; always among vis
+
+	lead    []status.Problem  // rows before the issues: the problems that wait for a person (Overview)
+	grouped bool              // the rows are of several projects and are listed in a section each
+	per     int               // at most this many rows of each project; 0 for all
+	secs    map[string]counts // by project: all its rows that passed the filter, also those the top left out
+	room    int               // the lines the list was last given, for a click
 }
 
 type findingsState struct {
@@ -81,12 +89,112 @@ func targetWords(is query.Issue) []string {
 // the cursor back on its issue.
 func (l *issueList) refit(all []query.Issue) {
 	l.vis = filterIssues(all, l.min, l.text)
-	l.vp.refit(len(l.vis), func(i int) string { return l.vis[i].ID })
-	for id := range l.sel {
-		if !slices.ContainsFunc(l.vis, func(is query.Issue) bool { return is.ID == id }) {
-			delete(l.sel, id)
+	l.secs = nil
+	if l.grouped {
+		l.secs = map[string]counts{}
+		by := map[string][]query.Issue{}
+		for _, is := range l.vis {
+			by[rowProject(is)] = append(by[rowProject(is)], is)
+		}
+		for p, rows := range by {
+			l.secs[p] = countsOf(rows)
 		}
 	}
+	if l.per > 0 {
+		shown := map[string]int{}
+		l.vis = slices.DeleteFunc(l.vis, func(is query.Issue) bool {
+			shown[rowProject(is)]++
+			return shown[rowProject(is)] > l.per
+		})
+	}
+	l.vp.refit(len(l.lead)+len(l.vis), l.rowKey)
+	for key := range l.sel {
+		if !slices.ContainsFunc(l.vis, func(is query.Issue) bool { return issueKey(is) == key }) {
+			delete(l.sel, key)
+		}
+	}
+}
+
+// rowKey is the identity of row i of the list, so that the cursor follows its row.
+func (l *issueList) rowKey(i int) string {
+	if i < len(l.lead) {
+		return "problem\x00" + l.lead[i].Key
+	}
+	return issueKey(l.vis[i-len(l.lead)])
+}
+
+// issueAt is the issue under the cursor; false while the cursor is on a problem.
+func (l *issueList) issueAt() (query.Issue, bool) {
+	if i := l.vp.at() - len(l.lead); i >= 0 && i < len(l.vis) {
+		return l.vis[i], true
+	}
+	return query.Issue{}, false
+}
+
+// problemAt is the problem under the cursor.
+func (l *issueList) problemAt() (status.Problem, bool) {
+	if i := l.vp.at(); i >= 0 && i < len(l.lead) {
+		return l.lead[i], true
+	}
+	return status.Problem{}, false
+}
+
+// What a line of the list is besides a row.
+const (
+	hdProblems = iota + 1 // the heading of the problems
+	hdTable               // the column heads of the issues
+	hdProject             // the heading of a project's section
+)
+
+// planLine is one line of the list: a row, or a heading above a row.
+type planLine struct {
+	row  int // index in the list of rows, problems first
+	head int // 0 for the row itself
+}
+
+// plan is the lines of the list in room lines, top to bottom. The headings are
+// drawn again where a window starts, so that a row always has its heading in
+// view; the window gets as small as the headings need.
+func (l *issueList) plan(room int) ([]planLine, int) {
+	room = max(room, 1)
+	for r := room; ; r-- {
+		start, end := l.vp.window(r)
+		var out []planLine
+		for i := start; i < end; i++ {
+			j := i - len(l.lead)
+			switch {
+			case j < 0 && i == start:
+				out = append(out, planLine{i, hdProblems})
+			case j >= 0 && (i == start || j == 0):
+				out = append(out, planLine{i, hdTable})
+			}
+			if j >= 0 && l.grouped && (i == start || j == 0 || rowProject(l.vis[j]) != rowProject(l.vis[j-1])) {
+				out = append(out, planLine{i, hdProject})
+			}
+			out = append(out, planLine{i, 0})
+		}
+		if len(out) <= room || r <= 1 {
+			return out, r
+		}
+	}
+}
+
+// fit tells the list how many lines it has; the window it keeps is the one plan draws.
+func (l *issueList) fit(room int) {
+	l.room = room
+	l.vp.fit(room)
+	_, r := l.plan(room)
+	l.vp.fit(r)
+}
+
+// rowAtLine is the row drawn on line y of the list, where line 0 is the count
+// line; -1 for a heading or nothing.
+func (l *issueList) rowAtLine(y int) int {
+	p, _ := l.plan(l.room)
+	if y-1 >= 0 && y-1 < len(p) && p[y-1].head == 0 {
+		return p[y-1].row
+	}
+	return -1
 }
 
 func (f *findingsState) refit(all []query.Issue) {
@@ -103,14 +211,14 @@ func (m *app) toggleSelect() tea.Cmd {
 	if len(f.vis) == 0 {
 		return nil
 	}
-	id := f.vis[f.vp.at()].ID
+	key := issueKey(f.vis[f.vp.at()])
 	if f.sel == nil {
 		f.sel = map[string]bool{}
 	}
-	if f.sel[id] {
-		delete(f.sel, id)
+	if f.sel[key] {
+		delete(f.sel, key)
 	} else {
-		f.sel[id] = true
+		f.sel[key] = true
 	}
 	f.vp.move(1)
 	return nil
@@ -123,7 +231,7 @@ func (m *app) selectAll() tea.Cmd {
 	f.sel = map[string]bool{}
 	if all {
 		for _, is := range f.vis {
-			f.sel[is.ID] = true
+			f.sel[issueKey(is)] = true
 		}
 	}
 	return nil
@@ -139,7 +247,7 @@ func (m *app) clearSelection() tea.Cmd {
 // the one that slid into it, which is the next.
 func (m *app) stepIssue(dir int) tea.Cmd {
 	d := m.fnd.det
-	i := m.visibleIssue(d.id)
+	i := m.visibleIssue(d.project, d.id)
 	to := i + dir
 	if i < 0 {
 		to = d.pos
@@ -156,7 +264,7 @@ func (m *app) stepIssue(dir int) tea.Cmd {
 		return nil
 	}
 	m.fnd.vp.to(to)
-	return m.openIssueID(m.fnd.vis[to].ID)
+	return m.openIssueRow(m.fnd.vis[to])
 }
 
 // list is the issue list of the screen in front: the Overview has its own, every
@@ -177,13 +285,15 @@ func (m *app) refitLists() {
 
 // noneText is what an empty list says: nothing is open, or nothing in the scope or the time filter.
 func (m *app) noneText() string {
+	in := ""
+	if !m.tenant.all() {
+		in = " in " + oneLine(m.tenantLabel())
+	}
 	switch {
-	case m.scope != "" && !m.published.Any():
-		return "Nothing open in project " + oneLine(m.scope) + " published " + m.published.Label() + ". Press 0 to widen the scope and the time filter."
-	case m.scope != "":
-		return "Nothing open in project " + oneLine(m.scope) + ". Press 0 to see all projects."
 	case !m.published.Any():
-		return "Nothing open published " + m.published.Label() + ". Press t for another period, 0 for any time."
+		return "Nothing open" + in + " published " + m.published.Label() + ". Press t for another period, 0 for any time."
+	case in != "":
+		return "Nothing open" + in + ". C chooses another context."
 	}
 	return "Nothing open. No open vulnerabilities to act on."
 }
@@ -234,19 +344,32 @@ func (m *app) openIssue() tea.Cmd {
 	if len(m.fnd.vis) == 0 {
 		return nil
 	}
-	return m.openIssueID(m.fnd.vis[m.fnd.vp.at()].ID)
+	return m.openIssueRow(m.fnd.vis[m.fnd.vp.at()])
 }
 
-// openIssueID shows the page of an issue and reads it in the background.
-func (m *app) openIssueID(id string) tea.Cmd {
-	m.fnd.det = &detail{id: id, loading: true, body: scrolling(), pos: m.visibleIssue(id)}
-	return m.start("loading "+oneLine(id)+"...", "show "+id, 0, nil, detailCmd(m.b, id))
+// openIssueRow shows the page of a row of a list: the issue as it is in its project.
+func (m *app) openIssueRow(is query.Issue) tea.Cmd {
+	if m.tenant.all() { // an issue of the portfolio opens in its project
+		m.setTenant(tenant{project: rowProject(is)}, true)
+	}
+	return m.openIssueIn(rowProject(is), is.ID)
 }
 
-// clickIssue selects the issue drawn on the given body row; a click on the
-// selected one opens it.
+// openIssueIn shows the page of an issue and reads it in the background. The
+// page holds the rows of one project; without one it takes the context's.
+func (m *app) openIssueIn(project, id string) tea.Cmd {
+	f := m.tenant.filter()
+	if project != "" {
+		f = query.Filter{Project: project}
+	}
+	m.fnd.det = &detail{id: id, project: project, filter: f, loading: true, body: scrolling(), pos: m.visibleIssue(project, id)}
+	return m.start("loading "+oneLine(id)+"...", "show "+id, 0, nil, detailCmd(m.b, id, f))
+}
+
+// clickIssue selects the issue drawn on the given body line, the count line
+// being 0; a click on the selected one opens it.
 func (m *app) clickIssue(line int) tea.Cmd {
-	i := rowAt(&m.fnd.vp, line)
+	i := m.fnd.rowAtLine(line)
 	switch {
 	case i < 0:
 		return nil
@@ -273,7 +396,7 @@ func (m *app) findingsBody(w, h int) []string {
 		}
 		return d.view(w, h)
 	}
-	return renderFindings(len(m.dataIssues()), &m.fnd.issueList, m.noneText(), m.data.monitored(), w, h)
+	return renderFindings(len(m.dataIssues()), &m.fnd.issueList, m.listView(), m.noneText(), m.data.monitored(), w, h)
 }
 
 func owners(is query.Issue) string {
@@ -289,12 +412,66 @@ func owners(is query.Issue) string {
 	return strings.Join(out, ",")
 }
 
-// findingsRoom is the number of issue rows under the count line and the header.
-func findingsRoom(h int) int { return max(h-2, 1) }
+// findingsRoom is the number of lines under the count line.
+func findingsRoom(h int) int { return max(h-1, 1) }
 
-// renderFindings draws the table: a count line, a header and the rows around
-// the cursor. total is the unfiltered count; none is what to say when nothing is open.
-func renderFindings(total int, st *issueList, none string, mon map[string][]model.Env, w, h int) []string {
+// listView is what a list needs besides its rows: how to head the section of a
+// project, and the time that ages are counted to.
+type listView struct {
+	heads func(project string, w int) string // nil: the rows are of one project
+	now   time.Time
+}
+
+// listView is the view of the list for the context.
+func (m *app) listView() listView {
+	lv := listView{now: m.timeNow()}
+	if m.tenant.multi() {
+		lv.heads = func(project string, w int) string { return m.sectionHead(project, w) }
+	}
+	return lv
+}
+
+// sectionHead is the line above the rows of a project: its name, and what is
+// open in it, also what the list leaves out.
+func (m *app) sectionHead(project string, w int) string {
+	l := m.list()
+	c := l.secs[project]
+	text := fmt.Sprintf("%s   %s, %s", m.projectLabelOf(project), plural(c.Issues, "open issue", "open issues"), plural(c.Findings, "finding", "findings"))
+	if hi := c.BySev[4] + c.BySev[3]; hi > 0 {
+		text += fmt.Sprintf(", critical + high %d", hi)
+	}
+	if c.ProdOpen > 0 {
+		text += fmt.Sprintf(", in prod %d", c.ProdOpen)
+	}
+	if c.Overdue > 0 {
+		text += fmt.Sprintf(", overdue %d", c.Overdue)
+	}
+	if l.per > 0 && c.Issues > l.per {
+		text += fmt.Sprintf("   (the top %d are listed)", l.per)
+	}
+	return stHead.Render(trunc(text, w))
+}
+
+// problemRow is a problem in a list or a page, on one line of at most w cells:
+// its level, its title and how long it has been there.
+func problemRow(p status.Problem, now time.Time, w int) string {
+	head := levelCell(p.Level, 9) + " "
+	room := w - width(head)
+	age := ""
+	if a := query.Age(p.Since, now); !p.Since.IsZero() && a != "" {
+		age = "for " + a
+		room -= width(age) + 2
+	}
+	title := trunc(oneLine(p.Title), max(room, 1))
+	if age == "" {
+		return head + title
+	}
+	return head + pad(title, max(room, 1)) + "  " + stMuted.Render(age)
+}
+
+// renderFindings draws the table: a count line, then the lines the list plans
+// around the cursor. total is the unfiltered count; none is what to say when nothing is open.
+func renderFindings(total int, st *issueList, lv listView, none string, mon map[string][]model.Env, w, h int) []string {
 	rows := st.vis
 	info := fmt.Sprintf("%d of %d open issues   min severity: %s", len(rows), total, minLabel(st.min))
 	if n := len(st.sel); n > 0 {
@@ -307,13 +484,6 @@ func renderFindings(total int, st *issueList, none string, mon map[string][]mode
 		info += "   filter: " + oneLine(st.text)
 	}
 	lines := []string{stMuted.Render(trunc(info, w))}
-	if len(rows) == 0 {
-		msg := none
-		if total > 0 {
-			msg = "No issue matches the filter. Press s to lower the severity, / to change the text."
-		}
-		return append(lines, "", msg)
-	}
 
 	idW := 10
 	for _, is := range rows {
@@ -334,17 +504,37 @@ func renderFindings(total int, st *issueList, none string, mon map[string][]mode
 	row := func(cells ...string) string { return strings.Join(cells, " ") }
 	head := []string{pad("SEVERITY", sevW), pad("ID", idW), pad("AGE", ageW)}
 	if showProj {
-		head = append(head, pad("PROJECTS (ONLY IN)", projW))
+		head = append(head, pad("OPEN IN", projW))
 	}
 	if showOwn {
 		head = append(head, pad("OWNER", ownW))
 	}
 	head = append(head, "TITLE")
-	lines = append(lines, stHead.Render(trunc("   "+row(head...), w)))
 
-	start, end := st.vp.window(findingsRoom(h))
-	for i := start; i < end; i++ {
-		is := rows[i]
+	plan, _ := st.plan(findingsRoom(h))
+	for _, pl := range plan {
+		i := pl.row
+		switch pl.head {
+		case hdProblems:
+			lines = append(lines, stHead.Render(trunc(fmt.Sprintf("Needs attention first (%d): they stay until the cause is gone", len(st.lead)), w)))
+			continue
+		case hdTable:
+			lines = append(lines, stHead.Render(trunc("   "+row(head...), w)))
+			continue
+		case hdProject:
+			lines = append(lines, lv.heads(rowProject(rows[i-len(st.lead)]), w))
+			continue
+		}
+		if i < len(st.lead) {
+			text := problemRow(st.lead[i], lv.now, w-3)
+			if i == st.vp.at() {
+				lines = append(lines, stSel.Render(pad(" > "+escapes.ReplaceAllString(text, ""), w)))
+			} else {
+				lines = append(lines, "   "+text)
+			}
+			continue
+		}
+		is := rows[i-len(st.lead)]
 		title := oneLine(is.Untrusted.Title)
 		if is.KEV != nil {
 			title = "[KEV] " + title
@@ -368,7 +558,7 @@ func renderFindings(total int, st *issueList, none string, mon map[string][]mode
 			return append(c, trunc(title, titleW))
 		}
 		mark := " " // the first column marks the issues picked for a change of many
-		if st.sel[is.ID] {
+		if st.sel[issueKey(is)] {
 			mark = "*"
 		}
 		if i == st.vp.at() {
@@ -376,6 +566,13 @@ func renderFindings(total int, st *issueList, none string, mon map[string][]mode
 		} else {
 			lines = append(lines, mark+"  "+row(cells(sevText(is.Severity, sevW))...))
 		}
+	}
+	if len(rows) == 0 {
+		msg := none
+		if total > 0 {
+			msg = "No issue matches the filter. Press s to lower the severity, / to change the text."
+		}
+		lines = append(lines, "", msg)
 	}
 	return lines
 }
@@ -396,8 +593,9 @@ type detail struct {
 	sel     viewport // the environment rows, followed by project and env
 	body    viewport // the scrolling page
 	lay     *detailLayout
-	pos     int    // where the issue is, or was, in the list
-	scope   string // the scope the rows were ordered by: its project's rows come first
+	pos     int          // where the issue is, or was, in the list
+	project string       // the project whose rows the page shows; empty while the context decides
+	filter  query.Filter // what the page, its report and its evidence are read for
 }
 
 func targetID(t query.Target) string { return t.Project + "/" + string(t.Env) }
@@ -424,34 +622,23 @@ func (m *app) detailLoaded(msg detailMsg) {
 	if msg.exErr != nil {
 		d.exErr = msg.exErr.Error()
 	}
-	d.scope = m.scope
 	slices.SortStableFunc(d.is.Targets, func(a, b query.Target) int {
-		if in, jn := a.Project == d.scope, b.Project == d.scope; in != jn {
-			if in {
-				return -1
-			}
-			return 1
-		}
 		if c := strings.Compare(a.Project, b.Project); c != 0 {
 			return c
 		}
 		return model.EnvCompare(a.Env, b.Env)
 	})
 	if first && d.sel.key == "" {
-		d.sel.key = d.scopedRow()
+		d.sel.key = d.startRow()
 	}
 	d.sel.refit(len(d.is.Targets), func(i int) string { return targetID(d.is.Targets[i]) })
 }
 
-// scopedRow is the row the page starts on under a scope: the first prod-like
-// environment of the scoped project, else its first row; "" without a scope or
-// a row there.
-func (d *detail) scopedRow() string {
+// startRow is the row the page starts on: the first prod-like environment,
+// else the first row.
+func (d *detail) startRow() string {
 	var first string
 	for _, t := range d.is.Targets {
-		if d.scope == "" || t.Project != d.scope {
-			continue
-		}
 		if model.IsProd(t.Env) {
 			return targetID(t)
 		}

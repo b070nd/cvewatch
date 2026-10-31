@@ -76,17 +76,29 @@ func sevText(s model.Severity, w int) string {
 
 // levelText is a health level as glyph and word (never colour alone).
 func levelText(l status.Level) string {
-	var t string
-	switch l {
-	case status.Green:
-		t = "● GREEN"
-	case status.Red:
-		t = "✖ RED"
-	default:
-		t = "▲ YELLOW"
+	if l != status.Green && l != status.Red {
 		l = status.Yellow
 	}
-	return lvlStyles[l].Render(t)
+	return lvlStyles[l].Render(levelGlyph(l) + " " + l.Label())
+}
+
+func levelGlyph(l status.Level) string {
+	switch l {
+	case status.Green:
+		return "●"
+	case status.Red:
+		return "✖"
+	}
+	return "▲"
+}
+
+// summaryText is the health in one line for a header: GREEN with the time of
+// the last check, YELLOW or RED with the number of problems.
+func summaryText(rep status.Report, now time.Time) string {
+	if rep.Level == "" {
+		return stMuted.Render("health unknown")
+	}
+	return lvlStyles[rep.Level].Render(levelGlyph(rep.Level) + " " + rep.Summary(now))
 }
 
 // when renders a time as UTC plus how long ago, or "never".
