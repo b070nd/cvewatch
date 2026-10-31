@@ -302,10 +302,11 @@ func TestLoadTUIFallsBackPerValue(t *testing.T) {
 		t.Fatalf("no file: %+v", got)
 	}
 	for text, want := range map[string]TUI{
-		"tui:\n  refresh: 2m\n  fetch: 1h\n":    {Refresh: 2 * time.Minute, Fetch: time.Hour},
+		"tui:\n  refresh: 2m\n  fetch: 1h\n":    {Refresh: 2 * time.Minute, Fetch: time.Hour, Auto: true},
+		"tui:\n  auto: false\n":                 {Refresh: 30 * time.Second},
 		"tui:\n  refresh: 10ms\n  fetch: -1h\n": Defaults().TUI,
 		"tui: [broken\n":                        Defaults().TUI,
-		"interval: nope\ntui:\n  refresh: 9s\n": {Refresh: 9 * time.Second},
+		"interval: nope\ntui:\n  refresh: 9s\n": {Refresh: 9 * time.Second, Auto: true},
 		"tui:\n  refresh: soon\n":               Defaults().TUI,
 	} {
 		put(t, root, "config/config.yaml", text)

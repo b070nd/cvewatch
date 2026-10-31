@@ -36,16 +36,20 @@ func writeConfig(t *testing.T, root, text string) {
 func TestBackendReadsTheTUISettings(t *testing.T) {
 	root := backendRoot(t)
 	b := NewBackend(root, nil)
-	if got := b.TUISettings(); got != (config.TUI{Refresh: 30 * time.Second}) {
+	if got := b.TUISettings(); got != (config.TUI{Refresh: 30 * time.Second, Auto: true}) {
 		t.Fatalf("no config.yaml: defaults expected, got %+v", got)
 	}
 	writeConfig(t, root, "tui:\n  refresh: 5s\n  fetch: 15m\n")
-	if got := b.TUISettings(); got != (config.TUI{Refresh: 5 * time.Second, Fetch: 15 * time.Minute}) {
+	if got := b.TUISettings(); got != (config.TUI{Refresh: 5 * time.Second, Fetch: 15 * time.Minute, Auto: true}) {
 		t.Fatalf("got %+v", got)
 	}
 	writeConfig(t, root, "tui:\n  fetch: 1h\n")
-	if got := b.TUISettings(); got != (config.TUI{Refresh: 30 * time.Second, Fetch: time.Hour}) {
+	if got := b.TUISettings(); got != (config.TUI{Refresh: 30 * time.Second, Fetch: time.Hour, Auto: true}) {
 		t.Fatalf("a missing key keeps its default, got %+v", got)
+	}
+	writeConfig(t, root, "tui:\n  auto: false\n")
+	if got := b.TUISettings(); got != (config.TUI{Refresh: 30 * time.Second}) {
+		t.Fatalf("auto can be turned off, got %+v", got)
 	}
 }
 
@@ -60,7 +64,7 @@ func TestBackendSettingsFallBackToDefaultsWhenConfigIsBroken(t *testing.T) {
 	} {
 		writeConfig(t, root, text)
 		got := b.TUISettings()
-		want := config.TUI{Refresh: 30 * time.Second}
+		want := config.TUI{Refresh: 30 * time.Second, Auto: true}
 		if name == "other key broken" {
 			want.Refresh = 5 * time.Second // the tui section alone decides its values
 		}

@@ -200,6 +200,17 @@ func TestSetupToolsReadOnlyAndWrite(t *testing.T) {
 	if b, err := os.ReadFile(filepath.Join(root, "config", "projects", "blog.yaml")); err != nil || !strings.Contains(string(b), "php") {
 		t.Fatalf("file: %s %v", b, err)
 	}
+	upd := map[string]any{"project": "blog", "changes": []any{map[string]any{"kind": "set_update", "every": "2h", "auto": false}}}
+	if _, out := call(t, rw, "edit_project", upd); !strings.Contains(out, `"saved":true`) {
+		t.Fatalf("update block: %s", out)
+	}
+	if b, _ := os.ReadFile(filepath.Join(root, "config", "projects", "blog.yaml")); !strings.Contains(string(b), "every: 2h") || !strings.Contains(string(b), "auto: false") {
+		t.Fatalf("update block missing:\n%s", b)
+	}
+	tooFast := map[string]any{"project": "blog", "changes": []any{map[string]any{"kind": "set_update", "every": "1m"}}}
+	if res, _ := call(t, rw, "edit_project", tooFast); !res.IsError {
+		t.Fatal("a period under 5m must be an error")
+	}
 	bad := map[string]any{"project": "blog", "changes": []any{map[string]any{"kind": "teleport"}}}
 	if res, _ := call(t, rw, "edit_project", bad); !res.IsError {
 		t.Fatal("an unknown change kind must be an error")

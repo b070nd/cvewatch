@@ -21,7 +21,7 @@ import (
 // for the test that keeps the front ends in step with projectfile.
 var OpKinds = []string{
 	"set_envs", "set_tech", "remove_tech", "set_env_tech", "remove_env_tech",
-	"set_image", "add_lockfile", "remove_lockfile", "set_lockfile_dev", "set_since",
+	"set_image", "add_lockfile", "remove_lockfile", "set_lockfile_dev", "set_since", "set_update",
 	"add_env", "remove_env", "rename_env",
 	"set_tech_envs", "exclude_env_tech", "include_env_tech", "migrate_envs",
 }
@@ -58,16 +58,17 @@ func (fx *fixState) settle(m *app) tea.Cmd {
 
 // The fields of a project file the editor changes.
 const (
-	fldEnvs  = "envs"
-	fldTechs = "techs"
-	fldLocks = "locks"
-	fldDiff  = "diff"
-	fldSince = "since"
+	fldEnvs   = "envs"
+	fldTechs  = "techs"
+	fldLocks  = "locks"
+	fldDiff   = "diff"
+	fldSince  = "since"
+	fldUpdate = "update"
 )
 
 var fieldLabels = map[string]string{
 	fldEnvs: "Environments", fldTechs: "Technologies", fldLocks: "Lockfiles",
-	fldDiff: "Differences per environment", fldSince: "Since",
+	fldDiff: "Differences per environment", fldSince: "Since", fldUpdate: "Updates",
 }
 
 var fieldHeads = map[string][]string{
@@ -154,7 +155,7 @@ func topRows(p projectRow) []fieldRow {
 	row := func(id, value string) fieldRow { return fieldRow{id: id, cells: []string{fieldLabels[id], value}} }
 	return []fieldRow{
 		row(fldEnvs, envList(p)), row(fldTechs, techList(p)), row(fldLocks, locks),
-		row(fldDiff, diffs), row(fldSince, since),
+		row(fldDiff, diffs), row(fldSince, since), row(fldUpdate, orDash(p.Updates)),
 	}
 }
 
@@ -472,6 +473,8 @@ func (m *app) fieldOpen() tea.Cmd {
 		switch row.id {
 		case fldSince:
 			m.promptSince(p)
+		case fldUpdate:
+			m.promptUpdate(p)
 		default:
 			ed.open = row.id
 			ed.sub.reset(len(subRows(p, row.id)))
@@ -727,6 +730,36 @@ func (m *app) promptSince(p projectRow) {
 				label = "clear since"
 			}
 			return label, []projectfile.Op{{Kind: "set_since", Since: v[0]}}, nil
+		})
+}
+
+func (m *app) promptUpdate(p projectRow) {
+	every, auto := field{label: "Every"}, field{label: "Auto"}
+	auto.in.set("yes")
+	if u := p.Update; u != nil {
+		every.in.set(u.Every)
+		if !u.Auto {
+			auto.in.set("no")
+		}
+	}
+	m.editPrompt(p, "Updates of "+p.Name, "every: a period such as 30m, 1h or 2d (at least 5m), empty for the interval of config.yaml; auto: no leaves the project out of scheduled runs", []field{every, auto},
+		func(v []string) (string, []projectfile.Op, error) {
+			var on bool
+			switch strings.ToLower(v[1]) {
+			case "yes", "y", "true", "on":
+				on = true
+			case "no", "n", "false", "off":
+			default:
+				return "", nil, errors.New("auto is yes or no")
+			}
+			label, period := "refresh every "+v[0], v[0]
+			if v[0] == "" {
+				label, period = "refresh on the interval of config.yaml", "default"
+			}
+			if !on {
+				label += ", not in scheduled runs"
+			}
+			return label, []projectfile.Op{{Kind: "set_update", Every: period, Auto: &on}}, nil
 		})
 }
 

@@ -320,3 +320,43 @@ func TestFailedBackfillStaysOwed(t *testing.T) {
 		t.Error("the retry clears it")
 	}
 }
+
+func TestStoppedBackfillKeepsFinishedWindowsAndResumes(t *testing.T) {
+	files := map[string]string{
+		"config/techs.yaml": redisTechs, "sources/s.yaml": nvdWindowed, "config/projects/shop.yaml": phpSince2024,
+	}
+	nvdURLs := func(g *testkit.Rig) []string {
+		var out []string
+		for _, u := range g.Getter.Asked {
+			if strings.HasPrefix(u, "https://ex.test/nvd?") {
+				out = append(out, u)
+			}
+		}
+		return out
+	}
+	probe := testkit.NewRig(t, files, map[string]string{feedURL: rss})
+	probe.Run()
+	windows := nvdURLs(probe)
+	if len(windows) != 9 {
+		t.Fatalf("windows = %d", len(windows))
+	}
+
+	g := testkit.NewRig(t, files, map[string]string{feedURL: rss})
+	g.Getter.Errs = map[string]error{windows[4]: context.Canceled}
+	res := g.Run()
+	st := g.Ledger.Feed("nvd")
+	if len(res.Failed) != 1 {
+		t.Fatalf("nvd stopped: failed=%v", res.Failed)
+	}
+	// the cursor moved to the window that failed: the four before it are not fetched again
+	if want := "s=" + st.LastRun.UTC().Format("2006-01-02"); !st.Backfill.IsZero() || !strings.Contains(windows[4], want) {
+		t.Fatalf("it resumes at the window that failed: %s in %s, state=%+v", want, windows[4], st)
+	}
+
+	delete(g.Getter.Errs, windows[4])
+	g.Getter.Asked = nil
+	res = g.Run()
+	if got := len(nvdURLs(g)); got != 5 || len(res.Failed) != 0 || !g.Ledger.Feed("nvd").Backfill.IsZero() {
+		t.Fatalf("the next run fetches the 5 windows left, not 9: asked=%d failed=%v state=%+v", got, res.Failed, g.Ledger.Feed("nvd"))
+	}
+}

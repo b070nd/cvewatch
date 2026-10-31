@@ -216,3 +216,35 @@ func TestNextLink(t *testing.T) {
 		}
 	}
 }
+
+func TestFailedChunkKeepsTheFinishedOnesAndSaysWhereToResume(t *testing.T) {
+	var windows []string
+	g := &scriptGetter{fn: func(u string, _ model.Validators) (*httpx.Response, error) {
+		windows = append(windows, u)
+		if len(windows) == 3 {
+			return nil, context.Canceled
+		}
+		return nvdPage(1, 0, 1), nil
+	}}
+	st := model.FeedState{LastRun: now.Add(-time.Hour), Backfill: now.AddDate(0, 0, -500)}
+	src := model.Source{ID: "nvd", Type: "nvd", URL: nvdSource}
+	out, err := FetchRange(context.Background(), g, src, st, now, 24*time.Hour, nil)
+	if err == nil {
+		t.Fatal("the failure is still reported")
+	}
+	if len(out.Items) != 2 || out.Resume.IsZero() {
+		t.Fatalf("two windows finished: items=%d resume=%v", len(out.Items), out.Resume)
+	}
+	if want := "pubStartDate=" + out.Resume.UTC().Format("2006-01-02"); !strings.Contains(windows[2], want) {
+		t.Errorf("the failed window %s starts at the resume point %s", windows[2], want)
+	}
+}
+
+func TestFailedFirstChunkKeepsNothing(t *testing.T) {
+	g := &scriptGetter{fn: func(string, model.Validators) (*httpx.Response, error) { return nil, context.Canceled }}
+	st := model.FeedState{LastRun: now.Add(-time.Hour), Backfill: now.AddDate(0, 0, -500)}
+	out, err := FetchRange(context.Background(), g, model.Source{ID: "nvd", Type: "nvd", URL: nvdSource}, st, now, 24*time.Hour, nil)
+	if err == nil || len(out.Items) != 0 || !out.Resume.IsZero() {
+		t.Fatalf("nothing finished, so nothing is kept: %+v %v", out, err)
+	}
+}

@@ -193,7 +193,7 @@ func TestProjectWhoseFileStemIsNotItsNameCanBeEditedAndDeleted(t *testing.T) {
 	}
 	d.wantNot("not editable here")
 
-	d.press("c", "home", "down", "down", "down", "down", "down", "enter", "ctrl+u")
+	d.press("c", "home", "down", "down", "down", "down", "enter", "ctrl+u")
 	d.typ("2026-04-01")
 	d.press("enter")
 	d.want("+ since: 2026-04-01")

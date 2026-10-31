@@ -87,6 +87,7 @@ type Outcome struct {
 	From       time.Time // start of the window that was asked for
 	Backfilled bool      // the window reached back further than usual for a pending back-fill
 	Note       string    // informational: what the source could not serve
+	Resume     time.Time // set with an error: Items are the windows that finished, the next fetch starts here
 }
 
 // FetchRange is Fetch that also says what window it covered. progress, which
@@ -121,8 +122,12 @@ func FetchRange(ctx context.Context, g Getter, src model.Source, st model.FeedSt
 	} else {
 		var notModified bool
 		var err error
-		items, valids, notModified, err = fetchPages(ctx, g, src, p, prev, since, now, progress)
+		var resume time.Time
+		items, valids, notModified, resume, err = fetchPages(ctx, g, src, p, prev, since, now, progress)
 		if err != nil {
+			if !resume.IsZero() {
+				out.Items, out.Resume = tagged(src, recent(items, since)), resume
+			}
 			return out, fmt.Errorf("feeds: source %q: %w", src.ID, err)
 		}
 		if notModified {
@@ -132,16 +137,22 @@ func FetchRange(ctx context.Context, g Getter, src model.Source, st model.FeedSt
 	if src.Type != "cve" { // its cursor, not the date, decides what is new
 		items = recent(items, since)
 	}
-	for i := range items {
-		items[i].SourceType = src.Type
-		items[i].TitleOnly = src.MatchTitleOnly
-		items[i].StructuredOnly = src.MatchStructured
-	}
+	items = tagged(src, items)
 	if out.Backfilled && slices.Contains(recentOnly, src.Type) {
 		out.Note = "cannot go back: only serves recent items"
 	}
 	out.Items, out.Validators = items, valids
 	return out, nil
+}
+
+// tagged marks where the items came from.
+func tagged(src model.Source, items []model.Item) []model.Item {
+	for i := range items {
+		items[i].SourceType = src.Type
+		items[i].TitleOnly = src.MatchTitleOnly
+		items[i].StructuredOnly = src.MatchStructured
+	}
+	return items
 }
 
 // recentOnly are the source types that cannot serve items older than a feed's

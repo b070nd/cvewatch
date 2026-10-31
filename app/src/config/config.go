@@ -29,7 +29,8 @@ import (
 )
 
 type Settings struct {
-	Interval  time.Duration `yaml:"interval"`   // daemon period
+	Interval  time.Duration `yaml:"interval"`   // daemon period, and the default period of a project
+	Update    Update        `yaml:"update"`     // whether anything is refreshed by itself
 	Lookback  time.Duration `yaml:"lookback"`   // how far back a source's first run reaches
 	Retention time.Duration `yaml:"retention"`  // forget irrelevant items after this; 0 keeps them
 	DataDir   string        `yaml:"data_dir"`   // state lives here
@@ -49,6 +50,12 @@ type Settings struct {
 	// on top of a local identity, not authentication: do not expose the
 	// tool to people you cannot identify by other means.
 	Access map[string]Grant `yaml:"access"`
+}
+
+// Update switches the scheduled refresh on or off for everything. A project
+// asks for its own period in its file (update.every); this is the main switch.
+type Update struct {
+	Auto bool `yaml:"auto"` // false: the daemon and the TUI refresh nothing by themselves; update and the F key still do
 }
 
 // Notify configures channels besides Slack. A channel is active when its
@@ -117,7 +124,8 @@ type Dashboard struct {
 // TUI sets the rhythm of the full-screen interface.
 type TUI struct {
 	Refresh time.Duration `yaml:"refresh"` // how often it re-reads the state; at least 1s
-	Fetch   time.Duration `yaml:"fetch"`   // how often it fetches the feeds itself; 0 only on request
+	Fetch   time.Duration `yaml:"fetch"`   // a fixed period for fetching everything; 0 follows the project schedule when auto is on, else only on request
+	Auto    bool          `yaml:"auto"`    // without a running daemon, fetch on the project schedule
 	Editor  string        `yaml:"editor"`  // the editor the E key opens files in; empty looks at $VISUAL, $EDITOR, then the usual ones
 }
 
@@ -192,9 +200,10 @@ func Defaults() Settings {
 			Threshold429: 3,
 			Cooldown429:  2 * time.Minute,
 		},
+		Update:  Update{Auto: true},
 		Enrich:  Enrich{CVSS: true},
 		Slack:   Slack{WebhookEnv: "SLACK_WEBHOOK_URL", MinSeverity: model.SevUnknown},
-		TUI:     TUI{Refresh: 30 * time.Second},
+		TUI:     TUI{Refresh: 30 * time.Second, Auto: true},
 		Horizon: Horizon{Window: WindowUnlimited},
 	}
 }
@@ -208,9 +217,9 @@ func LoadTUI(root string) TUI {
 	if err != nil {
 		return t
 	}
-	var doc struct {
+	doc := struct {
 		TUI TUI `yaml:"tui"`
-	}
+	}{TUI: TUI{Auto: true}}
 	if yaml.Unmarshal(raw, &doc) != nil {
 		return t
 	}
@@ -220,6 +229,7 @@ func LoadTUI(root string) TUI {
 	if doc.TUI.Fetch > 0 {
 		t.Fetch = doc.TUI.Fetch
 	}
+	t.Auto = doc.TUI.Auto
 	t.Editor = strings.TrimSpace(doc.TUI.Editor)
 	return t
 }
@@ -607,6 +617,9 @@ func projectErrors(p model.Project, seen map[string]bool) []fieldErr {
 			fail("envs", "project %s: %q is not a valid environment name (lowercase letters, digits, - and _)", p.Name, e)
 		}
 	}
+	if e := p.Update.Every; e != 0 && e < model.MinEvery {
+		fail("update.every", "project %s: update.every %s is shorter than the minimum of %s", p.Name, model.Span(e), model.Span(model.MinEvery))
+	}
 	for i, lf := range p.Lockfiles {
 		at := "lockfiles." + strconv.Itoa(i)
 		if !slices.Contains(matrix.Types(), lf.Type) {
@@ -642,6 +655,9 @@ func projectWarnings(p model.Project, known map[string]bool) []string {
 	var warns []string
 	if !p.Since.IsZero() && p.Since.After(time.Now()) {
 		warns = append(warns, fmt.Sprintf("project %s: since %s is in the future, so every dated vulnerability is skipped for now", p.Name, p.Since.Format("2006-01-02")))
+	}
+	if p.Update.Every > model.LongEvery {
+		warns = append(warns, fmt.Sprintf("project %s: update.every %s is longer than 30 days, so it is hardly ever refreshed", p.Name, model.Span(p.Update.Every)))
 	}
 	for _, env := range slices.SortedFunc(maps.Keys(p.Environments), model.EnvCompare) {
 		where := model.WhenPrefix + string(env)

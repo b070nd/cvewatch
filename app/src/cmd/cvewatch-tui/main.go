@@ -26,7 +26,7 @@ func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	b := tui.NewBackend(*root, log)
 	set := b.TUISettings()
-	if err := tui.Run(ctx, b, tui.Options{Dir: *dir, Refresh: set.Refresh, Fetch: set.Fetch}); err != nil {
+	if err := tui.Run(ctx, b, tui.Options{Dir: *dir, Refresh: set.Refresh, Fetch: set.Fetch, Auto: set.Auto}); err != nil {
 		fmt.Fprintln(os.Stderr, "cvewatch-tui:", err)
 		os.Exit(1)
 	}

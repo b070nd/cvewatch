@@ -26,6 +26,10 @@ type Backend interface {
 	// at a time. It returns store.ErrBusy when another process, such as the
 	// daemon in a cycle, holds the data; the caller retries later.
 	Fetch(ctx context.Context, progress func(ops.RefreshProgress)) (pipeline.Result, error)
+	// Update is Fetch for the project schedule: the feeds are fetched once, but
+	// only the projects that are due are judged and alerted, and nothing is
+	// fetched when none is. It returns store.ErrBusy like Fetch.
+	Update(ctx context.Context, progress func(ops.RefreshProgress)) (pipeline.Result, error)
 	// Backfill re-judges the findings if the configuration changed, then polls
 	// only the sources that owe a back-fill (see ops.Session.Backfill). It
 	// returns store.ErrBusy like Fetch.
@@ -94,6 +98,16 @@ func (b *backend) Fetch(ctx context.Context, progress func(ops.RefreshProgress))
 	defer s.Close()
 	s.Actor = actor()
 	return s.RefreshWith(ctx, progress)
+}
+
+func (b *backend) Update(ctx context.Context, progress func(ops.RefreshProgress)) (pipeline.Result, error) {
+	s, err := ops.OpenRepair(b.root, b.log)
+	if err != nil {
+		return pipeline.Result{}, err
+	}
+	defer s.Close()
+	s.Actor = actor()
+	return s.RefreshScheduled(ctx, progress)
 }
 
 func (b *backend) Backfill(ctx context.Context, progress func(ops.RefreshProgress)) (pipeline.Result, error) {

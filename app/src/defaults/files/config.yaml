@@ -1,5 +1,5 @@
 # Global settings. Every key is optional; these are the defaults.
-interval: 4h        # daemon period
+interval: 4h        # how often a project is refreshed unless its file says otherwise
 lookback: 168h      # first run of a source reaches this far back
 retention: 4320h    # forget items that matched nothing after 180 days; 0 keeps them
                     # (must be at least twice the lookback; findings and the audit log are never pruned)
@@ -23,6 +23,13 @@ http:
 slack:
   webhook_env: SLACK_WEBHOOK_URL  # the webhook itself stays in the environment
   min_severity: unknown           # unknown | low | medium | high | critical
+
+# Scheduled refresh. A project picks its own period, or opts out, in its file:
+#   update: {every: 1h, auto: false}
+# auto: false below turns the schedule off for everything; then only
+# `cvewatch update` and the F key in the TUI refresh.
+# update:
+#   auto: true       # default
 
 # Lookups at outside services. cvss reads only public NVD data: it rates tracked
 # CVEs that no feed gave a score (RSS and news items carry none), a few per cycle,
@@ -48,8 +55,8 @@ slack:
 # The full-screen interface (cvewatch tui).
 # tui:
 #   refresh: 30s     # how often it re-reads the state; at least 1s
-#   fetch: 0s        # how often it fetches the feeds itself; 0 only on request.
-#                    # A running daemon already fetches every interval.
+#   auto: true       # without a running daemon, fetch on the project schedule
+#   fetch: 0s        # a fixed period for everything instead of the schedule; 0 follows auto.
 #   editor: nano     # the editor E opens files in, with options (code --wait).
 #                    # Empty uses $VISUAL, $EDITOR, then the usual editors found.
 

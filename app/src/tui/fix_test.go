@@ -99,6 +99,10 @@ func TestBrokenProjectFileDoesNotBlockTheTUI(t *testing.T) {
 	root := t.TempDir()
 	writeProjectFile(t, root, "good", "name: good\ntechs:\n  - {name: php}\n")
 	bad := writeProjectFile(t, root, "bad", "name: [\n")
+	// a real backend must not start the automatic update against the shipped feeds
+	if err := os.WriteFile(filepath.Join(root, "config", "config.yaml"), []byte("tui:\n  auto: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	noEditor(t)
 	d := start(t, NewBackend(root, nil), Options{})
 	d.want("1 Overview")
@@ -140,6 +144,9 @@ func (failing) Settings(func(*ops.SettingsSession) error) error {
 }
 
 func (failing) Fetch(context.Context, func(ops.RefreshProgress)) (pipeline.Result, error) {
+	return pipeline.Result{}, errors.New("no config here")
+}
+func (failing) Update(context.Context, func(ops.RefreshProgress)) (pipeline.Result, error) {
 	return pipeline.Result{}, errors.New("no config here")
 }
 func (failing) Backfill(context.Context, func(ops.RefreshProgress)) (pipeline.Result, error) {

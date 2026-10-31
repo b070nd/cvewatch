@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -11,7 +12,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/b070nd/cvewatch/app/src/config"
+	"github.com/b070nd/cvewatch/app/src/ops"
 	"github.com/b070nd/cvewatch/app/src/pipeline"
+	"github.com/b070nd/cvewatch/app/src/status"
 )
 
 var fetchSpin = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -20,14 +23,20 @@ var fetchSpin = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧",
 // interface in the same phase; a new phase always gets through.
 var fetchThrottle = 250 * time.Millisecond
 
-// jobKind says what a background job does: fetch the feeds, or judge the
-// findings again and fetch only what that needs.
+// jobKind says what a background job does: fetch the feeds for every project,
+// do the scheduled update of the projects that are due, or judge the findings
+// again and fetch only what that needs.
 type jobKind uint8
 
 const (
 	jobFetch jobKind = iota
 	jobBackfill
+	jobUpdate
 )
+
+// autoRetry is the least time between two updates the program starts by itself,
+// so a busy store or a stale snapshot does not make it try on every re-read.
+var autoRetry = time.Minute
 
 type (
 	tuiMsg           struct{ set config.TUI }
@@ -101,8 +110,10 @@ type fetchState struct {
 	job    *fetchJob // the run in progress; nil when none
 	prog   pipeline.Progress
 	spin   int
-	failed []string // sources that failed in the last run, until they are looked at
-	armed  bool     // the timer of the next run is set
+	failed []string  // sources that failed in the last run, until they are looked at
+	armed  bool      // the timer of the next run is set
+	autoAt time.Time // when the program last started an update by itself
+	denied bool      // the actor may not update every project, so the program stopped trying
 }
 
 // cell is the header text for the run in progress, or for the failures of the
@@ -201,9 +212,12 @@ func (m *app) jobBegin(kind jobKind, auto bool) tea.Cmd {
 		defer close(j.finished)
 		var res pipeline.Result
 		var err error
-		if kind == jobBackfill {
+		switch kind {
+		case jobBackfill:
 			res, err = b.Backfill(ctx, j.report)
-		} else {
+		case jobUpdate:
+			res, err = b.Update(ctx, j.report)
+		default:
 			res, err = b.Fetch(ctx, j.report)
 		}
 		cancel()
@@ -218,7 +232,7 @@ func (m *app) fetchUpdate(msg tea.Msg) tea.Cmd {
 		if msg.set.Refresh > 0 {
 			m.tui.Refresh = msg.set.Refresh
 		}
-		m.tui.Fetch = msg.set.Fetch
+		m.tui.Fetch, m.tui.Auto = msg.set.Fetch, msg.set.Auto
 		return m.armFetch()
 	case fetchDueMsg:
 		m.fet.armed = false
@@ -250,7 +264,9 @@ func (m *app) fetchDone(msg fetchDoneMsg) tea.Cmd {
 	m.stl.invalidate() // the cycle judged the findings again first
 	switch {
 	case errors.Is(msg.err, ErrBusy):
-		if m.tui.Fetch > 0 {
+		if msg.job.kind == jobUpdate {
+			m.note("the data is in use by another cvewatch; the update will be tried again shortly")
+		} else if m.tui.Fetch > 0 {
 			m.note("the data is in use by another cvewatch; will retry in " + formatSpan(m.tui.Fetch))
 		} else {
 			m.note("the data is in use by another cvewatch; press F to try again")
@@ -258,12 +274,21 @@ func (m *app) fetchDone(msg fetchDoneMsg) tea.Cmd {
 		return nil
 	case msg.err != nil && (m.ctx.Err() != nil || errors.Is(msg.err, context.Canceled)):
 		return nil
+	case errors.Is(msg.err, ops.ErrDenied) && msg.job.auto:
+		m.fet.denied = true
+		m.note("no automatic updates: you may not change every project; F fetches what you may")
+		return nil
 	case msg.err != nil:
 		m.fail("fetch failed: " + msg.err.Error())
 		return m.refresh(reList | reDetail)
+	case msg.job.kind == jobUpdate && len(msg.res.Updated) == 0: // nothing was due after all
+		return m.refresh(reList)
 	}
 	m.fet.failed = msg.res.Failed
 	note := fmt.Sprintf("fetched: %d new, %d findings", msg.res.New, msg.res.Findings)
+	if msg.job.kind == jobUpdate {
+		note = fmt.Sprintf("updated %s: %d new, %d findings", strings.Join(msg.res.Updated, ", "), msg.res.New, msg.res.Findings)
+	}
 	switch n := len(msg.res.Failed); {
 	case n == 1:
 		note += ", 1 source failed"
@@ -275,6 +300,30 @@ func (m *app) fetchDone(msg fetchDoneMsg) tea.Cmd {
 	}
 	m.say(note)
 	return m.refresh(reList | reDetail)
+}
+
+// autoUpdate starts the update on the project schedule when a snapshot says a
+// project is due and no daemon runs: with a daemon it would only get in its
+// way. A fixed tui.fetch period replaces the schedule, and tui.auto turns it off.
+func (m *app) autoUpdate() tea.Cmd {
+	sn := m.data
+	if !m.tui.Auto || m.tui.Fetch > 0 || m.fet.denied || m.fet.job != nil || m.ctx.Err() != nil || !sn.updateDue() ||
+		time.Since(m.fet.autoAt) < autoRetry {
+		return nil
+	}
+	m.fet.autoAt = time.Now()
+	return m.jobBegin(jobUpdate, true)
+}
+
+// updateDue is whether the schedule calls for an update by the program itself:
+// scheduled updates are on, no daemon is alive to do them, and a project is due.
+func (sn *snapshot) updateDue() bool {
+	if sn == nil || !sn.Status.Scheduled || sn.Status.Daemon.Alive() {
+		return false
+	}
+	return slices.ContainsFunc(sn.Status.Projects, func(p status.ProjectRow) bool {
+		return p.Auto && !p.Next.IsZero() && !p.Next.After(sn.At)
+	})
 }
 
 // fetchClick opens the details when the progress cell in the header is clicked.

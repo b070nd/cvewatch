@@ -72,7 +72,7 @@ func (d *driver) opKinds() []string {
 	return ks
 }
 
-// toField selects the n-th field of the editor (0 environments ... 4 since).
+// toField selects the n-th field of the editor (0 environments ... 4 since, 5 updates).
 func (d *driver) toField(n int) {
 	d.press("home")
 	for range n {
@@ -132,6 +132,21 @@ func TestFieldEditorEditsEveryKindOfFieldAndKeepsComments(t *testing.T) {
 	save("clear since", "set_since")
 	if strings.Contains(fileAt(t, root, "config/projects/shop.yaml"), "since:") {
 		t.Fatal("an empty date clears since")
+	}
+
+	// updates: a period and a switch in one prompt
+	d.toField(5)
+	d.press("enter")
+	d.want("Updates of shop", "> Every", "Auto", "yes")
+	d.typ("2h")
+	d.press("tab", "ctrl+u")
+	d.typ("no")
+	d.press("enter")
+	d.want("+ update:", "every: 2h", "auto: false")
+	save("refresh every 2h, not in scheduled runs", "set_update")
+	d.want("Edit fields of shop", "paused")
+	if got := fileAt(t, root, "config/projects/shop.yaml"); !strings.Contains(got, "every: 2h") || !strings.Contains(got, "auto: false") {
+		t.Fatalf("update:\n%s", got)
 	}
 
 	// environments: free names, added, renamed and removed one at a time

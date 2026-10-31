@@ -98,9 +98,10 @@ func (realClock) Sleep(ctx context.Context, d time.Duration) bool {
 }
 
 // wait sleeps until the given time, looking at the files every pollEvery, and
-// calls onChange with the changed files as soon as there are some. It returns
-// false when ctx ended.
-func wait(ctx context.Context, clk clock, until time.Time, w *watcher, onChange func(files []string)) bool {
+// calls onChange with the changed files as soon as there are some. When
+// onChange names a time before the deadline, that is the new deadline. It
+// returns false when ctx ended.
+func wait(ctx context.Context, clk clock, until time.Time, w *watcher, onChange func(files []string) time.Time) bool {
 	for clk.Now().Before(until) {
 		if !clk.Sleep(ctx, min(pollEvery, until.Sub(clk.Now()))) {
 			return false
@@ -113,7 +114,9 @@ func wait(ctx context.Context, clk clock, until time.Time, w *watcher, onChange 
 			return false
 		}
 		files = slices.Compact(slices.Sorted(slices.Values(append(files, w.poll()...))))
-		onChange(files)
+		if next := onChange(files); !next.IsZero() && next.Before(until) {
+			until = next
+		}
 	}
 	return ctx.Err() == nil
 }

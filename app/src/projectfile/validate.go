@@ -88,6 +88,11 @@ func (f *File) validate(known func(tech string) bool, suggest func(name string) 
 	if p.Since.After(time.Now()) {
 		add("warning", "since", "since %s is in the future, so every dated vulnerability is skipped for now", p.Since.Format(SinceLayout))
 	}
+	if e := p.Update.Every; e != 0 && e < model.MinEvery {
+		shortest := Op{Kind: "set_update", Every: model.Span(model.MinEvery)}
+		addFix("error", "update.every", []Fix{{Label: "refresh every " + shortest.Every, Ops: []Op{shortest}}, {Label: "use the interval of config.yaml", Ops: []Op{{Kind: "set_update", Every: "default"}}}},
+			"update.every %s is shorter than the minimum of %s", model.Span(e), model.Span(model.MinEvery))
+	}
 	enabled := map[model.Env]bool{}
 	for i, e := range p.EffectiveEnvs() {
 		if !e.Valid() {
