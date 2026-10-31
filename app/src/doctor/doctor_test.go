@@ -461,3 +461,48 @@ func TestWriteTextAndJSON(t *testing.T) {
 		t.Errorf("json = %+v", got)
 	}
 }
+
+func TestUpdatesCheckSaysHowProjectsAreKeptUpToDate(t *testing.T) {
+	root := newRoot(t, nil)
+	put(t, root, "config/projects/shop.yaml", "name: shop\nenvs: [prod]\n")
+	put(t, root, "config/projects/blog.yaml", "name: blog\nenvs: [prod]\nupdate: {every: 1h}\n")
+	if c := want(t, Run(context.Background(), root, Options{}), "config", "updates", OK); !strings.Contains(c.Detail, "2 projects") {
+		t.Errorf("detail = %q", c.Detail)
+	}
+
+	put(t, root, "config/projects/blog.yaml", "name: blog\nenvs: [prod]\nupdate: {auto: false}\n")
+	if c := want(t, Run(context.Background(), root, Options{}), "config", "updates", Warn); !strings.Contains(c.Detail, "skip blog") || !strings.Contains(c.Detail, "cvewatch update") {
+		t.Errorf("detail = %q", c.Detail)
+	}
+
+	off := newRoot(t, map[string]string{"config/config.yaml": "update:\n  auto: false\n", "config/projects/shop.yaml": "name: shop\nenvs: [prod]\n"})
+	if c := want(t, Run(context.Background(), off, Options{}), "config", "updates", Warn); !strings.Contains(c.Detail, "update.auto is off") {
+		t.Errorf("detail = %q", c.Detail)
+	}
+
+	none := newRoot(t, nil)
+	for _, c := range Run(context.Background(), none, Options{}).Checks {
+		if c.Name == "updates" {
+			t.Errorf("no projects, nothing to say: %+v", c)
+		}
+	}
+}
+
+func TestAPeriodUnderTheMinimumFailsAndOverThirtyDaysWarns(t *testing.T) {
+	root := newRoot(t, nil)
+	put(t, root, "config/projects/shop.yaml", "name: shop\nenvs: [prod]\nupdate: {every: 1m}\n")
+	r := Run(context.Background(), root, Options{})
+	if c := want(t, r, "config", "loads", Fail); !strings.Contains(c.Detail, "shop") || !strings.Contains(c.Detail, "minimum of 5m") {
+		t.Errorf("detail = %q", c.Detail)
+	}
+
+	root = newRoot(t, nil)
+	put(t, root, "config/projects/blog.yaml", "name: blog\nenvs: [prod]\nupdate: {every: 800h}\n")
+	r = Run(context.Background(), root, Options{})
+	if c := want(t, r, "config", "warning", Warn); !strings.Contains(c.Detail, "blog") || !strings.Contains(c.Detail, "longer than 30 days") {
+		t.Errorf("detail = %q", c.Detail)
+	}
+	if r.Failed() {
+		t.Errorf("a long period is no failure: %+v", r.Checks)
+	}
+}

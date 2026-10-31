@@ -617,10 +617,12 @@ func (s *Session) Inventory(project string) (InventoryView, error) {
 // Status reports the health of the tool itself: the daemon, each feed and
 // channel, and the recent cycles.
 func (s *Session) Status() (status.Report, error) {
-	if _, err := s.scope(query.Filter{}); err != nil {
+	f, err := s.scope(query.Filter{})
+	if err != nil {
 		return status.Report{}, err
 	}
-	in := status.Input{Now: s.Now(), Interval: s.Cfg.Interval}
+	now := s.Now()
+	in := status.Input{Now: now, Interval: s.Cfg.Interval, Projects: s.statusProjects(now, f.Projects), Unscheduled: !s.Cfg.Update.Auto}
 	for _, src := range s.Cfg.Sources {
 		if !src.Disabled {
 			in.Sources = append(in.Sources, status.Ref{ID: src.ID, Type: src.Type})

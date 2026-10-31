@@ -21,7 +21,8 @@ import (
 // Options configure the program.
 type Options struct {
 	Refresh time.Duration // how often to re-read the state; default 30s
-	Fetch   time.Duration // how often to fetch the feeds; 0 only on request
+	Fetch   time.Duration // a fixed period for fetching the feeds; 0 follows Auto
+	Auto    bool          // without a daemon, update on the project schedule
 	Dir     string        // when set, start the setup flow for a new project on this folder
 }
 
@@ -50,7 +51,7 @@ func Run(ctx context.Context, b Backend, o Options) error {
 func New(b Backend, o Options) tea.Model { return newApp(context.Background(), b, o) }
 
 func newApp(ctx context.Context, b Backend, o Options) *app {
-	m := &app{b: b, o: o, loading: true, helpVP: scrolling(), after: afterCmd, sys: newSysDesktop(), stl: &staleMemo{}, tui: config.TUI{Refresh: o.refresh(), Fetch: o.Fetch}}
+	m := &app{b: b, o: o, loading: true, helpVP: scrolling(), after: afterCmd, sys: newSysDesktop(), stl: &staleMemo{}, tui: config.TUI{Refresh: o.refresh(), Fetch: o.Fetch, Auto: o.Auto}}
 	m.ctx, m.stop = context.WithCancel(ctx)
 	for i := range m.txt {
 		m.txt[i] = scrolling()
@@ -227,7 +228,7 @@ func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.land != nil {
 			m.landOn(*msg.land)
 		}
-		return m, m.autoBackfill()
+		return m, tea.Batch(m.autoBackfill(), m.autoUpdate())
 	case detailMsg:
 		m.detailLoaded(msg)
 		return m, nil

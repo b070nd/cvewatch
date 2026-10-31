@@ -11,6 +11,7 @@ import (
 	"io"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -120,6 +121,8 @@ type Op struct {
 	Version  string         `json:"version,omitempty"`
 	Image    string         `json:"image,omitempty"`
 	Since    string         `json:"since,omitempty"`    // YYYY-MM-DD, for set_since; empty clears
+	Every    string         `json:"every,omitempty"`    // a period, for set_update; "default" removes it, empty leaves it
+	Auto     *bool          `json:"auto,omitempty"`     // for set_update; nil leaves it
 	Lockfile model.Lockfile `json:"lockfile,omitempty"` // for set_lockfile_dev its Dev is the new value
 }
 
@@ -223,6 +226,8 @@ func apply(root *yaml.Node, op Op) error {
 		return setLockfileDev(root, op.Lockfile)
 	case "set_since":
 		return setSince(root, strings.TrimSpace(op.Since))
+	case "set_update":
+		return setUpdate(root, strings.TrimSpace(op.Every), op.Auto)
 	}
 	return fmt.Errorf("unknown kind %q", op.Kind)
 }
@@ -385,6 +390,79 @@ func setSince(root *yaml.Node, since string) error {
 		}
 	}
 	root.Content = append(root.Content[:at], append([]*yaml.Node{str("since", 0), v}, root.Content[at:]...)...)
+	return nil
+}
+
+// ParseEvery reads a period of the update block: a duration such as 30m or 1h,
+// or whole days such as 2d. It must be at least model.MinEvery.
+func ParseEvery(text string) (time.Duration, error) {
+	text = strings.TrimSpace(text)
+	var d time.Duration
+	var err error
+	if days, ok := strings.CutSuffix(text, "d"); ok {
+		var n int
+		if n, err = strconv.Atoi(days); err == nil {
+			d = time.Duration(n) * 24 * time.Hour
+		}
+	} else {
+		d, err = time.ParseDuration(text)
+	}
+	switch {
+	case err != nil:
+		return 0, fmt.Errorf("every must look like 30m, 1h or 2d: %w", err)
+	case d < model.MinEvery:
+		return 0, fmt.Errorf("every must be at least %s, not %s", model.Span(model.MinEvery), text)
+	}
+	return d, nil
+}
+
+// setUpdate sets the period and whether scheduled runs include the project.
+// The defaults (no period, auto on) are removed, and an empty block with them.
+func setUpdate(root *yaml.Node, every string, auto *bool) error {
+	if every == "" && auto == nil {
+		return errors.New("give every, auto or both")
+	}
+	var period time.Duration
+	if every != "" && every != "default" {
+		d, err := ParseEvery(every)
+		if err != nil {
+			return err
+		}
+		period = d
+	}
+	if mapGet(root, "update") == nil {
+		at := 0 // a new block goes after the inventory, before what differs per environment
+		for _, k := range []string{"name", "envs", "techs", "lockfiles", "since"} {
+			if i := mapIndex(root, k); i >= 0 {
+				at = max(at, i+2)
+			}
+		}
+		root.Content = append(root.Content[:at], append([]*yaml.Node{str("update", 0), {Kind: yaml.MappingNode, Tag: "!!map"}}, root.Content[at:]...)...)
+	}
+	upd, err := child(root, "update", yaml.MappingNode, false)
+	if err != nil {
+		return err
+	}
+	switch {
+	case every == "":
+	case period == 0:
+		mapDel(upd, "every")
+	default:
+		setStr(upd, "every", model.Span(period), 0)
+	}
+	switch {
+	case auto == nil:
+	case *auto:
+		mapDel(upd, "auto") // on is the default
+	case mapGet(upd, "auto") != nil:
+		cur := mapGet(upd, "auto")
+		cur.Kind, cur.Tag, cur.Value, cur.Style = yaml.ScalarNode, "!!bool", "false", 0
+	default:
+		mapAppend(upd, "auto", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "false"})
+	}
+	if len(upd.Content) == 0 {
+		mapDel(root, "update")
+	}
 	return nil
 }
 

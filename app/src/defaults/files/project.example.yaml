@@ -8,6 +8,9 @@ techs:                            # generic: every environment runs these; names
 lockfiles:                        # re-read every run
   - {type: composer, path: /path/to/shop/composer.lock}
   - {type: npm, path: /path/to/shop/package-lock.json}
+# update:                         # how often this project is refreshed; both keys are optional
+#   every: 1h                     # default: the interval in config.yaml; at least 5m
+#   auto: true                    # false: scheduled runs skip it (cvewatch update and the F key still include it)
 when@prod:                        # only what differs there, like Symfony's when@prod; the old environments: key still works
   techs: {php: "8.2.30"}          # a version that differs, or a tech that exists only there
   # exclude: [elasticsearch]      # a generic tech that does not run there

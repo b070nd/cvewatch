@@ -44,7 +44,7 @@ func addSetupTools(srv *mcp.Server, s *server, allowWrite bool) {
 		no := false
 		mcp.AddTool(srv, &mcp.Tool{Name: "edit_project", InputSchema: projectInSchema(),
 			Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no},
-			Description: "Apply changes to a project file (created if new): technologies, versions, environments, lockfiles, the since date. Comments in the file are kept, the old file is backed up and the change is audited. Run preview_project_change first and show the user the diff. Only declare what the user confirmed. The kinds of change:\n" + projectfile.KindHelp()}, s.editProject)
+			Description: "Apply changes to a project file (created if new): technologies, versions, environments, lockfiles, the since date, how often it is refreshed. Comments in the file are kept, the old file is backed up and the change is audited. Run preview_project_change first and show the user the diff. Only declare what the user confirmed. The kinds of change:\n" + projectfile.KindHelp()}, s.editProject)
 		mcp.AddTool(srv, &mcp.Tool{Name: "edit_settings",
 			Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no},
 			Description: "Apply changes to the settings (config.yaml, techs.yaml, sources/*.yaml). Comments are kept, the old file is backed up, the change is audited, and a change that would not validate is refused. Run preview_settings_change first and show the user the diff. The daemon uses the new settings from its next cycle."}, s.editSettings)
@@ -213,6 +213,8 @@ type opIn struct {
 	To       string   `json:"to,omitempty"`
 	Image    string   `json:"image,omitempty"`
 	Since    string   `json:"since,omitempty"`
+	Every    string   `json:"every,omitempty"`
+	Auto     *bool    `json:"auto,omitempty"`
 	LockType string   `json:"lockfile_type,omitempty"`
 	LockPath string   `json:"lockfile_path,omitempty"`
 	LockEnv  string   `json:"lockfile_env,omitempty"`
@@ -235,7 +237,7 @@ type projectIn struct {
 func (in projectIn) change(save bool) ops.ProjectChange {
 	c := ops.ProjectChange{Project: in.Project, Save: save}
 	for _, o := range in.Changes {
-		op := projectfile.Op{Kind: o.Kind, Tech: o.Tech, Version: o.Version, Env: model.Env(o.Env), To: model.Env(o.To), Image: o.Image, Since: o.Since,
+		op := projectfile.Op{Kind: o.Kind, Tech: o.Tech, Version: o.Version, Env: model.Env(o.Env), To: model.Env(o.To), Image: o.Image, Since: o.Since, Every: o.Every, Auto: o.Auto,
 			Lockfile: model.Lockfile{Type: o.LockType, Path: o.LockPath, Env: model.Env(o.LockEnv), Dev: o.LockDev}}
 		if l := o.Lockfile; l != nil {
 			op.Lockfile = model.Lockfile{Type: l.Type, Path: l.Path, Env: model.Env(l.Env), Dev: l.Dev}

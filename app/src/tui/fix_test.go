@@ -142,6 +142,9 @@ func (failing) Settings(func(*ops.SettingsSession) error) error {
 func (failing) Fetch(context.Context, func(ops.RefreshProgress)) (pipeline.Result, error) {
 	return pipeline.Result{}, errors.New("no config here")
 }
+func (failing) Update(context.Context, func(ops.RefreshProgress)) (pipeline.Result, error) {
+	return pipeline.Result{}, errors.New("no config here")
+}
 func (failing) Backfill(context.Context, func(ops.RefreshProgress)) (pipeline.Result, error) {
 	return pipeline.Result{}, errors.New("no config here")
 }

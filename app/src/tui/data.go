@@ -55,6 +55,7 @@ type projectRow struct {
 	Environments map[model.Env]model.EnvConfig // deployed versions and image per environment
 	EnvsUnset    bool                          // the file has no envs: Envs is the old default
 	Unjudged     bool                          // its changes are not judged against the stored findings yet
+	Updates      string                        // when it is refreshed: every 1h · next 14:05, paused or manual
 }
 
 func (p projectRow) counts() (errs, warns int) {
@@ -148,7 +149,19 @@ func loadSnapshotMemo(s *ops.Session, memo *staleMemo) (*snapshot, error) {
 		sn.Projects = append(sn.Projects, projectRow{ProjectView: ops.ProjectView{Name: name}, HasFile: true, File: file, Disabled: true})
 	}
 	sn.markUnjudged()
+	sn.markUpdates()
 	return sn, nil
+}
+
+// markUpdates says in words when each project is refreshed.
+func (sn *snapshot) markUpdates() {
+	for i := range sn.Projects {
+		p := &sn.Projects[i]
+		if j := slices.IndexFunc(sn.Status.Projects, func(r status.ProjectRow) bool { return r.Name == p.Name }); j >= 0 {
+			every, next := sn.Status.Schedule(sn.Status.Projects[j])
+			p.Updates = strings.TrimSuffix(every+" · "+next, " · ")
+		}
+	}
 }
 
 // writtenLockfiles reads the lockfiles of a project file as they are written

@@ -77,6 +77,7 @@ func Run(ctx context.Context, root string, o Options) Report {
 	checkAudit(&r, cfg)
 	checkNotify(&r, cfg)
 	checkPolicy(&r, cfg)
+	checkUpdates(&r, cfg)
 	return r
 }
 
@@ -350,4 +351,27 @@ func checkPolicy(r *Report, cfg *config.Bundle) {
 		}
 		r.add(gPolicy, p.Name, OK, "%s", strings.Join(parts, ", "))
 	}
+}
+
+// checkUpdates says how the projects are kept up to date, and warns when the
+// schedule leaves some of them out.
+func checkUpdates(r *Report, cfg *config.Bundle) {
+	if len(cfg.Projects) == 0 {
+		return
+	}
+	if !cfg.Update.Auto {
+		r.add(gConfig, "updates", Warn, "update.auto is off: nothing is refreshed by itself; run cvewatch update or press F in the TUI")
+		return
+	}
+	var paused []string
+	for _, p := range cfg.Projects {
+		if !p.AutoUpdate() {
+			paused = append(paused, p.Name)
+		}
+	}
+	if len(paused) > 0 {
+		r.add(gConfig, "updates", Warn, "scheduled runs skip %s (update.auto: false in the project file); run cvewatch update or press F to refresh them", strings.Join(paused, ", "))
+		return
+	}
+	r.add(gConfig, "updates", OK, "%d projects refreshed on their own schedule, by default every %s", len(cfg.Projects), model.Span(cfg.Interval))
 }

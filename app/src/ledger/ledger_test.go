@@ -308,3 +308,22 @@ func TestCloneIsIndependentAndKeepsTheJudging(t *testing.T) {
 		t.Fatalf("original %+v clone judged %+v", l.Findings()[0], c.Judged())
 	}
 }
+
+func TestLastUpdateSurvivesTheStateAndFollowsARename(t *testing.T) {
+	l := New(State{})
+	if !l.LastUpdate("shop").IsZero() {
+		t.Fatal("never updated is the zero time")
+	}
+	l.SetLastUpdate("shop", day)
+	l.SetLastUpdate("blog", day.Add(time.Hour))
+	again := New(l.State())
+	if !again.LastUpdate("shop").Equal(day) || !again.LastUpdate("blog").Equal(day.Add(time.Hour)) {
+		t.Fatalf("state = %+v", again.State().Updated)
+	}
+	if _, err := again.RenameProject("shop", "webshop"); err != nil {
+		t.Fatal(err)
+	}
+	if !again.LastUpdate("webshop").Equal(day) || !again.LastUpdate("shop").IsZero() || !again.LastUpdate("blog").Equal(day.Add(time.Hour)) {
+		t.Fatalf("the rename moves the time: %+v", again.State().Updated)
+	}
+}

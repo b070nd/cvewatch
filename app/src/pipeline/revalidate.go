@@ -11,6 +11,7 @@ import (
 	"github.com/b070nd/cvewatch/app/src/inventory"
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/query"
+	"github.com/b070nd/cvewatch/app/src/relevance"
 )
 
 const (
@@ -128,10 +129,10 @@ func (c *cycle) revalidate(d inventory.Delta, cur model.Judging, quiet bool) Rev
 	rv := Revalidation{Projects: d.Changed, Backfill: d.Backfill}
 	total := len(l.Findings())
 	c.applySince(&rv)
-	c.rejudge(&rv)
+	c.rejudge(&rv, nil)
 	c.markBackfill(d.Backfill, &rv)
 	reconciled := c.res.Reconciled
-	c.reconcile()
+	c.reconcile(nil)
 	rv.Reconciled = c.res.Reconciled - reconciled
 	rv.Unchanged = max(0, total-rv.Closed-rv.Reopened-rv.Reconciled)
 
@@ -215,10 +216,11 @@ func (c *cycle) setAuto(key string, st model.Status, auto bool, note, prior stri
 }
 
 // rejudge judges every stored record again, creating findings where the
-// current configuration matches and none exists. It never removes any.
-func (c *cycle) rejudge(rv *Revalidation) {
+// current configuration matches and none exists. It never removes any. With
+// only (nil: all) it looks at the targets of those projects.
+func (c *cycle) rejudge(rv *Revalidation, only map[string]bool) {
 	l := c.r.Ledger
-	targets := c.inv.Targets()
+	targets := slices.DeleteFunc(slices.Clone(c.inv.Targets()), func(t relevance.Target) bool { return !has(only, t.Project) })
 	for _, id := range slices.Sorted(maps.Keys(l.State().Vulns)) {
 		v := l.Vuln(id)
 		verdict := c.judge.Judge(ItemOf(v, c.r.Cfg.Sources), targets)
@@ -243,6 +245,24 @@ func (c *cycle) rejudge(rv *Revalidation) {
 		}
 		rv.Changes = append(rv.Changes, ch)
 		c.dirty[v.ID] = true
+	}
+}
+
+// catchUp brings the projects of a restricted run up to date with what the
+// runs that skipped them stored: advisories that match them and affected data
+// that arrived late. A run of every project has nothing to catch up on.
+func (c *cycle) catchUp() {
+	if c.r.Only == nil {
+		return
+	}
+	var rv Revalidation
+	c.rejudge(&rv, c.r.Only)
+	c.res.Findings += rv.NewFindings
+	for _, ch := range rv.Changes {
+		c.res.Fresh[ch.ID] = true
+	}
+	for _, v := range c.r.Ledger.Relevant() {
+		c.reassess(v)
 	}
 }
 

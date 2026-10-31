@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/b070nd/cvewatch/app/src/catalog"
 	"github.com/b070nd/cvewatch/app/src/config"
@@ -116,5 +117,27 @@ func TestProjectNamesAreScoped(t *testing.T) {
 	got, err := s.ProjectNames()
 	if err != nil || len(got) != 1 || got[0] != "shop" {
 		t.Fatalf("got %v %v", got, err)
+	}
+}
+
+func TestEditProjectWritesTheUpdateBlockAndTheViewShowsIt(t *testing.T) {
+	s := editable(t, nil, "alice")
+	paused := false
+	p, err := s.EditProject(ProjectChange{Project: "blog", Ops: append(addPHP, projectfile.Op{Kind: "set_update", Every: "2h", Auto: &paused}), Save: true})
+	if err != nil || !p.Saved {
+		t.Fatalf("%+v %v", p, err)
+	}
+	if b, _ := os.ReadFile(p.Path); !strings.Contains(string(b), "update:\n  every: 2h\n  auto: false\n") {
+		t.Fatalf("block not written:\n%s", b)
+	}
+	if _, err := s.EditProject(ProjectChange{Project: "blog", Ops: []projectfile.Op{{Kind: "set_update", Every: "1m"}}, Save: true}); err == nil {
+		t.Error("a period under 5m is refused")
+	}
+	v := ViewOf(model.Project{Name: "blog", Update: model.ProjectUpdate{Auto: &paused, Every: 2 * time.Hour}})
+	if v.Update == nil || v.Update.Auto || v.Update.Every != "2h" {
+		t.Errorf("view = %+v", v.Update)
+	}
+	if ViewOf(model.Project{Name: "blog"}).Update != nil {
+		t.Error("no block, no view of one")
 	}
 }

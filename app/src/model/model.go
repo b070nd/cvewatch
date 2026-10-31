@@ -230,9 +230,47 @@ type Project struct {
 	Techs     []ProjectTech `yaml:"techs"`
 	Lockfiles []Lockfile    `yaml:"lockfiles"`
 	Since     time.Time     `yaml:"since"` // vulnerabilities published before this day are not checked
+	Update    ProjectUpdate `yaml:"update"`
 	// Environments holds the differences per environment from either spelling,
 	// when@<env> or the old environments: key (EnvConfig.Old says which).
 	Environments map[Env]EnvConfig `yaml:"environments"`
+}
+
+// ProjectUpdate says how often a project is refreshed. The zero value is the
+// default: scheduled runs include the project every global interval.
+type ProjectUpdate struct {
+	Auto  *bool         `yaml:"auto"`  // false: scheduled runs skip the project; a manual update still includes it; nil means true
+	Every time.Duration `yaml:"every"` // how often the project is refreshed; 0 means the global interval
+}
+
+// MinEvery is the shortest period a project can ask for, and LongEvery the
+// period above which a project is hardly refreshed at all.
+const (
+	MinEvery  = 5 * time.Minute
+	LongEvery = 30 * 24 * time.Hour
+)
+
+// Span writes a period the way the configuration spells it: 5m, 1h, 90m, 48h.
+func Span(d time.Duration) string {
+	s := d.String()
+	if strings.HasSuffix(s, "m0s") {
+		s = s[:len(s)-2]
+	}
+	if strings.HasSuffix(s, "h0m") {
+		s = s[:len(s)-2]
+	}
+	return s
+}
+
+// AutoUpdate is whether scheduled runs include the project.
+func (p Project) AutoUpdate() bool { return p.Update.Auto == nil || *p.Update.Auto }
+
+// Every is how often the project is refreshed: its own period, else the global interval.
+func (p Project) Every(global time.Duration) time.Duration {
+	if p.Update.Every > 0 {
+		return p.Update.Every
+	}
+	return global
 }
 
 // EnvConfig is what differs in one environment from the generic configuration.
@@ -263,7 +301,7 @@ func (k *keyAt) UnmarshalYAML(n *yaml.Node) error {
 	return nil
 }
 
-var projectKeys = []string{"name", "envs", "techs", "lockfiles", "since", "environments"}
+var projectKeys = []string{"name", "envs", "techs", "lockfiles", "since", "update", "environments"}
 
 // UnmarshalYAML gathers the when@<env> blocks into Environments next to the
 // old environments: map; any other unknown key stays an error.

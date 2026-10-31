@@ -76,6 +76,40 @@ type CycleRow struct {
 	Err        string    `json:"err,omitempty"`
 }
 
+// ProjectRow is when a project is refreshed: Auto says whether scheduled runs
+// include it, Every how often, LastUpdate when it was last refreshed (zero if
+// never) and Next when the next scheduled run is due (zero when none is).
+type ProjectRow struct {
+	Name       string        `json:"name"`
+	Auto       bool          `json:"auto"`
+	Every      time.Duration `json:"every"`
+	LastUpdate time.Time     `json:"last_update"`
+	Next       time.Time     `json:"next"`
+}
+
+// Schedule says how a project is refreshed, as people say it: every is "every
+// 1h", "paused" (the project opted out) or "manual" (update.auto switched the
+// schedule off for all), next is "next 14:05" ("next 11-02 14:05" on another
+// day), "due now" or empty. Times are shown in the location of the report's
+// time.
+func (r Report) Schedule(p ProjectRow) (every, next string) {
+	switch {
+	case !r.Scheduled:
+		return "manual", ""
+	case !p.Auto:
+		return "paused", ""
+	}
+	every = "every " + model.Span(p.Every)
+	at := p.Next.In(r.GeneratedAt.Location())
+	switch {
+	case !p.Next.After(r.GeneratedAt):
+		return every, "due now"
+	case at.YearDay() == r.GeneratedAt.YearDay() && at.Year() == r.GeneratedAt.Year():
+		return every, "next " + at.Format("15:04")
+	}
+	return every, "next " + at.Format("01-02 15:04")
+}
+
 type Daemon struct {
 	Level     Level         `json:"level"`
 	Mode      string        `json:"mode"` // daemon, or cli when only one-off runs were seen
@@ -93,6 +127,8 @@ type Report struct {
 	Sources     []SourceRow  `json:"sources"`
 	Channels    []ChannelRow `json:"channels"`
 	Cycles      []CycleRow   `json:"cycles"` // most recent first
+	Projects    []ProjectRow `json:"projects"`
+	Scheduled   bool         `json:"scheduled"` // false when update.auto in config.yaml switched the schedule off
 	Warnings    []string     `json:"warnings"`
 }
 
@@ -110,6 +146,9 @@ type Input struct {
 	Health   map[string]model.SourceHealth
 	Delivery map[string]model.ChannelHealth
 	Beat     *model.Heartbeat
+	Projects []ProjectRow
+	// Unscheduled is set when update.auto in config.yaml switched the schedule off.
+	Unscheduled bool
 }
 
 // Build turns stored records into the report every health view shows.
@@ -118,7 +157,7 @@ type Input struct {
 // channel that never ran is unknown, not broken. The daemon is overdue when
 // it is more than half an interval (at least ten minutes) past its next run.
 func Build(in Input) Report {
-	r := Report{GeneratedAt: in.Now, Level: OK}
+	r := Report{GeneratedAt: in.Now, Level: OK, Projects: in.Projects, Scheduled: !in.Unscheduled}
 	stale := in.Interval * 2
 	if stale < 12*time.Hour {
 		stale = 12 * time.Hour
@@ -186,6 +225,9 @@ func (l Level) floor() Level {
 	}
 	return l
 }
+
+// Alive is whether a daemon runs: it recorded a heartbeat and is not overdue.
+func (d Daemon) Alive() bool { return d.Mode == "daemon" && d.Level == OK }
 
 func daemon(in Input) Daemon {
 	d := Daemon{Level: Unknown, Interval: in.Interval}

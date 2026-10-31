@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -55,6 +56,17 @@ func printStatus(r status.Report) {
 	for _, x := range r.Channels {
 		fmt.Printf("  %-8s %-22s %s\n", x.Level, x.Name, detail(x.LastSuccess, x.Failures, x.LastError, -1))
 	}
+	fmt.Println("\nProjects")
+	if len(r.Projects) == 0 {
+		fmt.Println("  none")
+	}
+	if !r.Scheduled {
+		fmt.Println("  scheduled updates are off (update.auto: false in config.yaml); cvewatch update refreshes by hand")
+	}
+	for _, p := range r.Projects {
+		every, next := r.Schedule(p)
+		fmt.Printf("  %-22s %-14s %-16s last update %s\n", p.Name, every, next, orNever(p.LastUpdate))
+	}
 	fmt.Println("\nRecent cycles")
 	for i, c := range r.Cycles {
 		if i == 5 {
@@ -65,6 +77,13 @@ func printStatus(r status.Report) {
 	for _, w := range r.Warnings {
 		fmt.Println("warning:", w)
 	}
+}
+
+func orNever(t time.Time) string {
+	if t.IsZero() {
+		return "never"
+	}
+	return t.Format("2006-01-02 15:04")
 }
 
 func detail(last time.Time, failures int, lastErr string, items int) string {
@@ -276,7 +295,7 @@ type projectEdit struct {
 func parseProjectEdit(args []string) (projectEdit, error) {
 	fs := flag.NewFlagSet("project", flag.ContinueOnError)
 	var set, remove, lock, unlock, lockDev, lockNoDev, envSet, envUnset, envAdd, envRemove, envRename, envExclude, envInclude, techEnvs, image listFlag
-	var since optFlag
+	var since, updateEvery, updateAuto optFlag
 	fs.Var(&set, "set", "declare tech=version (version may be empty), repeatable")
 	fs.Var(&remove, "remove", "stop declaring a tech, repeatable")
 	fs.Var(&lock, "lock", "add a lockfile as type:path[:env][:dev], repeatable")
@@ -293,6 +312,8 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 	fs.Var(&techEnvs, "tech-envs", "limit a generic tech to some environments as tech=env,env (tech= lifts the limit), repeatable")
 	fs.Var(&image, "image", "set the image of an environment as env=tag (empty tag clears), repeatable")
 	fs.Var(&since, "since", "date advisories count from, YYYY-MM-DD (empty clears)")
+	fs.Var(&updateEvery, "update-every", "how often the project is refreshed, such as 30m, 1h or 2d, at least 5m (default removes it: the interval of config.yaml applies)")
+	fs.Var(&updateAuto, "update-auto", "false takes the project out of scheduled runs (update and the F key still include it), true puts it back")
 	envs := fs.String("envs", "", "comma-separated environments, any names (\"all\" means the old default dev,int,staging,prod)")
 	migrate := fs.Bool("migrate-envs", false, "rewrite the old environments: map as when@ENV blocks (same meaning)")
 	save := fs.Bool("save", false, "write the change; without it only show the diff")
@@ -346,6 +367,20 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 	}
 	if since.set {
 		changes = append(changes, projectfile.Op{Kind: "set_since", Since: since.val})
+	}
+	if updateEvery.set || updateAuto.set {
+		op := projectfile.Op{Kind: "set_update", Every: updateEvery.val}
+		if updateAuto.set {
+			on, err := strconv.ParseBool(updateAuto.val)
+			if err != nil {
+				return projectEdit{}, fmt.Errorf("-update-auto must be true or false, not %q", updateAuto.val)
+			}
+			op.Auto = &on
+		}
+		if op.Every == "" && op.Auto == nil {
+			return projectEdit{}, errors.New("-update-every needs a period such as 1h, or default")
+		}
+		changes = append(changes, op)
 	}
 	for _, v := range envSet {
 		env, rest, ok := strings.Cut(v, ":")
@@ -408,7 +443,7 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 		changes = append(changes, projectfile.Op{Kind: "set_image", Env: model.Env(env), Image: img})
 	}
 	if len(changes) == 0 {
-		return projectEdit{}, errors.New("nothing to change: use -set, -remove, -env-set, -env-unset, -image, -lock, -unlock, -lock-dev, -lock-nodev, -since, -envs, -env-add, -env-remove, -env-rename, -env-exclude, -env-include, -tech-envs or -migrate-envs (cvewatch project NAME -h lists them)")
+		return projectEdit{}, errors.New("nothing to change: use -set, -remove, -env-set, -env-unset, -image, -lock, -unlock, -lock-dev, -lock-nodev, -since, -update-every, -update-auto, -envs, -env-add, -env-remove, -env-rename, -env-exclude, -env-include, -tech-envs or -migrate-envs (cvewatch project NAME -h lists them)")
 	}
 	return projectEdit{name: name, ops: changes, save: *save}, nil
 }
