@@ -26,10 +26,23 @@ type Filter struct {
 	Closed    bool           // also list the fixed, ignored and not-affected targets of issues that still have an open one
 	AnyStatus bool           // list issues whose findings are in any status, with all their targets
 	Published TimeRange      // only issues published in this range; the zero value is any time
+
+	Vendor  string            // only the projects of this vendor; model.NoVendor selects those without one
+	Vendors map[string]string // the vendor of each project, how a target's vendor is told; a project not listed has none
+	// Row keeps only the targets it accepts. It gets the issue as far as it is
+	// known before any target (its own fields, no targets) and the target.
+	Row func(Issue, Target) bool
 }
+
+// Allows says whether the filter lets a project's rows through: its project,
+// vendor and access list.
+func (f Filter) Allows(project string) bool { return f.allows(project) }
 
 func (f Filter) allows(project string) bool {
 	if f.Project != "" && project != f.Project {
+		return false
+	}
+	if f.Vendor != "" && model.VendorLabel(f.Vendors[project]) != f.Vendor {
 		return false
 	}
 	return len(f.Projects) == 0 || slices.Contains(f.Projects, project)
@@ -39,6 +52,7 @@ func (f Filter) allowsEnv(env model.Env) bool { return f.Env == "" || f.Env == e
 
 // Target is one project environment affected by an issue.
 type Target struct {
+	Vendor  string              `json:"vendor,omitempty"` // the project's vendor, empty for none
 	Project string              `json:"project"`
 	Env     model.Env           `json:"env"`
 	Status  model.Status        `json:"status"`
@@ -132,16 +146,24 @@ func Open(l *ledger.Ledger, f Filter, now time.Time) []Issue {
 			i := issue(v, now)
 			is = &i
 			byID[v.ID] = is
+		}
+		t := target(fd, now, f.Vendors[fd.Project])
+		if f.Row != nil && !f.Row(*is, t) {
+			continue
+		}
+		if len(is.Targets) == 0 {
 			out = append(out, is)
 		}
-		is.Targets = append(is.Targets, target(fd, now))
+		is.Targets = append(is.Targets, t)
 		is.Applies = worst(is.Applies, fd.Applies, len(is.Targets) == 1)
 		is.ProdOpen = is.ProdOpen || (model.IsProd(fd.Env) && fd.Status == model.StatusOpen)
 	}
 	if f.Closed || f.AnyStatus {
 		for _, fd := range all {
-			if is := byID[fd.VulnID]; !f.AnyStatus && is != nil && fd.Status != model.StatusOpen && f.allows(fd.Project) && f.allowsEnv(fd.Env) {
-				is.Targets = append(is.Targets, target(fd, now))
+			if is := byID[fd.VulnID]; !f.AnyStatus && is != nil && len(is.Targets) > 0 && fd.Status != model.StatusOpen && f.allows(fd.Project) && f.allowsEnv(fd.Env) {
+				if t := target(fd, now, f.Vendors[fd.Project]); f.Row == nil || f.Row(*is, t) {
+					is.Targets = append(is.Targets, t)
+				}
 			}
 		}
 		for _, is := range out {
@@ -155,7 +177,7 @@ func Open(l *ledger.Ledger, f Filter, now time.Time) []Issue {
 	}
 	for _, is := range out {
 		facts := factsOf(l.Vuln(is.ID), is.ProdOpen)
-		is.Priority = priority.Reasons(facts, now)
+		is.Priority = prodWhere(priority.Reasons(facts, now), is.Targets)
 	}
 	slices.SortStableFunc(out, func(a, b *Issue) int {
 		if c := priority.Compare(factsOf(l.Vuln(a.ID), a.ProdOpen), factsOf(l.Vuln(b.ID), b.ProdOpen)); c != 0 {
@@ -168,6 +190,29 @@ func Open(l *ledger.Ledger, f Filter, now time.Time) []Issue {
 		res[i] = *p
 	}
 	return res
+}
+
+// prodWhere names the projects an issue is open in prod in when it spans
+// several, so the reason does not read as true for all of them.
+func prodWhere(reasons []string, ts []Target) []string {
+	var all, prod []string
+	for _, t := range ts {
+		if !slices.Contains(all, t.Project) {
+			all = append(all, t.Project)
+		}
+		if model.IsProd(t.Env) && t.Status == model.StatusOpen && !slices.Contains(prod, t.Project) {
+			prod = append(prod, t.Project)
+		}
+	}
+	if len(all) < 2 || len(prod) == 0 {
+		return reasons
+	}
+	for i, r := range reasons {
+		if r == "open in prod" {
+			reasons[i] = r + ": " + strings.Join(prod, ", ")
+		}
+	}
+	return reasons
 }
 
 func factsOf(v *model.Vulnerability, prodOpen bool) priority.Facts {
@@ -184,7 +229,7 @@ func One(l *ledger.Ledger, id string, f Filter, now time.Time) (Issue, error) {
 	is := issue(v, now)
 	for _, fd := range l.FindingsOf(v.ID) {
 		if f.allows(fd.Project) {
-			is.addTarget(fd, now)
+			is.addTarget(fd, now, f.Vendors[fd.Project])
 		}
 	}
 	if len(f.Projects) > 0 && len(is.Targets) == 0 {
@@ -219,8 +264,8 @@ func Entries(l *ledger.Ledger, f Filter, now time.Time) []calendar.Entry {
 }
 
 // addTarget lists a finding on the issue and folds it into the issue's verdicts.
-func (is *Issue) addTarget(fd model.Finding, now time.Time) {
-	is.Targets = append(is.Targets, target(fd, now))
+func (is *Issue) addTarget(fd model.Finding, now time.Time, vendor string) {
+	is.Targets = append(is.Targets, target(fd, now, vendor))
 	is.Applies = worst(is.Applies, fd.Applies, len(is.Targets) == 1)
 	is.ProdOpen = is.ProdOpen || (model.IsProd(fd.Env) && fd.Status == model.StatusOpen)
 }
@@ -291,13 +336,13 @@ func cleanFixes(fs []model.Fix) []model.Fix {
 	return out
 }
 
-func target(f model.Finding, now time.Time) Target {
+func target(f model.Finding, now time.Time, vendor string) Target {
 	a := f.Applies
 	if a == "" {
 		a = model.AppUnknown
 	}
 	return Target{
-		Project: f.Project, Env: f.Env, Status: f.Status, Applies: a, Note: f.Note, Matched: f.Matched, Reasons: f.Reasons,
+		Vendor: vendor, Project: f.Project, Env: f.Env, Status: f.Status, Applies: a, Note: f.Note, Matched: f.Matched, Reasons: f.Reasons,
 		Owner: f.Owner, Due: f.Due, Overdue: !f.Due.IsZero() && now.After(f.Due) && f.Status == model.StatusOpen,
 		Ticket: f.Ticket, Updated: f.Updated, Evidence: len(f.Evidence),
 	}

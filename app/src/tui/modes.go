@@ -40,6 +40,8 @@ type binding struct {
 	short string // label in the footer; empty keeps it out of the footer
 	prio  int    // 0 is never dropped from the footer; a higher number goes sooner
 	alias bool   // works, but is left out of footer and help
+	tabs  bool   // switches the screen: the small letter of a screen does too when no other binding of the mode has it
+	foot  string // the hint as the footer shows it, when it is not the keys and the short label
 	nav   bool   // only moves around: what is on screen, an error included, stays
 	when  func(m *app) bool
 	do    func(m *app, k tea.KeyMsg) tea.Cmd
@@ -87,6 +89,10 @@ func (m *app) dispatch(k tea.KeyMsg) (cmd tea.Cmd, moved bool) {
 			return b.do(m, k), b.nav
 		}
 	}
+	if scr, ok := md.screenSwitch(s); ok {
+		m.scr = scr
+		return nil, true
+	}
 	switch {
 	case md.typed != nil:
 		md.typed(m, k)
@@ -94,6 +100,32 @@ func (m *app) dispatch(k tea.KeyMsg) (cmd tea.Cmd, moved bool) {
 		moved = md.move(m, s)
 	}
 	return nil, moved
+}
+
+// screenSwitch is the screen the small letter s jumps to. It works in a mode
+// that switches screens and is not a text input, and only on a letter that no
+// binding of the mode has, whether or not the binding is on right now, so the
+// key never does two things on the same screen.
+func (md *mode) screenSwitch(s string) (screen, bool) {
+	if md.typed != nil || !md.switches() {
+		return 0, false
+	}
+	for i := range md.binds {
+		if md.binds[i].has(s) {
+			return 0, false
+		}
+	}
+	return screenByKey(s, true)
+}
+
+// switches is whether the mode has the screen keys.
+func (md *mode) switches() bool {
+	for i := range md.binds {
+		if md.binds[i].tabs {
+			return true
+		}
+	}
+	return false
 }
 
 // stack is the open layers, the screen at the bottom and the mode that gets
@@ -160,7 +192,11 @@ func (md *mode) footerLine(m *app, w int) string {
 		if b.alias || b.short == "" || !b.on(m) {
 			continue
 		}
-		items = append(items, item{strings.TrimSpace(b.shown() + " " + b.short), b.prio})
+		text := strings.TrimSpace(b.shown() + " " + b.short)
+		if b.foot != "" {
+			text = b.foot
+		}
+		items = append(items, item{text, b.prio})
 	}
 	size := func() int {
 		n := 0
@@ -195,6 +231,7 @@ var everywhere = [][2]string{
 	{"q", "quit on the first level of a screen; inside a level or a popup it works like esc"},
 	{"ctrl+c", "quit at once, from anywhere"},
 	{"tab, shift+tab, " + screenKeys(), "switch screen: " + screenList()},
+	{"C", "choose the context: all projects, one vendor or one project; every screen and action works inside it only"},
 	{"mouse", "wheel scrolls, a click selects (a second click opens), breadcrumb and tabs are clickable"},
 }
 

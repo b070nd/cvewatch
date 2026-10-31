@@ -13,10 +13,10 @@ func (s *Session) Search(text string, f query.Filter, openOnly bool) ([]query.Is
 	}
 	f.All = true
 	f.AnyStatus = !openOnly
+	f.Row = q.Row // the terms that name a project, vendor, environment or status hold on one row, and only those rows are listed
 	var exact, rest []query.Issue
 	for _, is := range query.Open(s.Ledger, f, s.Now()) {
 		switch {
-		case !q.Match(is):
 		case q.Exact(is):
 			exact = append(exact, is)
 		default:

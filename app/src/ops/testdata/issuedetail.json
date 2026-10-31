@@ -80,7 +80,7 @@
   "Why": [
     "known exploited (CISA KEV), CISA remediation due 2026-10-05",
     "critical severity",
-    "open in prod",
+    "open in prod: mw, shop",
     "EPSS 50% chance of exploitation in 30 days"
   ],
   "Targets": [

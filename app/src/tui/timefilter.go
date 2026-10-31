@@ -92,7 +92,7 @@ func (m *app) timeChip() string {
 // chips are the notes at the right end of the breadcrumb line that fit in w
 // cells; the one dropped first is the time filter.
 func (m *app) chips(w int) (timeChip, scopeChip string) {
-	timeChip, scopeChip = m.timeChip(), m.scopeChip()
+	timeChip, scopeChip = m.timeChip(), m.tenantChip()
 	room := func() int {
 		n := 0
 		for _, c := range []string{timeChip, scopeChip} {

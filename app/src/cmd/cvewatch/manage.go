@@ -37,14 +37,27 @@ func statusCmd(s *ops.Session, args []string) error {
 		return printJSON(rep)
 	}
 	printStatus(rep)
-	if rep.Level == status.Fail {
+	if rep.Level == status.Red {
 		return errors.New("status: something is failing") // a non-zero exit lets cron and CI notice
 	}
 	return nil
 }
 
 func printStatus(r status.Report) {
-	fmt.Printf("Overall: %s\n\nDaemon:  %-8s %s\n", r.Level, r.Daemon.Level, r.Daemon.Message)
+	fmt.Println(r.Summary(r.GeneratedAt))
+	for _, p := range r.Problems {
+		fmt.Printf("\n%-6s %s\n", p.Level.Label(), p.Title)
+		if p.Detail != "" {
+			fmt.Printf("       %s\n", p.Detail)
+		}
+		if p.Hint != "" {
+			fmt.Printf("       -> %s\n", p.Hint)
+		}
+		if !p.Since.IsZero() {
+			fmt.Printf("       since %s\n", p.Since.In(r.GeneratedAt.Location()).Format("2006-01-02 15:04"))
+		}
+	}
+	fmt.Printf("\nDaemon:  %-8s %s\n", r.Daemon.Level, r.Daemon.Message)
 	fmt.Println("\nFeeds")
 	for _, x := range r.Sources {
 		fmt.Printf("  %-8s %-22s %s\n", x.Level, x.ID, detail(x.LastSuccess, x.Failures, x.LastError, x.Items))
@@ -73,9 +86,6 @@ func printStatus(r status.Report) {
 			break
 		}
 		fmt.Printf("  %s  %d items, %d new, %d alerted, %d failed feeds\n", c.Started.Format("2006-01-02 15:04"), c.Items, c.New, c.Alerted, c.Failed)
-	}
-	for _, w := range r.Warnings {
-		fmt.Println("warning:", w)
 	}
 }
 
@@ -263,7 +273,7 @@ func listProjects(s *ops.Session) error {
 		for _, t := range p.Techs {
 			techs = append(techs, strings.TrimSpace(t.Name+" "+t.Version))
 		}
-		fmt.Printf("%-18s %d lockfiles  %s\n", p.Name, len(p.Lockfiles), strings.Join(techs, ", "))
+		fmt.Printf("%-18s %-14s %d lockfiles  %s\n", p.Name, model.VendorLabel(p.Vendor), len(p.Lockfiles), strings.Join(techs, ", "))
 	}
 	off, err := s.DisabledProjects()
 	if err != nil {
@@ -295,7 +305,7 @@ type projectEdit struct {
 func parseProjectEdit(args []string) (projectEdit, error) {
 	fs := flag.NewFlagSet("project", flag.ContinueOnError)
 	var set, remove, lock, unlock, lockDev, lockNoDev, envSet, envUnset, envAdd, envRemove, envRename, envExclude, envInclude, techEnvs, image listFlag
-	var since, updateEvery, updateAuto optFlag
+	var since, vendor, updateEvery, updateAuto optFlag
 	fs.Var(&set, "set", "declare tech=version (version may be empty), repeatable")
 	fs.Var(&remove, "remove", "stop declaring a tech, repeatable")
 	fs.Var(&lock, "lock", "add a lockfile as type:path[:env][:dev], repeatable")
@@ -312,6 +322,7 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 	fs.Var(&techEnvs, "tech-envs", "limit a generic tech to some environments as tech=env,env (tech= lifts the limit), repeatable")
 	fs.Var(&image, "image", "set the image of an environment as env=tag (empty tag clears), repeatable")
 	fs.Var(&since, "since", "date advisories count from, YYYY-MM-DD (empty clears)")
+	fs.Var(&vendor, "vendor", "the vendor (customer or organisation) that owns the project, a lowercase name (empty clears)")
 	fs.Var(&updateEvery, "update-every", "how often the project is refreshed, such as 30m, 1h or 2d, at least 5m (default removes it: the interval of config.yaml applies)")
 	fs.Var(&updateAuto, "update-auto", "false takes the project out of scheduled runs (update and the F key still include it), true puts it back")
 	envs := fs.String("envs", "", "comma-separated environments, any names (\"all\" means the old default dev,int,staging,prod)")
@@ -367,6 +378,9 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 	}
 	if since.set {
 		changes = append(changes, projectfile.Op{Kind: "set_since", Since: since.val})
+	}
+	if vendor.set {
+		changes = append(changes, projectfile.Op{Kind: "set_vendor", Vendor: vendor.val})
 	}
 	if updateEvery.set || updateAuto.set {
 		op := projectfile.Op{Kind: "set_update", Every: updateEvery.val}
@@ -443,7 +457,7 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 		changes = append(changes, projectfile.Op{Kind: "set_image", Env: model.Env(env), Image: img})
 	}
 	if len(changes) == 0 {
-		return projectEdit{}, errors.New("nothing to change: use -set, -remove, -env-set, -env-unset, -image, -lock, -unlock, -lock-dev, -lock-nodev, -since, -update-every, -update-auto, -envs, -env-add, -env-remove, -env-rename, -env-exclude, -env-include, -tech-envs or -migrate-envs (cvewatch project NAME -h lists them)")
+		return projectEdit{}, errors.New("nothing to change: use -set, -remove, -env-set, -env-unset, -image, -lock, -unlock, -lock-dev, -lock-nodev, -since, -vendor, -update-every, -update-auto, -envs, -env-add, -env-remove, -env-rename, -env-exclude, -env-include, -tech-envs or -migrate-envs (cvewatch project NAME -h lists them)")
 	}
 	return projectEdit{name: name, ops: changes, save: *save}, nil
 }

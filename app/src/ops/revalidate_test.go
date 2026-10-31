@@ -36,8 +36,8 @@ func TestRevalidateDryRunApplyAndIdempotence(t *testing.T) {
 	if err != nil || !done.Applied || done.NewFindings != pre.NewFindings {
 		t.Fatalf("apply must do what the preview said: %+v vs %+v (%v)", done, pre, err)
 	}
-	if n, err := audit.Open(cfg.DataDir).Verify(); err != nil || n != 1 {
-		t.Fatalf("one audit event expected: n=%d err=%v", n, err)
+	if n, err := audit.Open(cfg.DataDir).Verify(); err != nil || n != 1+done.NewFindings { // the revalidation itself, and a detection per new finding
+		t.Fatalf("one audit event for the run and one per new finding expected: n=%d err=%v", n, err)
 	}
 	re := open(t, cfg, st, "alice") // persisted
 	if again, err := re.Revalidate(true); err != nil || again.NewFindings+again.Closed+again.Reopened+again.Reconciled != 0 {

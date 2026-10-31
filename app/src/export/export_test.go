@@ -27,10 +27,10 @@ func sample() []query.Issue {
 		EPSS:     &model.EPSS{Score: 0.97312, Percentile: 0.99, Date: now.Add(-24 * time.Hour)},
 		Priority: []string{"known exploited", "open in prod"}, ProdOpen: true, Report: "reports/CVE-2026-0001.md",
 		Targets: []query.Target{
-			{Project: "shop", Env: model.EnvStaging, Status: model.StatusOpen, Applies: model.AppAffected, Matched: []string{"php 8.2.1", "ext-x"},
+			{Vendor: "acme", Project: "shop", Env: model.EnvStaging, Status: model.StatusOpen, Applies: model.AppAffected, Matched: []string{"php 8.2.1", "ext-x"},
 				Reasons: []string{"version in range", "tech match"}, Owner: "ann", Due: now.Add(-24 * time.Hour), Overdue: true, Ticket: "OPS-1",
 				Updated: now.Add(-time.Hour), Note: "waiting for window", Evidence: 2},
-			{Project: "shop", Env: model.EnvProd, Status: model.StatusOpen, Applies: model.AppAffected, Matched: []string{"php 8.2.1"},
+			{Vendor: "acme", Project: "shop", Env: model.EnvProd, Status: model.StatusOpen, Applies: model.AppAffected, Matched: []string{"php 8.2.1"},
 				Owner: "bob", Due: now.Add(24 * time.Hour), Updated: now},
 			{Project: "blog", Env: model.EnvProd, Status: model.StatusFixed, Applies: model.AppUnknown, Matched: []string{}, Updated: now},
 		},
@@ -113,7 +113,7 @@ func TestJSONRoundTrip(t *testing.T) {
 
 func TestCSVHeaderAndRows(t *testing.T) {
 	rows := csvRows(t, New(sample(), now))
-	if got := strings.Join(rows[0], ","); got != "id,aliases,severity,cvss,kev,kev_due,epss,published,age_hours,priority,project,env,status,applies,owner,due,overdue,ticket,matched,reasons,fix_available,official_fix,articles,note,updated,title,url" {
+	if got := strings.Join(rows[0], ","); got != "id,aliases,severity,cvss,kev,kev_due,epss,published,age_hours,priority,project,env,status,applies,owner,due,overdue,ticket,matched,reasons,fix_available,official_fix,articles,note,updated,title,url,vendor" {
 		t.Fatalf("header %s", got)
 	}
 	if len(rows) != 4 {
@@ -125,12 +125,15 @@ func TestCSVHeaderAndRows(t *testing.T) {
 		"project": "shop", "env": "staging", "status": "open", "applies": "affected", "owner": "ann", "due": "2026-10-27", "overdue": "true",
 		"ticket": "OPS-1", "matched": "php 8.2.1; ext-x", "reasons": "version in range; tech match", "fix_available": "true",
 		"official_fix": "true", "articles": "2", "note": "waiting for window", "updated": "2026-10-28T11:00:00Z",
-		"title": "PHP remote code execution", "url": "https://example.com/a",
+		"title": "PHP remote code execution", "url": "https://example.com/a", "vendor": "acme",
 	}
 	for k, v := range want {
 		if got := rows[1][col(t, k)]; got != v {
 			t.Errorf("%s = %q, want %q", k, got, v)
 		}
+	}
+	if rows[3][col(t, "vendor")] != "" {
+		t.Errorf("a project without a vendor has an empty cell: %q", rows[3][col(t, "vendor")])
 	}
 	if rows[2][col(t, "overdue")] != "false" || rows[3][col(t, "project")] != "blog" || rows[3][col(t, "due")] != "" {
 		t.Errorf("rows 2/3: %v %v", rows[2], rows[3])
@@ -385,5 +388,22 @@ func TestSARIFHasARulePerIssueAndAResultPerTarget(t *testing.T) {
 	r := got.Runs[0]
 	if got.Version != "2.1.0" || len(r.Tool.Driver.Rules) != 2 || len(r.Results) != 2 || r.Results[0].Level != "error" || r.Results[0].RuleID != "CVE-2026-1" {
 		t.Fatalf("sarif = %s", buf.String())
+	}
+}
+
+func TestMarkdownAndSARIFNameTheVendor(t *testing.T) {
+	var md, sarif strings.Builder
+	d := New(sample(), now)
+	if err := d.WriteMarkdown(&md); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(md.String(), "\n## shop (vendor acme)\n") || !strings.Contains(md.String(), "\n## blog\n") {
+		t.Errorf("markdown:\n%s", md.String())
+	}
+	if err := d.WriteSARIF(&sarif); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(sarif.String(), `"vendor": "acme"`) != 2 {
+		t.Errorf("sarif:\n%s", sarif.String())
 	}
 }

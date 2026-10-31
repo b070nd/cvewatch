@@ -82,7 +82,7 @@ func (d Document) WriteJSON(w io.Writer) error {
 var csvHeader = []string{
 	"id", "aliases", "severity", "cvss", "kev", "kev_due", "epss", "published", "age_hours", "priority",
 	"project", "env", "status", "applies", "owner", "due", "overdue", "ticket", "matched", "reasons",
-	"fix_available", "official_fix", "articles", "note", "updated", "title", "url",
+	"fix_available", "official_fix", "articles", "note", "updated", "title", "url", "vendor",
 }
 
 // WriteCSV writes one row per issue and target. Text cells come from public
@@ -122,7 +122,7 @@ func (d Document) WriteCSV(w io.Writer) error {
 				cell(strings.Join(t.Matched, "; ")), cell(strings.Join(t.Reasons, "; ")),
 				strconv.FormatBool(is.Fix.Available), strconv.FormatBool(is.Fix.Official),
 				strconv.Itoa(len(is.Untrusted.Articles)), cell(t.Note), stamp(t.Updated),
-				cell(is.Untrusted.Title), cell(url),
+				cell(is.Untrusted.Title), cell(url), cell(t.Vendor),
 			}
 			if err := cw.Write(row); err != nil {
 				return err
@@ -185,6 +185,7 @@ func (d Document) WriteMarkdown(w io.Writer) error {
 		t  query.Target
 	}
 	var names []string
+	vendors := map[string]string{}
 	groups := map[string][]row{}
 	for _, is := range d.Issues {
 		if len(is.Targets) == 0 {
@@ -197,6 +198,7 @@ func (d Document) WriteMarkdown(w io.Writer) error {
 		for _, t := range is.Targets {
 			if _, ok := groups[t.Project]; !ok {
 				names = append(names, t.Project)
+				vendors[t.Project] = t.Vendor
 			}
 			groups[t.Project] = append(groups[t.Project], row{is, t})
 		}
@@ -204,7 +206,11 @@ func (d Document) WriteMarkdown(w io.Writer) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Vulnerability export\n\nGenerated: %s\n\nCount: %d\n", d.GeneratedAt.UTC().Format(time.RFC3339), d.Count)
 	for _, name := range names {
-		fmt.Fprintf(&b, "\n## %s\n\n", mdCell(name))
+		heading := mdCell(name)
+		if v := vendors[name]; v != "" {
+			heading += " (vendor " + mdCell(v) + ")"
+		}
+		fmt.Fprintf(&b, "\n## %s\n\n", heading)
 		b.WriteString("| ID | Sev | Env | Status | Version | Owner | Due | Age | Fix | KEV | Title |\n")
 		b.WriteString("|---|---|---|---|---|---|---|---|---|---|---|\n")
 		for _, r := range groups[name] {

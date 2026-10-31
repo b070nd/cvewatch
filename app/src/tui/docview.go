@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/b070nd/cvewatch/app/src/ops"
+	"github.com/b070nd/cvewatch/app/src/query"
 )
 
 const (
@@ -106,7 +107,7 @@ func (m *app) openEvidence() tea.Cmd {
 		return nil
 	}
 	d.doc = newDoc(docEvidence, "", true)
-	cmd := m.start("loading the evidence pack...", "evidence "+d.id, 0, nil, evidenceCmd(m.b, d.id))
+	cmd := m.start("loading the evidence pack...", "evidence "+d.id, 0, nil, evidenceCmd(m.b, d.id, d.filter))
 	if cmd == nil {
 		d.doc = nil
 	}
@@ -127,11 +128,11 @@ type evidenceMsg struct {
 }
 
 // evidenceCmd renders the evidence pack as markdown.
-func evidenceCmd(b Backend, id string) tea.Cmd {
+func evidenceCmd(b Backend, id string, f query.Filter) tea.Cmd {
 	return func() tea.Msg {
 		m := evidenceMsg{id: id}
 		m.err = b.Read(func(s *ops.Session) error {
-			p, err := s.Evidence(id)
+			p, err := s.EvidenceIn(id, f)
 			if err != nil {
 				return err
 			}

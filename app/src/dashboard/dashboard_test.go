@@ -190,19 +190,19 @@ func TestPolicyTable(t *testing.T) {
 
 func TestHealthSection(t *testing.T) {
 	d := Data{Status: status.Report{
-		Level:  status.Fail,
-		Daemon: status.Daemon{Level: status.Warn, Mode: "daemon", LastCycle: now.Add(-time.Hour), NextRun: now.Add(time.Hour), Message: "slow cycle"},
+		Level:  status.Red,
+		Daemon: status.Daemon{Level: status.Yellow, Mode: "daemon", LastCycle: now.Add(-time.Hour), NextRun: now.Add(time.Hour), Message: "slow cycle"},
 		Sources: []status.SourceRow{
-			{ID: "ghsa", Type: "rss", Level: status.OK, LastSuccess: now},
-			{ID: "bad", Type: "rss", Level: status.Fail, Failures: 7, LastError: "boom: connection refused"},
+			{ID: "ghsa", Type: "rss", Level: status.Green, LastSuccess: now},
+			{ID: "bad", Type: "rss", Level: status.Red, Failures: 7, LastError: "boom: connection refused"},
 		},
-		Channels: []status.ChannelRow{{Name: "slack", Level: status.OK}},
+		Channels: []status.ChannelRow{{Name: "slack", Level: status.Green}},
 		Cycles:   []status.CycleRow{{Started: now, Items: 10, New: 2, Findings: 3, Alerted: 1, Failed: 1, Err: "cycle err"}},
 		Warnings: []string{"config is old"},
 	}}
 	page := HTML(d, now)
 	for _, want := range []string{
-		"✖ FAIL", "! WARN", "✔ OK", "slow cycle", "2026-10-28 11:00 UTC", "2026-10-28 13:00 UTC",
+		"✖ RED", "▲ YELLOW", "● GREEN", "slow cycle", "2026-10-28 11:00 UTC", "2026-10-28 13:00 UTC",
 		"boom: connection refused", "<td>7</td>", "cycle err", "config is old", "slack", "never",
 	} {
 		if !strings.Contains(page, want) {
@@ -212,8 +212,31 @@ func TestHealthSection(t *testing.T) {
 	if strings.Index(page, "<td>bad</td>") > strings.Index(page, "<td>ghsa</td>") {
 		t.Error("sources should be sorted by id")
 	}
-	if !strings.Contains(HTML(Data{}, now), "? UNKNOWN") {
-		t.Error("empty level should read unknown")
+	if page := HTML(Data{}, now); strings.Contains(page, "UNKNOWN") || !strings.Contains(page, "▲ YELLOW") {
+		t.Error("an empty level must not read green")
+	}
+}
+
+func TestProblemsComeFirst(t *testing.T) {
+	d := Data{
+		Issues: []query.Issue{issue("CVE-1", model.SevHigh, tgt("shop", model.EnvProd, model.StatusOpen))},
+		Status: status.Report{Level: status.Red, Problems: []status.Problem{
+			{Key: "feed:kev", Level: status.Red, Title: "feed kev is failing", Detail: "failed 4 times in a row: status 503", Hint: "check the network", Since: now.Add(-time.Hour)},
+			{Key: "project:blog", Level: status.Yellow, Title: "project blog cannot be used fully"},
+		}},
+	}
+	page := HTML(d, now)
+	for _, want := range []string{"2 problems", "feed kev is failing", "status 503", "check the network", "since 2026-10-28 11:00 UTC", "project blog cannot be used fully"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	if strings.Index(page, "feed kev is failing") > strings.Index(page, "CVE-1") || strings.Index(page, "feed kev is failing") > strings.Index(page, "project blog") {
+		t.Error("problems come before the issues, red before yellow")
+	}
+	ok := HTML(Data{Status: status.Report{Level: status.Green, Cycles: []status.CycleRow{{Finished: now.Add(-4 * time.Minute)}}}}, now)
+	if !strings.Contains(ok, "● GREEN") || !strings.Contains(ok, "last check 11:56 (4m ago)") || strings.Contains(ok, "<h2>Problems</h2>") {
+		t.Errorf("green shows the last check and no problems section")
 	}
 }
 
@@ -277,7 +300,7 @@ func TestNoActiveOrExternalContent(t *testing.T) {
 		Projects:   []Project{{Name: "shop", Envs: fullEnvs()}},
 		Issues:     []query.Issue{is},
 		Violations: []priority.Violation{{Rule: "r"}},
-		Status:     status.Report{Level: status.OK, Sources: []status.SourceRow{{ID: "s"}}},
+		Status:     status.Report{Level: status.Green, Sources: []status.SourceRow{{ID: "s"}}},
 	}
 	for _, page := range []string{HTML(d, now), HTML(Data{}, now)} {
 		if !strings.Contains(page, `content="default-src 'none'; style-src 'unsafe-inline'"`) {

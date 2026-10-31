@@ -29,6 +29,7 @@ cvewatch search -- -wordpress
 |---|---|
 | `-open` | findings that are still open. Each issue shows only its open environments. |
 | `-min S` | this severity and above: `low`, `medium`, `high` or `critical` |
+| `-vendor V` | the projects of one vendor; `-` means the projects without a vendor |
 | `-project P` | one project |
 | `-env E` | one environment, by its name, such as `dev`, `prod` or `qa-2` |
 | `-published T` | published in this time: `hour`, `day`, `week`, `month`, `year`, a span such as `7d`, or a range such as `2026-01-01..2026-03-01` (the same values as the `published:` field) |
@@ -36,7 +37,7 @@ cvewatch search -- -wordpress
 
 Without `-open`, every status counts: open, fixed, ignored and not affected. Each issue lists its environments with their status.
 
-The output starts with `Matches: N` and groups the issues by severity, as `list` does. A word that equals an ID or an alias puts that issue first. The other issues keep the order of `list`. If nothing matches, the output says `No issue matches "..."`.
+The output starts with `Matches: N` and groups the issues by severity, as `list` does. Every issue lists only the environments that match: a project, vendor or environment filter, or a term of the query, removes the other rows from the issue, so rows of different projects are never mixed. A word that equals an ID or an alias puts that issue first. The other issues keep the order of `list`. If nothing matches, the output says `No issue matches "..."`.
 
 ### A query that starts with a dash
 
@@ -69,7 +70,8 @@ Rules:
 
 - Words are not case sensitive. `PHP` finds `php`.
 - A word matches part of a word. `php` also finds `phpmyadmin`.
-- A plain word looks in the ID, aliases, title, description, technologies, project, environment, owner, ticket and matched packages.
+- A plain word looks in the ID, aliases, title, description, technologies, vendor, project, environment, owner, ticket and matched packages.
+- Everything that names a row (`vendor`, `project`, `env`, `status`, `applies`, `owner`, `ticket`, `overdue`, and a plain word that matches one of them) must hold on the same project environment. `project:crm env:prod` finds nothing when `crm` has no prod environment, even if another project has one. An exclusion keeps the rows that do not match: `-owner:ann` lists the environments Ann does not own.
 - The dash must come right before the word, with no space.
 - `OR` must be in capitals, with a term on each side. Otherwise it is an ordinary word, so `php or openssl` looks for three words.
 - `OR` binds tighter than the space. `php OR openssl status:open` means (php or openssl) and status open.
@@ -77,7 +79,7 @@ Rules:
 
 A mistake stops the search with a message instead of an empty list:
 
-- `unknown field "foo"; use one of: id, severity, project, env, owner, ticket, tech, status, applies, kev, fix, overdue, after, before, published`
+- `unknown field "foo"; use one of: id, severity, vendor, project, env, owner, ticket, tech, status, applies, kev, fix, overdue, after, before, published`
 - `unknown severity "urgent"; use low, medium, high, critical or unknown, and add + for that or worse`
 - `missing value after owner:`
 - `bad date "2026-9-1" for after; use YYYY-MM-DD`
@@ -90,6 +92,7 @@ Each field has a short alias where one is shown.
 |---|---|---|---|
 | `id` (`cve`) | the ID or an alias. A `*` at the end matches a prefix. | any ID | `id:CVE-2026-1234`, `id:CVE-2026-12*` |
 | `severity` (`sev`) | the severity. `+` means that severity or worse. | `low`, `medium`, `high`, `critical`, `unknown` | `severity:high+` |
+| `vendor` | the vendor of the project (the customer or organisation that owns it); `-` selects projects without one | the `vendor:` of the project file | `vendor:acme`, `vendor:-` |
 | `project` | the project | the name in the project file | `project:shop` |
 | `env` | the environment | any environment name the project uses, such as `dev`, `prod` or `qa-2` | `env:prod` |
 | `owner` | the owner set with `assign` | any name | `owner:"Jane Doe"` |
@@ -118,7 +121,7 @@ Notes:
 Access rules apply everywhere: you find only issues in projects you may see, as with `list`.
 
 - **Command line:** `cvewatch search`. An unknown ID given to `cvewatch show` gets suggestions from the same search.
-- **MCP:** the `search_findings` tool, for agents. Its input is `query`, with the optional `open_only`, `min_severity`, `project` and `env`. These mean the same as the flags. It returns the same JSON document as `list_findings`. See [agents.md](agents.md).
+- **MCP:** the `search_findings` tool, for agents. Its input is `query`, with the optional `open_only`, `min_severity`, `vendor`, `project` and `env`. These mean the same as the flags. It returns the same JSON document as `list_findings`. See [agents.md](agents.md).
 - **Terminal UI:** on the findings screen, press `/` and type. The list narrows as you type, and `esc` clears the filter. While the text is not a complete query yet, such as `severity:` without a value, the filter matches the plain words only. It checks them against the ID, title, technologies, aliases, projects, environments and owners. `published:` works there too. The `t` key cycles the same presets as a quick filter (any time, hour, day, week, month, year), and `0` clears it.
 
 ## Limits

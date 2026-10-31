@@ -31,8 +31,8 @@ One package per concern under `app/src`. The arrows show who depends on whom; th
 | `mcpserver`, `cmd/cvewatch` | the MCP server and the CLI: parse input, call `ops`, print or return the result. The setup tools are in `setup.go`, the settings and whole-project tools in `manage.go`; the project input schema is built from `OpTable` (`schema.go`) | `ops` |
 | `setup` | the setup flow: steps as data, defaults, validation, answers turned into project-file edits; `differ.go` holds the per-environment question and the difference lines; `custom.go` holds your own keyword technologies (`Lookup`, `AddCustom`, `Hints`) | `wizard`, `tui` and MCP are its adapters |
 | `projectflow` | the one place that turns a typed folder or file (`ResolveSource`, scanned by `ScanSource`) or an existing project into a setup flow (`Open`), and the flow into project-file edits (`Edits`); `Change` adds the staged own technologies (`NewTechs`) so they are written with the project; lockfile paths made relative to the root | `ops.Session`; used by `tui`, `wizard` and `doctor` (`init`). Imports `ops`, `setup`, `discovery`, `projectfile`, `model` |
-| `wizard`, `tui` | plain prompt and full-screen front ends of the setup flow. The TUI has five screens (Overview, Findings, Projects, Status and Settings), the project forms, the field editor, the lifecycle prompts, prompts and the folder box; see [The TUI](#the-tui). `tui` is its own program (`cvewatch-tui`) because Bubble Tea queries the terminal at start-up | `ops.Session` and `ops.SettingsSession`, through the `Backend` seam (`Read`, `Write`, `Settings`, `Fetch`, `Update`, `Backfill` and `TUISettings`) |
-| `status` | health of the tool: daemon, feeds, channels, cycles, and the last update and next due time of each project (`ProjectRow`, `Report.Schedule`) | none: pure |
+| `wizard`, `tui` | plain prompt and full-screen front ends of the setup flow. The TUI has five screens (Overview, Findings, Projects, Health and Settings), the project forms, the field editor, the lifecycle prompts, prompts and the folder box; see [The TUI](#the-tui). `tui` is its own program (`cvewatch-tui`) because Bubble Tea queries the terminal at start-up | `ops.Session` and `ops.SettingsSession`, through the `Backend` seam (`Read`, `Write`, `Settings`, `Fetch`, `Update`, `Backfill` and `TUISettings`) |
+| `status` | health of the tool: daemon, feeds, channels, cycles, and the last update and next due time of each project (`ProjectRow`, `Report.Schedule`), the green, yellow or red level and the `Problems` behind it (`Report.Summary` is the header line) | none: pure |
 | `dashboard` | static HTML status and findings page, no scripts | none: pure |
 | `daemon` | the refresh loop: it sleeps until the first project is due (at most `interval`, at least a minute), runs `ops.Session.RefreshScheduled`, then writes the heartbeat and the dashboard; short sessions; `watch.go` looks at the configuration files every 15 seconds and reloads (revalidates and back-fills) when one changes, and a reload that finds a project due earlier moves the wake-up forward | |
 | `defaults` | built-in catalog, feeds and starter files | embedded; the user's folder is layered over it |
@@ -48,11 +48,11 @@ The TUI is a Bubble Tea program in `app/src/tui`. Its state is the `app` model i
 |---|---|
 | `modes.go` | a **mode** is one layer on screen: a screen, a level inside it, a form, or a popup. Each mode has its bindings, its moving keys and its help title. `stack` derives the open layers from the state, so they cannot drift. `dispatch` runs a key on the top mode. The footer (`footerLine`) and the help (`helpLines`) are written from the same table |
 | `keymap.go` | the binding table of every mode, built in `init`. A binding has its keys, a label for the help, a short label for the footer, an optional alias, a priority that decides what the footer drops first, and an optional `when` condition. The keys of the field editor and the lifecycle prompts are in `editkeys.go`, and those of the Settings screen in `settings.go`; they are built the same way |
-| `screens.go` | the screens, one row each: name, number key, whether it works without the snapshot, and the modes, body, layout, breadcrumb and tab badge. The tabs, Left and Right, the number keys and the help all read this table |
+| `screens.go` | the screens, one row each: name, the capital letter that jumps to it (also drawn highlighted in the tab, and the small letter works where the mode has no binding on it), whether it works without the snapshot, and the modes, body, layout, breadcrumb and tab badge. The tabs, Left and Right, the screen letters and the help all read this table |
 | `fields.go` | the project field editor (`c`): the fields of a project file (environments, technologies, lockfiles, differences per environment, since), their rows, and the edits they build (`OpKinds`) |
 | `envsummary.go` | the pure helpers behind the lists: the `PROJECTS (ONLY IN)` cell (a project's name alone when it is open everywhere it runs) and the Overview's `by environment` line |
-| `timefilter.go` | the time filter: `t` cycles `query.TimeRange`, `0` clears it, the `published:` chip on the breadcrumb line, and the alert horizon text on Overview and Status |
-| `hints.go` | the Hints section of a project and of the review, the hints picker (`H`) and what each hint does (apply its fix, offer the keyword prompt or the closest names) |
+| `timefilter.go` | the time filter: `t` cycles `query.TimeRange`, `0` clears it, the `published:` chip on the breadcrumb line, and the alert horizon text on Overview and Health |
+| `hints.go` | the Hints section of a project and of the review, the hints picker (`w`) and what each hint does (apply its fix, offer the keyword prompt or the closest names) |
 | `techassist.go`, `usertechs.go` | the add-technologies step: the closest-name rows under the text and `ctrl+o`; your own technologies in Settings and their add and edit forms |
 | `sethorizon.go` | the alert horizon fields in Settings: Google-style window labels, the custom dates shown as inactive unless the window is custom |
 | `lifecycle.go` | a whole-project change on its way: the consequences from `ops.ProjectLifecycle`, the typed name for a delete, the apply and the message when it fails |
@@ -67,7 +67,7 @@ The TUI is a Bubble Tea program in `app/src/tui`. Its state is the `app` model i
 | `jump.go` | the jump box: matching issues and projects as the user types |
 | `overview.go` | the Overview: the summary above the list of every open issue, and the policy violations page (`v`) |
 | `findings.go` | `issueList`, the searchable list that Findings and Overview share: rows, cursor, severity floor and search text. Each screen has its own, so a search on one does not narrow the other |
-| `scope.go` | the project scope: `m.scope` narrows the issues (`narrow`, `dataIssues`), the policy violations and the counts to one project, and is dropped when its project is gone or disabled |
+| `scope.go` | the context: `m.tenant` is one project, the projects of one vendor, or all projects. It decides which snapshot rows the lists and counts read (`rescope`, `dataIssues`), narrows the policy violations, and is dropped when its project is gone or disabled. Rows are always read per project, so two projects are never merged; `C` opens the choice |
 | `fetch.go` | the background fetch: one run at a time (`fetchJob`), the progress cell in the header, progress messages throttled per phase, the failed sources, the timers of `tui.refresh` and `tui.fetch`, and the update on the project schedule (`autoUpdate`, which starts only when `tui.auto` is on, `tui.fetch` is zero, no daemon is alive and a project is due, and waits a minute after an attempt). The run holds the store only inside `Backend.Fetch`; the screens keep reading the ledger meanwhile, and quitting cancels the run |
 | `revalidate.go` | the revalidation job in the TUI: the quiet run when a read finds the findings out of date, the words of its note, and the `V` preview with its yes prompt |
 | `editor.go` | which editor `E` runs: `resolveEditor` takes `tui.editor`, then `$VISUAL`, then `$EDITOR`, then the usual editors on the path, with the environment and the lookup injected for tests |
@@ -79,11 +79,11 @@ Rule for keys: a key is one binding in its mode's table (`keymap.go`, `editkeys.
 
 | Key | Screen | Shows |
 |---|---|---|
-| 1 | Overview | the health line, the list of every open issue (searchable, narrowed by the project scope) and the policy violations (`v`), each opening its issue |
-| 2 | Findings | the issue list, the issue page, triage and the filter |
-| 3 | Projects | the project list, each project's problems and fixes, its security issues, the field editor, the add chooser (`+`), the folder box and the lifecycle keys; Enter on a project sets the scope |
-| 4 | Status | the daemon, the feeds, the channels and the last cycles |
-| 5 | Settings | the configuration files as sections and fields. It is the only screen that works without the snapshot of the others, so it opens when a file is broken |
+| O | Overview | the health line, the open health problems, the list of every open issue of the context (searchable) and the policy violations (`v`), each opening its target |
+| F | Findings | the issue list, the issue page, triage and the filter |
+| P | Projects | the project list, each project's problems and fixes, its security issues, the field editor, the add chooser (`+`), the folder box and the lifecycle keys; Enter on a project sets the context |
+| H | Health | the problems, then the daemon, the feeds, the channels and the last cycles |
+| S | Settings | the configuration files as sections and fields. It is the only screen that works without the snapshot of the others, so it opens when a file is broken |
 
 Settings reads the documents through `ops.OpenSettings`, which loads nothing. Nothing is written before the yes on a preview: every editor builds a list of `confdoc.Edit` values, and `ops` checks and previews them. A list of edits is one change; it saves all of them or none.
 

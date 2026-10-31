@@ -7,7 +7,7 @@ import (
 
 func TestOverviewListsEveryLoadedIssueBelowTheSummary(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	d.want("Status", "last cycle:", "open issues 3", "by severity", "by environment",
+	d.want("Health", "last cycle:", "open issues 3", "by severity", "by environment",
 		"3 of 3 open issues", "SEVERITY", "> critical", "CVE-2026-3", "Critical nginx bug", "CVE-2026-1", "CVE-2026-4", "Minor thing",
 		"enter open", "/ filter", "s severity", "v violations")
 	v := d.view()
@@ -40,7 +40,7 @@ func TestOverviewSearchSelectOpenAndBack(t *testing.T) {
 	}
 
 	d.press("enter") // opens the issue
-	d.want("[2 Findings (3)]", "Environments")
+	d.want("▸[F]indings (3)", "Environments")
 	if a.fnd.det == nil || a.fnd.det.id != "CVE-2026-1" {
 		t.Fatalf("opened %+v", a.fnd.det)
 	}
@@ -48,7 +48,7 @@ func TestOverviewSearchSelectOpenAndBack(t *testing.T) {
 		t.Fatalf("crumbs %q", got)
 	}
 	d.press("esc") // back where the issue was opened from
-	d.want("[1 Overview]", "filter: tracked", "1 of 3 open issues")
+	d.want("▸[O]verview", "filter: tracked", "1 of 3 open issues")
 	d.wantNot("Environments")
 
 	d.press("esc") // the first esc clears the filter
@@ -59,23 +59,23 @@ func TestOverviewSearchSelectOpenAndBack(t *testing.T) {
 		t.Fatalf("the selected row opens: %+v", a.fnd.det)
 	}
 	d.press("left")
-	d.want("[1 Overview]")
+	d.want("▸[O]verview")
 }
 
 func TestOverviewSearchSyntaxAndSeverityMatchTheFindings(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	for _, q := range []string{"severity:high", "env:dev", "project:mw", "CVE-2026-4", "bug -severity:critical"} {
+	for _, q := range []string{"severity:high", "env:dev", "project:shop", "CVE-2026-4", "bug -severity:critical"} {
 		d.press("/")
 		d.typ(q)
 		d.press("enter")
 		overview := len(d.m.(*app).ovw.vis)
-		d.press("esc", "2", "/")
+		d.press("esc", "F", "/")
 		d.typ(q)
 		d.press("enter")
 		if findings := len(d.m.(*app).fnd.vis); findings != overview || overview == 0 {
 			t.Errorf("%q: overview %d, findings %d", q, overview, findings)
 		}
-		d.press("esc", "1")
+		d.press("esc", "O")
 	}
 	d.press("s")
 	d.want("min severity: low+")
@@ -94,12 +94,12 @@ func TestOverviewPolicyViolationsStayReachable(t *testing.T) {
 	a := d.m.(*app)
 	d.want("policy violations 2", "v violations")
 	d.press("v")
-	d.want("[1 Overview]", "Policy violations", "> - due date", "enter open", "back")
+	d.want("▸[O]verview", "Policy violations", "> - due date", "enter open", "back")
 	d.wantNot("SEVERITY") // the list gives way to the violations
 	d.press("down", "up", "enter")
-	d.want("[2 Findings (3)]", "Environments")
+	d.want("▸[F]indings (3)", "Environments")
 	d.press("esc")
-	d.want("[1 Overview]", "Policy violations")
+	d.want("▸[O]verview", "Policy violations")
 	d.press("esc")
 	d.want("3 of 3 open issues")
 	d.wantNot("> - due date")
@@ -118,7 +118,7 @@ func TestOverviewWithoutViolationsSaysSo(t *testing.T) {
 	d.press("v")
 	d.want("Policy violations", "none")
 	d.press("enter") // nothing to open
-	d.want("[1 Overview]")
+	d.want("▸[O]verview")
 }
 
 func TestOverviewRowsRespondToTheMouseOnTheList(t *testing.T) {
@@ -149,7 +149,7 @@ func TestOverviewKeepsTheListWhenTheScreenIsShort(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
 	for _, h := range []int{9, 12, 16, 24} {
 		d.send(tea_window(80, h))
-		d.want("Status", "3 of 3 open issues")
+		d.want("Health", "3 of 3 open issues")
 		if lines := strings.Count(d.view(), "\n") + 1; lines > h {
 			t.Errorf("height %d: %d lines", h, lines)
 		}

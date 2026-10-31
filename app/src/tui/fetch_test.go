@@ -49,6 +49,8 @@ func (g *bg) press(keys ...string) {
 	}
 }
 
+func (g *bg) screen(name string) { g.d.t.Helper(); g.press(screenKey(g.d.t, name)) }
+
 func (g *bg) send(msg tea.Msg) {
 	var cmd tea.Cmd
 	g.d.m, cmd = g.d.m.Update(msg)
@@ -124,14 +126,14 @@ func TestFetchShowsProgressInTheHeaderAndClearsIt(t *testing.T) {
 	}
 	d := start(t, b, Options{})
 	g := newBG(d)
-	g.press("F")
+	g.press("u")
 	g.untilView("fetch 0/3")
 	d.wantNot("error")
 	reads := b.readCount()
 	step <- struct{}{}
 	g.untilView("fetch 2/3")
-	d.press("2") // the screens keep working while it runs
-	d.want("[2 Findings")
+	d.screen("findings") // the screens keep working while it runs
+	d.want("▸[F]indings")
 	step <- struct{}{}
 	g.untilView("saving")
 	step <- struct{}{}
@@ -153,7 +155,7 @@ func TestFetchFailedSourcesAreShownOnClick(t *testing.T) {
 	}
 	d := start(t, b, Options{})
 	g := newBG(d)
-	g.press("F")
+	g.press("u")
 	g.untilView("fetched: 0 new, 0 findings, 2 sources failed")
 	g.quiet()
 	head := strings.Split(d.view(), "\n")[0]
@@ -181,7 +183,7 @@ func TestFetchHardErrorIsStickyAndBusyIsNeutral(t *testing.T) {
 
 	err = fmt.Errorf("opening the store: %w", ErrBusy)
 	g.send(tuiMsg{set: b.cfg.TUI})
-	g.press("F")
+	g.press("u")
 	g.untilView("another cvewatch")
 	g.quiet()
 	d.wantNot("error")
@@ -194,7 +196,7 @@ func TestFetchHardErrorIsStickyAndBusyIsNeutral(t *testing.T) {
 	}
 
 	err = errors.New("disk full")
-	g.press("F")
+	g.press("u")
 	g.untilView("error: fetch failed: disk full")
 	g.quiet()
 	d.press("down") // moving around keeps the error
@@ -208,8 +210,8 @@ func TestFetchBusyWithoutAPeriodSaysHowToRetry(t *testing.T) {
 	}
 	d := start(t, b, Options{})
 	g := newBG(d)
-	g.press("F")
-	g.untilView("press F to try again")
+	g.press("u")
+	g.untilView("press u to try again")
 	g.quiet()
 }
 
@@ -222,19 +224,19 @@ func TestFetchNeverRunsTwiceAtOnce(t *testing.T) {
 	}
 	d := start(t, b, Options{})
 	g := newBG(d)
-	g.press("F")
+	g.press("u")
 	g.until("the fetch", func() bool { return b.fetched() == 1 })
-	g.press("F")
+	g.press("u")
 	d.want("already running")
 	g.send(fetchDueMsg{}) // the timer finding one running does not start another either
-	g.press("F")
+	g.press("u")
 	time.Sleep(50 * time.Millisecond)
 	if n := b.fetched(); n != 1 {
 		t.Fatalf("%d fetches started, want 1", n)
 	}
 	close(release)
 	g.until("the end", func() bool { return d.app().fet.job == nil })
-	g.press("F") // free again
+	g.press("u") // free again
 	g.until("the second fetch", func() bool { return b.fetched() == 2 })
 	g.quiet()
 }
@@ -251,7 +253,7 @@ func TestQuitCancelsTheFetch(t *testing.T) {
 	}
 	d := start(t, b, Options{})
 	g := newBG(d)
-	g.press("F")
+	g.press("u")
 	<-started
 	g.press("q")
 	if d.app().ctx.Err() == nil {
@@ -278,11 +280,11 @@ func TestCtrlCCancelsTheFetchAndAFetchAfterQuitDoesNotStart(t *testing.T) {
 	}
 	d := start(t, b, Options{})
 	g := newBG(d)
-	g.press("F")
+	g.press("u")
 	g.until("the fetch", func() bool { return b.fetched() == 1 })
 	g.press("ctrl+c")
 	g.until("the end", func() bool { return d.app().fet.job == nil })
-	g.press("F")
+	g.press("u")
 	g.quiet()
 	if n := b.fetched(); n != 1 {
 		t.Errorf("a fetch started after quitting: %d", n)
@@ -333,7 +335,7 @@ func TestFetchDoesNotStartByItselfWhenThePeriodIsZero(t *testing.T) {
 	if !hasTimer(d, fetchDueMsg{}) {
 		t.Error("a new period did not set the timer")
 	}
-	g.press("F")
+	g.press("u")
 	g.until("the manual fetch", func() bool { return b.fetched() == 1 })
 	g.quiet()
 }
@@ -392,24 +394,24 @@ func TestTickReadsAgainAndKeepsTicking(t *testing.T) {
 }
 
 func TestFetchKeyIsOnEveryMainScreenAndInTheHelp(t *testing.T) {
-	for _, screen := range []string{"1", "2", "3", "4", "5"} {
+	for _, screen := range []string{"O", "F", "P", "H", "S"} {
 		b := newFake(t, nil)
 		b.fetchFn = func(ctx context.Context, progress func(ops.RefreshProgress)) (pipeline.Result, error) {
 			return pipeline.Result{}, nil
 		}
 		d := start(t, b, Options{})
 		g := newBG(d)
-		g.press(screen, "F")
+		g.press(screen, "u")
 		g.until("the fetch from screen "+screen, func() bool { return b.fetched() == 1 })
 		g.quiet()
 		g.press("?")
-		d.want("fetch the feeds now")
+		d.want("fetch the feeds in the background")
 		g.press("esc")
 	}
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
 	d.send(tea_window(200, 40))
-	d.want("F fetch")
+	d.want("u update")
 }
 
 func TestFetchCellFitsANarrowHeader(t *testing.T) {

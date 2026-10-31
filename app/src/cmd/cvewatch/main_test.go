@@ -54,3 +54,19 @@ func TestParseListPublished(t *testing.T) {
 		t.Fatalf("setPublished: %+v %v", f.Published, err)
 	}
 }
+
+func TestUpdateFailsOnlyWhenEverySourceFailed(t *testing.T) {
+	srcs := []model.Source{{ID: "a"}, {ID: "b"}, {ID: "off", Disabled: true}}
+	if err := allFailed(srcs, nil); err != nil {
+		t.Errorf("nothing failed: %v", err)
+	}
+	if err := allFailed(srcs, []string{"a: timeout"}); err != nil {
+		t.Errorf("a partial failure keeps exit 0: %v", err)
+	}
+	if err := allFailed(srcs, []string{"a: timeout", "b: 503"}); err == nil || err.Error() != "all 2 sources failed; findings shown are from earlier runs" {
+		t.Errorf("every enabled source failed: %v", err)
+	}
+	if err := allFailed(nil, nil); err != nil {
+		t.Errorf("no sources is not a failure: %v", err)
+	}
+}

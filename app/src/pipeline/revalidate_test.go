@@ -79,7 +79,7 @@ func TestRevalidateCreatesFindingsForANewTech(t *testing.T) {
 		t.Fatalf("a second run changes nothing: %+v", again)
 	}
 	n, err := g.Runner.Audit.Verify()
-	if err != nil || n != 3 { // three applied runs, one event each; the preview wrote none
+	if err != nil || n != 4 { // three applied runs, one event each, and the finding the second one created; the preview wrote none
 		t.Fatalf("audit n=%d err=%v", n, err)
 	}
 }

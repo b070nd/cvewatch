@@ -69,9 +69,15 @@ func (m *app) suggestions(text string) []jumpItem {
 		for _, p := range m.data.Projects {
 			add(jumpItem{label: oneLine(p.Name), detail: "project", tgt: projectTarget(p.Name, "")}, p.Name)
 		}
-		for _, is := range m.data.Issues {
-			issues = append(issues, jumpItem{label: oneLine(is.ID), detail: sevWord(is.Severity) + " " + oneLine(is.Untrusted.Title), tgt: issueTarget(is.ID, true)})
-			issueNames = append(issueNames, append([]string{is.ID}, is.Aliases...))
+		for _, name := range m.tenantNames() { // only what is open in the context
+			for _, is := range m.data.ByProject[name] {
+				detail := sevWord(is.Severity) + " " + oneLine(is.Untrusted.Title)
+				if m.tenant.multi() {
+					detail = oneLine(m.projectLabelOf(name)) + "  " + detail
+				}
+				issues = append(issues, jumpItem{label: oneLine(is.ID), detail: detail, tgt: issueIn(name, is.ID, true)})
+				issueNames = append(issueNames, append([]string{is.ID}, is.Aliases...))
+			}
 		}
 	}
 	for i, it := range issues {

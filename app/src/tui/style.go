@@ -32,6 +32,8 @@ var (
 	stSel   = lipgloss.NewStyle().Bold(true).Reverse(true)
 	stTabOn = lipgloss.NewStyle().Bold(true).Reverse(true)
 	stTab   = lipgloss.NewStyle().Foreground(ac("242", "247"))
+	stKey   = lipgloss.NewStyle().Bold(true).Underline(true)
+	stKeyOn = lipgloss.NewStyle().Bold(true).Underline(true).Reverse(true)
 	stErr   = lipgloss.NewStyle().Bold(true).Foreground(ac("160", "217"))
 	stGood  = lipgloss.NewStyle().Bold(true).Foreground(ac("28", "120"))
 	stAdd   = lipgloss.NewStyle().Foreground(ac("28", "120"))
@@ -47,12 +49,15 @@ var (
 		0: lipgloss.NewStyle().Foreground(ac("59", "252")),             // unrated
 	}
 	lvlStyles = map[status.Level]lipgloss.Style{
-		status.OK:      stGood,
-		status.Warn:    sevStyles[2].Bold(true),
-		status.Fail:    stErr,
-		status.Unknown: sevStyles[0].Bold(true),
+		status.Green:  stGood,
+		status.Yellow: sevStyles[2].Bold(true),
+		status.Red:    stErr,
 	}
 )
+
+// stylesOn is whether the terminal shows styles at all; it is not with NO_COLOR
+// set or when the output is not a terminal.
+func stylesOn() bool { return lipgloss.NewStyle().Bold(true).Render("x") != "x" }
 
 // severities lists the severities from most to least urgent; unrated is last.
 var severities = []model.Severity{model.SevCritical, model.SevHigh, model.SevMedium, model.SevLow, model.SevUnknown}
@@ -71,19 +76,29 @@ func sevText(s model.Severity, w int) string {
 
 // levelText is a health level as glyph and word (never colour alone).
 func levelText(l status.Level) string {
-	var t string
-	switch l {
-	case status.OK:
-		t = "✔ OK"
-	case status.Warn:
-		t = "! WARN"
-	case status.Fail:
-		t = "✖ FAIL"
-	default:
-		t = "? UNKNOWN"
-		l = status.Unknown
+	if l != status.Green && l != status.Red {
+		l = status.Yellow
 	}
-	return lvlStyles[l].Render(t)
+	return lvlStyles[l].Render(levelGlyph(l) + " " + l.Label())
+}
+
+func levelGlyph(l status.Level) string {
+	switch l {
+	case status.Green:
+		return "●"
+	case status.Red:
+		return "✖"
+	}
+	return "▲"
+}
+
+// summaryText is the health in one line for a header: GREEN with the time of
+// the last check, YELLOW or RED with the number of problems.
+func summaryText(rep status.Report, now time.Time) string {
+	if rep.Level == "" {
+		return stMuted.Render("health unknown")
+	}
+	return lvlStyles[rep.Level].Render(levelGlyph(rep.Level) + " " + rep.Summary(now))
 }
 
 // when renders a time as UTC plus how long ago, or "never".

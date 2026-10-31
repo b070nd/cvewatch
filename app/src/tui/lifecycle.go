@@ -199,8 +199,8 @@ func (m *app) lifeApplied(msg lifeAppliedMsg) outcome {
 	case ops.VerbRename:
 		note = fmt.Sprintf("renamed %s to %s", req.Project, req.NewName)
 		land = &landing{project: req.NewName, deep: lf.deep}
-		if m.scope == req.Project { // the scope follows the project
-			m.scope = req.NewName
+		if m.tenant.project == req.Project { // the context follows the project
+			m.tenant.project = req.NewName
 		}
 	case ops.VerbDuplicate:
 		note = fmt.Sprintf("duplicated %s as %s", req.Project, req.NewName)

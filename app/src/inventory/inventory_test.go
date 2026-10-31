@@ -64,3 +64,28 @@ func TestProjectWithoutEnvsKeepsTheOldFour(t *testing.T) {
 		t.Errorf("explicit envs = %d targets", len(inv2.Targets()))
 	}
 }
+
+func TestUnreadableNamesTheLockfilesOfAnEnvironmentThatCannotBeRead(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "composer.lock")
+	if err := os.WriteFile(good, []byte(composerLock), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gone := filepath.Join(dir, "missing.lock")
+	cfg := &config.Bundle{Projects: []model.Project{{
+		Name: "shop",
+		Envs: []model.Env{"dev", "prod"},
+		Lockfiles: []model.Lockfile{{Type: "composer", Path: good},
+			{Type: "composer", Path: gone, Env: "prod"}},
+	}}}
+	inv := Load(cfg)
+	if got := inv.Unreadable("shop", "prod"); len(got) != 1 || got[0] != gone {
+		t.Errorf("prod = %v", got)
+	}
+	if got := inv.Unreadable("shop", "dev"); len(got) != 0 {
+		t.Errorf("dev does not use that file: %v", got)
+	}
+	if got := inv.Unreadable("other", "prod"); len(got) != 0 {
+		t.Errorf("other project: %v", got)
+	}
+}

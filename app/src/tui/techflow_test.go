@@ -21,7 +21,8 @@ func (d *driver) assistTo(text string) {
 // toAddTechs starts the guided new project and goes to the step that adds technologies by name.
 func (d *driver) toAddTechs() {
 	d.t.Helper()
-	d.press("3", "a")
+	d.screen("projects")
+	d.press("a")
 	for i := 0; i < 8 && d.m.(*app).frm.step.ID != "add-techs"; i++ {
 		d.press("enter")
 	}
@@ -155,24 +156,24 @@ const hintSvc = "name: svc\nenvs: [prod]\ntechs:\n  - {name: myssql, version: \"
 func TestProjectsListCountsHintsAndThePageListsThem(t *testing.T) {
 	b, _ := diskFake(t, map[string]string{"config/projects/svc.yaml": hintSvc})
 	d := start(t, b, Options{})
-	d.press("3")
+	d.screen("projects")
 	d.want("HINTS", "hints")
 	d.press("down", "down") // mw, shop, svc in order of the list
 	for i := 0; i < 3 && !strings.Contains(d.view(), "> svc"); i++ {
 		d.press("down")
 	}
 	d.press("enter")
-	d.want("Hints", `"myssql" is not in the catalog`, "Did you mean", `"algolia" is not in the catalog`, "H works through them")
+	d.want("Hints", `"myssql" is not in the catalog`, "Did you mean", `"algolia" is not in the catalog`, "w works through them")
 }
 
 func TestHintOnATypoReplacesItAfterAPreview(t *testing.T) {
 	b, root := diskFake(t, map[string]string{"config/projects/svc.yaml": hintSvc})
 	d := start(t, b, Options{})
-	d.press("3")
+	d.screen("projects")
 	for i := 0; i < 3 && !strings.Contains(d.view(), "> svc"); i++ {
 		d.press("down")
 	}
-	d.press("H")
+	d.press("w")
 	d.want("Hints", `warn techs[0]: "myssql" is not in the catalog`, "choose: mysql")
 	d.press("enter")
 	d.want("Instead of myssql", "use mysql", "keep myssql as my own keyword")
@@ -192,13 +193,13 @@ func TestHintOnATypoReplacesItAfterAPreview(t *testing.T) {
 func TestHintOnAnUnknownTechnologyAddsItAsAKeywordAndTheHintGoes(t *testing.T) {
 	b, root := diskFake(t, map[string]string{"config/projects/svc.yaml": "name: svc\nenvs: [prod]\ntechs:\n  - {name: algolia, version: \"1\"}\n"})
 	d := start(t, b, Options{})
-	d.press("3")
+	d.screen("projects")
 	for i := 0; i < 3 && !strings.Contains(d.view(), "> svc"); i++ {
 		d.press("down")
 	}
 	d.press("enter")
 	d.want(`"algolia" is not in the catalog`)
-	d.press("H", "enter")
+	d.press("w", "enter")
 	d.want("Add algolia as your own keyword", "Keywords")
 	d.press("enter", "enter", "enter", "enter")
 	d.want("ok: added algolia to techs.yaml")
@@ -215,15 +216,15 @@ func TestHintOnAnUnknownTechnologyAddsItAsAKeywordAndTheHintGoes(t *testing.T) {
 func TestReviewHintsReplaceATypoAndKeepAnUnknownTechnologyAsAKeyword(t *testing.T) {
 	b, root := diskFake(t, map[string]string{"config/projects/svc.yaml": hintSvc})
 	d := start(t, b, Options{})
-	d.press("3")
+	d.screen("projects")
 	for i := 0; i < 3 && !strings.Contains(d.view(), "> svc"); i++ {
 		d.press("down")
 	}
 	d.press("e", "end", "enter")
-	d.want("Save this project?", "Hints", `"myssql" is not in the catalog`, "H hints")
+	d.want("Save this project?", "Hints", `"myssql" is not in the catalog`, "w hints")
 	d.wantNot("warning: techs[0]") // the hint says it, once
 
-	d.press("H")
+	d.press("w")
 	d.want("warn techs[0]", "choose: mysql")
 	d.press("enter")
 	d.want("Instead of myssql", "use mysql")
@@ -231,7 +232,7 @@ func TestReviewHintsReplaceATypoAndKeepAnUnknownTechnologyAsAKeyword(t *testing.
 	d.want("Save this project?", "using mysql instead of myssql", "+   - {name: mysql")
 	d.wantNot(`"myssql" is not in the catalog`)
 
-	d.press("H")
+	d.press("w")
 	d.want("warn techs[", `"algolia" is not in the catalog`, "add it as your own keyword")
 	d.press("enter")
 	d.want("Add algolia as your own keyword")
@@ -271,11 +272,11 @@ func (d *driver) pickTo(text string) {
 func TestHintsOpenTheEditorThatSettlesThem(t *testing.T) {
 	b, root := diskFake(t, map[string]string{"config/projects/web.yaml": "name: web\nenvs: [prod]\ntechs:\n  - {name: php}\n"})
 	d := start(t, b, Options{})
-	d.press("3")
+	d.screen("projects")
 	for i := 0; i < 3 && !strings.Contains(d.view(), "> web"); i++ {
 		d.press("down")
 	}
-	d.press("H")
+	d.press("w")
 	d.want("Hints")
 	d.pickTo(".version")
 	d.press("enter")
@@ -289,7 +290,7 @@ func TestHintsOpenTheEditorThatSettlesThem(t *testing.T) {
 		t.Fatal("the version is in the file")
 	}
 
-	d.press("H")
+	d.press("w")
 	d.pickTo("since")
 	d.press("enter")
 	d.want("Since date of web")
@@ -298,11 +299,11 @@ func TestHintsOpenTheEditorThatSettlesThem(t *testing.T) {
 	// the review of a project being set up sends the hint to its step
 	d.press("e", "end", "enter")
 	d.want("Save this project?")
-	d.press("H")
+	d.press("w")
 	d.pickTo("since")
 	d.press("enter")
 	d.want("Save this project?", "since is set once the project is saved")
-	d.press("H")
+	d.press("w")
 	d.pickTo("lockfiles")
 	d.press("enter")
 	d.want("Add a lockfile to the project being set up")
@@ -310,9 +311,9 @@ func TestHintsOpenTheEditorThatSettlesThem(t *testing.T) {
 
 func TestHintsKeyIsQuietWithoutHints(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	d.press("3")
+	d.screen("projects")
 	d.wantNot("hints  ")
-	d.press("H")
+	d.press("w")
 	d.wantNot("Hints", "Instead of")
 }
 
@@ -373,7 +374,8 @@ func TestSettingsTechnologiesAreAddedChangedAndRemovedThroughOps(t *testing.T) {
 func TestOwnTechnologyIsAddedToAProjectAndTechsYamlInOnePreview(t *testing.T) {
 	b, root := diskFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "down", "c", "down", "enter") // shop: fields, technologies
+	d.screen("projects")
+	d.press("down", "c", "down", "enter") // shop: fields, technologies
 	d.want("TECHNOLOGY", "K own tech")
 	d.press("K")
 	d.want("Add your own technology to shop", "Name")
@@ -445,9 +447,9 @@ func TestTechnologyKeysAreInTheTablesAndTheHelp(t *testing.T) {
 	has(mo.formText, "ctrl+o", "as your own keyword")
 	has(mo.formText, "up", "rows offered")
 	has(mo.formText, "enter", "take the selected row")
-	has(mo.formReview, "H", "hints")
-	has(mo.projects, "H", "hints of the project")
-	has(mo.project, "H", "hints of the project")
+	has(mo.formReview, "w", "hints")
+	has(mo.projects, "w", "hints of the project")
+	has(mo.project, "w", "hints of the project")
 	has(mo.fieldSub, "K", "one of your own")
 	has(mo.setFields, "e", "category and CPE")
 }
@@ -455,11 +457,11 @@ func TestTechnologyKeysAreInTheTablesAndTheHelp(t *testing.T) {
 func TestReplaceTechKeepsTheVersionAndStagedKeywordsFollow(t *testing.T) {
 	b, _ := diskFake(t, map[string]string{"config/projects/svc.yaml": hintSvc})
 	d := start(t, b, Options{})
-	d.press("3")
+	d.screen("projects")
 	for i := 0; i < 3 && !strings.Contains(d.view(), "> svc"); i++ {
 		d.press("down")
 	}
 	d.press("e", "end", "enter")
-	d.press("H", "enter", "enter")
+	d.press("w", "enter", "enter")
 	d.want("using mysql instead of myssql", `version: "8"`)
 }

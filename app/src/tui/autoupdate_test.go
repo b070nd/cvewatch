@@ -133,7 +133,7 @@ func TestTheFetchKeyStillDoesEverythingAndAutoUpdateFollowsTheSettingsScreen(t *
 	}
 	d := start(t, b, Options{Auto: b.auto.Load()})
 	g := newBG(d)
-	g.press("F")
+	g.press("u")
 	g.until("the manual fetch", func() bool { return b.fetched() == 1 && d.app().fet.job == nil })
 	g.quiet()
 	if b.updated() != 0 {
@@ -176,7 +176,7 @@ func TestProjectsScreenShowsEachProjectsUpdateStatus(t *testing.T) {
 	b.cfg.Projects[0].Update.Every = 2 * time.Hour
 	b.cfg.Projects[1].Update.Auto = off()
 	d := start(t, b, Options{})
-	d.press("3")
+	d.screen("projects")
 	d.want("updates: every 2h")
 	d.wantNot("updates: every 2h · due now")
 	d.press("down")
@@ -193,7 +193,7 @@ func TestStatusScreenListsLastAndNextUpdate(t *testing.T) {
 	})
 	b.cfg.Projects[1].Update.Auto = off()
 	d := start(t, b, Options{})
-	d.press("4")
+	d.screen("health")
 	d.want("Projects (2)", "PROJECT", "LAST UPDATE", "NEXT")
 	d.wantLine("shop", "every 1h", "11:40", "12:40")
 	d.wantLine("mw", "paused")

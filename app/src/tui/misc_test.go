@@ -19,8 +19,8 @@ import (
 
 func TestStatusScreen(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	d.press("4")
-	d.want("[4 Status]", "Feeds (1)", "hn", "UNKNOWN", "never", "Channels (0)", "none active", "Recent cycles (1)", "30s", "daemon")
+	d.screen("health")
+	d.want("▸[H]ealth", "Feeds (1)", "hn", "YELLOW", "never", "Channels (0)", "none active", "Recent cycles (1)", "30s", "daemon")
 }
 
 func TestStatusShowsFailingFeed(t *testing.T) {
@@ -30,10 +30,10 @@ func TestStatusShowsFailingFeed(t *testing.T) {
 		}
 	})
 	d := start(t, newFake(t, st), Options{})
-	d.press("4")
-	d.want("FAIL", "error: boom red")
+	d.screen("health")
+	d.want("RED", "error: boom red")
 	d.wantNot("\x1b")
-	d.press("1")
+	d.screen("overview")
 	d.want("! feed hn has failed 3 times in a row")
 }
 
@@ -46,9 +46,9 @@ func TestUntrustedTextIsStripped(t *testing.T) {
 		v.Fixes = []model.Fix{{Kind: model.FixPatch, Detail: "fix\x1b]52;c;QQ==\x07it", Source: "x\u009b31m"}}
 		l.AddFinding(model.Finding{VulnID: v.ID, Project: "mw", Env: model.EnvProd, Status: model.StatusOpen, Note: "n\x1b[1mote", Owner: "ow\x1bner"})
 	})
-	d := start(t, newFake(t, st), Options{})
+	d := startIn(t, newFake(t, st), Options{}, tenant{project: "mw"})
 	const bad = "\x1b\x07\x00\x08\u202e\u009b\ufffd"
-	d.press("2")
+	d.screen("findings")
 	if v := d.view(); strings.ContainsAny(v, bad) {
 		t.Fatalf("control characters reached the list: %q", v)
 	}
@@ -56,7 +56,7 @@ func TestUntrustedTextIsStripped(t *testing.T) {
 	// and keeps the rest, which can do nothing without it); the TUI removes
 	// whole sequences from the fields that arrive raw.
 	d.want("Pwn", "evil end")
-	d.press("down", "down", "enter")
+	d.press("down", "enter")
 	d.want("Pwn", "evil end", "desc", "screen", "note: note", "owner ower")
 	if v := d.view(); strings.ContainsAny(v, bad) {
 		t.Fatalf("control characters reached the detail view: %q", v)
@@ -156,15 +156,16 @@ func TestResizeDoesNotPanic(t *testing.T) {
 			}
 		}
 	}
-	for _, s := range []string{"1", "2", "3", "4"} {
+	for _, s := range []string{"O", "F", "P", "H"} {
 		d.press(s)
 		check("screen " + s)
 	}
-	d.press("2", "down", "enter")
+	d.screen("findings")
+	d.press("down", "enter")
 	check("detail")
 	d.press("f")
 	check("prompt")
-	d.press("esc", "esc", "3", "n")
+	d.press("esc", "esc", "P", "n")
 	check("form")
 	d.press("esc", "?")
 	check("help")
@@ -182,7 +183,8 @@ func TestQuit(t *testing.T) {
 		t.Fatal("ctrl+c must quit")
 	}
 	d = start(t, newFake(t, nil), Options{})
-	d.press("3", "n", "ctrl+u")
+	d.screen("projects")
+	d.press("n", "ctrl+u")
 	d.typ("q")
 	if d.quit {
 		t.Fatal("q typed into a text step quit")
@@ -196,7 +198,8 @@ func TestQuit(t *testing.T) {
 
 func TestHelpToggle(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	d.press("2", "?")
+	d.screen("findings")
+	d.press("?")
 	d.want("Keys on the findings screen", "open the selected issue", "Everywhere")
 	d.press("end")
 	d.want("NO_COLOR")
@@ -205,7 +208,9 @@ func TestHelpToggle(t *testing.T) {
 	d.press("?", "esc")
 	d.want("3 of 3 open issues")
 	d.press("enter", "?")
-	d.want("Keys in an issue", "not-affected needs a reason", "NO_COLOR")
+	d.want("Keys in an issue", "not-affected needs a reason")
+	d.press("end")
+	d.want("NO_COLOR")
 	d.press("q") // q closes a popup, it does not quit
 	if d.quit {
 		t.Fatal("q in the help quit the program")
@@ -217,13 +222,13 @@ func TestHelpToggle(t *testing.T) {
 func TestScreenSwitching(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
 	d.press("tab")
-	d.want("[2 Findings")
+	d.want("▸[F]indings")
 	d.press("tab", "tab", "tab", "tab")
-	d.want("[1 Overview]") // five screens now: Settings is the last
+	d.want("▸[O]verview") // five screens now: Settings is the last
 	d.press("shift+tab")
-	d.want("[5 Settings]")
+	d.want("▸[S]ettings")
 	d.press("shift+tab")
-	d.want("[4 Status]")
+	d.want("▸[H]ealth")
 }
 
 func TestRefreshKeyAndTick(t *testing.T) {
@@ -242,7 +247,7 @@ func TestRefreshKeyAndTick(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	d.press("2")
+	d.screen("findings")
 	d.want("3 of 3 open issues")
 	d.send(tickMsg{})
 	d.want("2 of 2 open issues")
@@ -252,7 +257,8 @@ func TestRefreshKeyAndTick(t *testing.T) {
 func TestRefreshKeepsTheSelectedIssue(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("2", "down", "down")
+	d.screen("findings")
+	d.press("down", "down")
 	d.want("> low")
 	if err := b.Write(func(s *ops.Session) error {
 		_, err := s.Resolve(ops.Change{ID: "CVE-2026-3", Project: "shop", Status: model.StatusFixed})
@@ -272,7 +278,7 @@ func TestLoadErrorIsShownAndRecovers(t *testing.T) {
 	d.want("error: disk on fire")
 	bad.set(nil)
 	d.press("r")
-	d.want("open issues", "[1 Overview]")
+	d.want("open issues", "▸[O]verview")
 	d.wantNot("disk on fire")
 	bad.set(errors.New("later trouble"))
 	d.press("r")
@@ -308,14 +314,14 @@ func (f *flaky) busy() bool {
 }
 
 func TestEmptyLedger(t *testing.T) {
-	d := start(t, newFake(t, store.NewMemory()), Options{})
-	d.want("open issues", "none") // no violations
-	d.press("2")
+	d := startAll(t, newFake(t, store.NewMemory()), Options{})
+	d.want("policy violations 0", "2 projects") // no violations
+	d.screen("findings")
 	d.want("Nothing open. No open vulnerabilities to act on.")
 	d.press("enter", "s", "/", "esc")
-	d.press("3")
+	d.screen("projects")
 	d.want("shop")
-	d.press("4")
+	d.screen("health")
 	d.want("no cycle has run yet")
 }
 
@@ -366,9 +372,19 @@ func TestCountsOf(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		c := countsOf(sn.Issues)
-		if c.Issues != 3 || c.Findings != 4 || c.BySev[4] != 1 || c.BySev[3] != 1 || c.BySev[1] != 1 || c.ByEnv[model.EnvProd] != 2 || c.ProdOpen != 1 || c.KEV != 0 {
+		c := countsOf(sn.ByProject["shop"])
+		if c.Issues != 3 || c.Findings != 3 || c.BySev[4] != 1 || c.BySev[3] != 1 || c.BySev[1] != 1 || c.ByEnv[model.EnvProd] != 1 || c.ProdOpen != 1 || c.KEV != 0 {
 			t.Fatalf("%+v", c)
+		}
+		if c := countsOf(sn.ByProject["mw"]); c.Issues != 1 || c.Findings != 1 || c.ByEnv[model.EnvProd] != 1 {
+			t.Fatalf("mw %+v", c)
+		}
+		for name, rows := range sn.ByProject {
+			for _, is := range rows {
+				if len(projectsOf(is)) != 1 || rowProject(is) != name {
+					t.Fatalf("%s: a row of %v", name, projectsOf(is))
+				}
+			}
 		}
 		if len(sn.Projects) != 2 || sn.Projects[0].Name != "shop" || len(sn.Projects[1].Envs) != 1 || len(sn.Projects[0].Envs) != 4 {
 			t.Fatalf("projects %+v", sn.Projects)

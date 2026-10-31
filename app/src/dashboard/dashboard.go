@@ -106,14 +106,12 @@ func span(d time.Duration) string {
 // level maps a health level to its css class and its text (never color alone).
 func level(l status.Level) (class, text string) {
 	switch l {
-	case status.OK:
-		return "ok", "✔ OK"
-	case status.Warn:
-		return "warn", "! WARN"
-	case status.Fail:
-		return "fail", "✖ FAIL"
+	case status.Green:
+		return "ok", "● GREEN"
+	case status.Red:
+		return "fail", "✖ RED"
 	}
-	return "unk", "? UNKNOWN"
+	return "warn", "▲ YELLOW"
 }
 
 func levelBadge(l status.Level) string {
@@ -300,7 +298,30 @@ func HTML(d Data, now time.Time) string {
 
 	// 1. header
 	p("<header><h1>cvewatch dashboard</h1>\n<p class=\"muted\">Generated %s</p>\n", utc(now))
-	p("<p>Overall health: %s</p></header>\n", levelBadge(d.Status.Level))
+	c, t := level(d.Status.Level)
+	_, summary, _ := strings.Cut(d.Status.Summary(now.UTC()), " · ")
+	p("<p>Health: <span class=\"lvl %s\">%s</span>", c, t)
+	if summary != "" {
+		p(" <span class=\"muted\">%s</span>", esc(summary))
+	}
+	p("</p></header>\n")
+	if ps := d.Status.Problems; len(ps) > 0 {
+		p("<section><h2>Problems</h2>\n<ul>\n")
+		for _, pr := range ps {
+			p("<li>%s <strong>%s</strong>", levelBadge(pr.Level), esc(pr.Title))
+			if pr.Detail != "" {
+				p(" &middot; %s", esc(pr.Detail))
+			}
+			if pr.Hint != "" {
+				p("<br><span class=\"muted\">%s</span>", esc(pr.Hint))
+			}
+			if !pr.Since.IsZero() {
+				p("<br><span class=\"muted\">since %s</span>", utc(pr.Since))
+			}
+			p("</li>\n")
+		}
+		p("</ul></section>\n")
+	}
 	if len(d.Issues) == 0 {
 		p("<p class=\"empty\">Nothing open. No open vulnerabilities to act on.</p>\n")
 	}
@@ -482,7 +503,7 @@ func HTML(d Data, now time.Time) string {
 		p("</tbody></table></div>\n")
 	}
 
-	if len(st.Warnings) > 0 {
+	if len(st.Warnings) > 0 && len(st.Problems) == 0 {
 		p("<h3>Warnings</h3>\n<ul>\n")
 		for _, w := range st.Warnings {
 			p("<li>%s</li>\n", esc(w))

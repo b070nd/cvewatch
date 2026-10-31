@@ -59,11 +59,13 @@ type Change struct {
 // configuration did, or with Applied false would do.
 type Revalidation struct {
 	Applied     bool     `json:"applied"`
-	NewFindings int      `json:"new_findings"` // findings created for records that match now
-	Closed      int      `json:"closed"`       // open findings closed because the vulnerability predates the project's since date
-	Reopened    int      `json:"reopened"`     // those closed findings that reopened because the date moved
-	Reconciled  int      `json:"reconciled"`   // open findings whose installed version or presence changed
-	Unchanged   int      `json:"unchanged"`    // findings nothing happened to
+	NewFindings int      `json:"new_findings"`           // findings created for records that match now
+	Closed      int      `json:"closed"`                 // open findings closed because the vulnerability predates the project's since date
+	Reopened    int      `json:"reopened"`               // those closed findings that reopened because the date moved
+	EnvClosed   int      `json:"env_closed,omitempty"`   // open findings closed because their environment is no longer declared
+	EnvReopened int      `json:"env_reopened,omitempty"` // those that reopened because the environment is declared again
+	Reconciled  int      `json:"reconciled"`             // open findings whose installed version or presence changed
+	Unchanged   int      `json:"unchanged"`              // findings nothing happened to
 	Projects    []string `json:"projects_changed"`
 	Changes     []Change `json:"changes,omitempty"`
 	// Backfill is the earliest publication date the change needs the sources
@@ -76,8 +78,9 @@ type Revalidation struct {
 // Revalidate re-judges every stored record, including the irrelevant ones,
 // against the current projects, techs, since dates and horizon. It needs no
 // network. It creates findings for records that match now, closes open
-// findings whose vulnerability predates the project's since date and reopens
-// the ones it closed itself when the date moves, re-checks installed versions,
+// findings whose vulnerability predates the project's since date or whose
+// environment is no longer declared, reopens the ones it closed itself when
+// the date moves or the environment returns, re-checks installed versions,
 // asks the sources to reach back for what the change newly wants, and records
 // what the findings are now judged against. Without apply nothing is changed.
 // The caller saves the ledger.
@@ -128,22 +131,23 @@ func (c *cycle) revalidate(d inventory.Delta, cur model.Judging, quiet bool) Rev
 	l := c.r.Ledger
 	rv := Revalidation{Projects: d.Changed, Backfill: d.Backfill}
 	total := len(l.Findings())
+	c.applyEnvs(&rv, nil)
 	c.applySince(&rv)
 	c.rejudge(&rv, nil)
 	c.markBackfill(d.Backfill, &rv)
 	reconciled := c.res.Reconciled
 	c.reconcile(nil)
 	rv.Reconciled = c.res.Reconciled - reconciled
-	rv.Unchanged = max(0, total-rv.Closed-rv.Reopened-rv.Reconciled)
+	rv.Unchanged = max(0, total-rv.Closed-rv.Reopened-rv.EnvClosed-rv.EnvReopened-rv.Reconciled)
 
 	cur.At = c.now
 	l.SetJudged(cur)
-	if quiet && rv.NewFindings+rv.Closed+rv.Reopened+rv.Reconciled == 0 {
+	if quiet && rv.NewFindings+rv.Closed+rv.Reopened+rv.EnvClosed+rv.EnvReopened+rv.Reconciled == 0 {
 		return rv
 	}
 	c.events = append(c.events, audit.Event{Time: c.now, Actor: c.r.actor(), Action: "revalidate", Project: strings.Join(rv.Projects, ","),
 		Note: fmt.Sprintf("%d new findings, %d closed, %d reopened, %d reconciled, %d unchanged",
-			rv.NewFindings, rv.Closed, rv.Reopened, rv.Reconciled, rv.Unchanged)})
+			rv.NewFindings, rv.Closed+rv.EnvClosed, rv.Reopened+rv.EnvReopened, rv.Reconciled, rv.Unchanged)})
 	return rv
 }
 
@@ -199,8 +203,53 @@ func (c *cycle) applySince(rv *Revalidation) {
 	}
 }
 
-// setAuto changes a finding's status on cvewatch's own account. A note a
-// person wrote stays in the history.
+// envRemoved is the note of a finding closed because its environment is gone.
+const envRemoved = "environment removed from project"
+
+// applyEnvs closes open findings of environments the project no longer
+// declares, marking them Auto, and reopens those it closed when the
+// environment is declared again. The declared set is the inventory's: the
+// project's envs, or the legacy default. History stays; a status a person set
+// is never touched. Projects the configuration does not know are left alone.
+func (c *cycle) applyEnvs(rv *Revalidation, only map[string]bool) {
+	l := c.r.Ledger
+	declared := map[string][]model.Env{}
+	for _, p := range c.r.Cfg.Projects {
+		declared[p.Name] = p.EffectiveEnvs()
+	}
+	for _, f := range l.Findings() {
+		envs, ok := declared[f.Project]
+		v := l.Vuln(f.VulnID)
+		if !ok || v == nil || !has(only, f.Project) {
+			continue
+		}
+		var action string
+		switch {
+		case f.Status == model.StatusOpen && !slices.Contains(envs, f.Env):
+			c.setAuto(f.Key(), model.StatusIgnored, true, envRemoved, f.Note)
+			rv.EnvClosed++
+			action = "closed"
+		case f.Status == model.StatusIgnored && f.Auto && f.Note == envRemoved && slices.Contains(envs, f.Env):
+			c.setAuto(f.Key(), model.StatusOpen, false, "this environment is declared again; reopened automatically", "")
+			rv.EnvReopened++
+			action = "reopened"
+		default:
+			continue
+		}
+		c.dirty[v.ID] = true
+		i := slices.IndexFunc(rv.Changes, func(ch Change) bool { return ch.ID == v.ID && ch.Action == action })
+		if i < 0 {
+			rv.Changes = append(rv.Changes, Change{ID: v.ID, Title: query.Clip(v.Title, 120), Action: action})
+			i = len(rv.Changes) - 1
+		}
+		if !slices.Contains(rv.Changes[i].Projects, f.Project) {
+			rv.Changes[i].Projects = append(rv.Changes[i].Projects, f.Project)
+		}
+	}
+}
+
+// setAuto changes a finding's status on cvewatch's own account and records it
+// in the audit trail. A note a person wrote stays in the history.
 func (c *cycle) setAuto(key string, st model.Status, auto bool, note, prior string) {
 	c.r.Ledger.Mutate(key, func(m *model.Finding) {
 		m.Status, m.Auto, m.Updated = st, auto, c.now
@@ -208,10 +257,13 @@ func (c *cycle) setAuto(key string, st model.Status, auto bool, note, prior stri
 		if auto {
 			m.Note = note
 		}
+		event := note
 		if prior != "" {
 			note += " (previous note: " + prior + ")"
 		}
 		m.History = append(m.History, model.Disposition{Time: c.now, Actor: "cvewatch", Action: "status", Status: st, Note: note})
+		c.events = append(c.events, audit.Event{Time: c.now, Actor: "cvewatch", Action: "status", Vuln: m.VulnID,
+			Project: m.Project, Env: string(m.Env), Status: string(st), Note: event})
 	})
 }
 
@@ -227,11 +279,12 @@ func (c *cycle) rejudge(rv *Revalidation, only map[string]bool) {
 		if len(verdict.Matches) == 0 {
 			continue
 		}
-		n := AddFindings(l, v.ID, verdict.Matches, c.now)
-		if n == 0 {
+		made := AddFindings(l, v.ID, verdict.Matches, c.now)
+		if len(made) == 0 {
 			continue
 		}
-		rv.NewFindings += n
+		c.detected(made, "matched an advisory already stored")
+		rv.NewFindings += len(made)
 		ch := Change{ID: v.ID, Title: query.Clip(v.Title, 120), Action: "new"}
 		for _, m := range verdict.Matches {
 			if !slices.Contains(ch.Projects, m.Project) {

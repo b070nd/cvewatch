@@ -105,7 +105,8 @@ func TestFieldEditorEditsEveryKindOfFieldAndKeepsComments(t *testing.T) {
 			}
 		}
 	}
-	d.press("3", "down", "enter")
+	d.screen("projects")
+	d.press("down", "enter")
 	d.want("c edits the fields")
 	d.press("c")
 	d.want("Edit fields of shop", "FIELD", "Environments", "dev, prod", "Technologies", "php 8.2, nginx", "1 lockfile", "Differences per environment", "prod: php 8.2.30, image reg/shop:1", "2026-01-01")
@@ -148,6 +149,22 @@ func TestFieldEditorEditsEveryKindOfFieldAndKeepsComments(t *testing.T) {
 	if got := fileAt(t, root, "config/projects/shop.yaml"); !strings.Contains(got, "every: 2h") || !strings.Contains(got, "auto: false") {
 		t.Fatalf("update:\n%s", got)
 	}
+
+	// the vendor, which the findings, the lists and the access rules keep apart
+	d.toField(6)
+	d.press("enter")
+	d.want("Vendor of shop")
+	d.typ("Acme Corp")
+	d.press("enter")
+	d.want("problem: a vendor is lowercase letters")
+	d.press("ctrl+u")
+	d.typ("acme")
+	d.press("enter")
+	save("set the vendor to acme", "set_vendor")
+	if got := fileAt(t, root, "config/projects/shop.yaml"); !strings.Contains(got, "vendor: acme") {
+		t.Fatalf("vendor:\n%s", got)
+	}
+	d.want("Edit fields of shop", "acme")
 
 	// environments: free names, added, renamed and removed one at a time
 	d.toField(0)
@@ -382,7 +399,8 @@ func TestOpKindsAreKindsProjectfileApplies(t *testing.T) {
 func TestEditRejectionKeepsTheTypedText(t *testing.T) {
 	b, root := diskFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "down", "c")
+	d.screen("projects")
+	d.press("down", "c")
 	d.toField(4)
 	d.press("enter", "ctrl+u")
 	d.typ("next tuesday")
@@ -423,7 +441,8 @@ func TestEditRejectionKeepsTheTypedText(t *testing.T) {
 func TestEditPreviewCanBeCancelledAndNothingIsWritten(t *testing.T) {
 	b, root := diskFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "down", "c")
+	d.screen("projects")
+	d.press("down", "c")
 	d.toField(1)
 	d.press("enter", "x")
 	d.want("Remove technology php from shop?")
@@ -448,7 +467,8 @@ func TestEditPreviewCanBeCancelledAndNothingIsWritten(t *testing.T) {
 func TestFieldEditorBreadcrumbAndBack(t *testing.T) {
 	b, _ := diskFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "down", "enter")
+	d.screen("projects")
+	d.press("down", "enter")
 	if got := crumbOf(d); got != "Projects › shop" {
 		t.Errorf("project: %q", got)
 	}
@@ -498,7 +518,8 @@ func TestFieldEditorBreadcrumbAndBack(t *testing.T) {
 func TestFieldEditorMouse(t *testing.T) {
 	b, _ := diskFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "down", "c")
+	d.screen("projects")
+	d.press("down", "c")
 	a := d.m.(*app)
 	row := func(n int) int { return bodyTop + fieldHead + n }
 	d.click(5, row(2))
@@ -532,7 +553,7 @@ func TestFieldEditorMouse(t *testing.T) {
 func TestFieldEditorOnProjectsThatCannotBeEdited(t *testing.T) {
 	b, root := diskFake(t, map[string]string{"config/projects/bad.yaml": "name: bad\ntechs: [oops\n", "config/projects/off.yaml.disabled": "name: off\n"})
 	d := start(t, b, Options{})
-	d.press("3")
+	d.screen("projects")
 	d.want("bad", "BROKEN", "off", "disabled")
 	d.press("down", "down", "c") // bad
 	d.want("error: the file of bad does not load")
@@ -545,7 +566,8 @@ func TestFieldEditorOnProjectsThatCannotBeEdited(t *testing.T) {
 	// the main config's project has no file
 	b2 := newFake(t, nil)
 	d2 := start(t, b2, Options{})
-	d2.press("3", "c")
+	d2.screen("projects")
+	d2.press("c")
 	d2.want("error: project shop has no file")
 	_ = root
 }
@@ -555,7 +577,7 @@ func TestFieldEditorFitsSmallTerminals(t *testing.T) {
 	d := start(t, b, Options{})
 	for _, size := range [][2]int{{30, 8}, {40, 12}, {60, 14}, {120, 40}} {
 		d.send(tea_window(size[0], size[1]))
-		for _, keys := range [][]string{{"3", "down", "c"}, {"enter"}, {"esc", "down", "down", "enter"}, {"a"}, {"esc", "esc", "down", "enter"}, {"esc", "esc"}} {
+		for _, keys := range [][]string{{"P", "down", "c"}, {"enter"}, {"esc", "down", "down", "enter"}, {"a"}, {"esc", "esc", "down", "enter"}, {"esc", "esc"}} {
 			d.press(keys...)
 			lines := strings.Split(d.view(), "\n")
 			if len(lines) > size[1] {
@@ -576,7 +598,8 @@ func TestFieldEditorFootersAndHelp(t *testing.T) {
 	d := start(t, b, Options{})
 	d.send(tea_window(80, 24))
 	foot := func() string { lines := strings.Split(d.view(), "\n"); return lines[len(lines)-1] }
-	d.press("3", "down")
+	d.screen("projects")
+	d.press("down")
 	if f := foot(); !strings.Contains(f, "c fields") {
 		t.Errorf("projects footer: %q", f)
 	}

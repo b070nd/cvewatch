@@ -11,7 +11,8 @@ import (
 
 // openEnvList opens the environments of the second project (shop) in the field editor.
 func openEnvList(d *driver) {
-	d.press("3", "down", "c")
+	d.screen("projects")
+	d.press("down", "c")
 	d.toField(0)
 	d.press("enter")
 }
@@ -124,7 +125,8 @@ func TestEnvRemoveAsksAndKeepsAtLeastOne(t *testing.T) {
 
 	// the only environment of a project stays
 	d.press("esc", "esc", "esc")
-	d.press("3", "up", "c") // mw has prod alone
+	d.screen("projects")
+	d.press("up", "c") // mw has prod alone
 	d.want("Edit fields of mw")
 	d.toField(0)
 	d.press("enter", "x")
@@ -139,7 +141,7 @@ func TestEnvsNotSetAreShownAndFixedWithOneKey(t *testing.T) {
 	}
 	b, root := diskFake(t, map[string]string{"config/projects/shop.yaml": legacy})
 	d := start(t, b, Options{})
-	d.press("3")
+	d.screen("projects")
 	d.want("old default")
 	d.press("down", "c")
 	d.want("not set (old default: dev, int, staging, prod)")
@@ -171,7 +173,8 @@ func TestEnvsNotSetCanStartFromLocal(t *testing.T) {
 	legacy := strings.Replace(editShop, "envs: [dev, prod]\n", "", 1)
 	b, root := diskFake(t, map[string]string{"config/projects/shop.yaml": legacy})
 	d := start(t, b, Options{})
-	d.press("3", "down", "c")
+	d.screen("projects")
+	d.press("down", "c")
 	d.toField(0)
 	d.press("enter", "f", "down", "enter")
 	d.want("Save this change?", "set environments to local")
@@ -186,7 +189,8 @@ func TestEnvsOfAFileWithoutThemCanStillBeEdited(t *testing.T) {
 	legacy := strings.Replace(editShop, "envs: [dev, prod]\n", "", 1)
 	b, root := diskFake(t, map[string]string{"config/projects/shop.yaml": legacy})
 	d := start(t, b, Options{})
-	d.press("3", "down", "c")
+	d.screen("projects")
+	d.press("down", "c")
 	d.toField(0)
 	d.press("enter", "+")
 	d.typ("local")
@@ -203,7 +207,8 @@ func TestEnvsOfAFileWithoutThemCanStillBeEdited(t *testing.T) {
 func TestNewProjectFormStartsWithLocalAndTakesFreeNames(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "n", "ctrl+u")
+	d.screen("projects")
+	d.press("n", "ctrl+u")
 	d.typ("blog")
 	d.press("enter", "enter") // techs (none), then add-techs
 	d.typ("php")

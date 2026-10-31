@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/b070nd/cvewatch/app/src/status"
@@ -23,7 +25,30 @@ func renderStatus(rep status.Report, now time.Time, w int, projects []string, ho
 		rows = append(rows, r)
 	}
 
-	add(section("Overall")+"  "+levelText(rep.Level), "")
+	add(section("Overall")+"  "+summaryText(rep, now), "")
+
+	add(section(fmt.Sprintf("Problems (%d)", len(rep.Problems))) + stMuted.Render("  red first, then yellow; each stays until its cause is gone"))
+	if len(rep.Problems) == 0 {
+		add("  none")
+	}
+	for _, p := range rep.Problems {
+		ls := []string{"  " + problemRow(p, now, w-2)}
+		if p.Detail != "" {
+			ls = append(ls, indentWrap("      ", oneLine(p.Detail), w)...)
+		}
+		if p.Hint != "" {
+			ls = append(ls, indentWrap("      what to do: ", oneLine(p.Hint), w)...)
+		}
+		r := pageRow{at: len(out), n: len(ls), key: problemRowKey(p.Key), title: oneLine(p.Title), info: problemInfo(p)}
+		if name, ok := strings.CutPrefix(p.Key, "project:"); ok && slices.Contains(projects, name) {
+			r.tgt = projectTarget(name, "")
+		} else if name := projectIn(p.Detail, projects); name != "" && !ok {
+			r.tgt = projectTarget(name, "")
+		}
+		rows = append(rows, r)
+		add(ls...)
+	}
+	add("")
 	add("  daemon  " + levelText(rep.Daemon.Level) + "  " + orDash(oneLine(rep.Daemon.Mode)))
 	add(indentWrap("          ", orDash(oneLine(rep.Daemon.Message)), w)...)
 	if !rep.Daemon.LastCycle.IsZero() {
@@ -83,7 +108,7 @@ func renderStatus(rep status.Report, now time.Time, w int, projects []string, ho
 
 	add(section(fmt.Sprintf("Projects (%d)", len(rep.Projects))))
 	if !rep.Scheduled {
-		add(indentWrap("  ", "scheduled updates are off (update.auto in config.yaml): only update and the F key refresh", w)...)
+		add(indentWrap("  ", "scheduled updates are off (update.auto in config.yaml): only update and the u key refresh", w)...)
 	}
 	if len(rep.Projects) == 0 {
 		add("  none")
@@ -151,4 +176,19 @@ func agoText(t time.Time) string {
 		return "never"
 	}
 	return t.UTC().Format("2006-01-02 15:04") + "Z"
+}
+
+// problemRowKey is the key of the page row of a problem, which the Overview names to open it.
+func problemRowKey(key string) string { return "problem " + key }
+
+// problemInfo is what a problem says in full: the detail and what to do.
+func problemInfo(p status.Problem) string {
+	text := oneLine(p.Detail)
+	if p.Hint != "" {
+		if text != "" {
+			text += ". "
+		}
+		text += "What to do: " + oneLine(p.Hint)
+	}
+	return text
 }

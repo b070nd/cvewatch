@@ -34,7 +34,7 @@ func emptyLedger(t *testing.T) store.Storage {
 func TestAFreshLedgerDoesNotRevalidate(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3")
+	d.screen("projects")
 	d.wantNot("shop*", "revalidating")
 	if b.backfilled() != 0 {
 		t.Fatalf("%d back-fills for files that were judged", b.backfilled())
@@ -59,14 +59,14 @@ func TestAStaleSnapshotRunsTheBackfillByItselfAndReportsIt(t *testing.T) {
 	}
 	d := start(t, b, Options{})
 	g := newBG(d)
-	g.press("3")
+	g.screen("projects")
 	outOfDate(b)
 	g.press("r")
 	g.untilView("revalidating")
 	d.want("shop*", "changes not judged yet: V revalidates")
 	step <- struct{}{}
 	g.untilView("back-fill 2/9")
-	g.press("F")
+	g.press("u")
 	d.want("revalidating already")
 	step <- struct{}{}
 	g.untilView("revalidated shop: 4 new, 11 closed by since 2026-10-15, 2 reopened, back-filled nvd")
@@ -134,7 +134,7 @@ func TestAFetchInProgressHoldsTheBackfillBack(t *testing.T) {
 	}
 	d := start(t, b, Options{})
 	g := newBG(d)
-	g.press("F")
+	g.press("u")
 	g.until("the fetch", func() bool { return b.fetched() == 1 })
 	outOfDate(b)
 	g.press("r")
@@ -150,7 +150,7 @@ func TestAFetchInProgressHoldsTheBackfillBack(t *testing.T) {
 func TestRevalidatingForRealJudgesTheFindingsAgain(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("2")
+	d.screen("findings")
 	d.want("3 of 3 open issues")
 	outOfDate(b) // the shop now only looks at what was published from the 15th
 	d.press("V")
@@ -166,24 +166,25 @@ func TestRevalidatingForRealJudgesTheFindingsAgain(t *testing.T) {
 		t.Fatalf("%d back-fills", b.backfilled())
 	}
 	a := d.m.(*app)
-	if len(a.data.Issues) != 1 || a.data.Stale.Stale {
-		t.Fatalf("%d issues left, stale %+v", len(a.data.Issues), a.data.Stale)
+	if len(a.data.ByProject["shop"]) != 0 || len(a.data.ByProject["mw"]) != 1 || a.data.Stale.Stale {
+		t.Fatalf("issues left %v, stale %+v", a.data.ByProject, a.data.Stale)
 	}
-	d.press("3")
+	d.screen("projects")
 	d.wantNot("shop*")
 }
 
 func TestVAnswersNothingToRevalidate(t *testing.T) {
 	b := newFake(t, emptyLedger(t))
 	d := start(t, b, Options{})
-	for _, scr := range []string{"1", "2", "3", "4", "5"} {
+	for _, scr := range []string{"O", "F", "P", "H", "S"} {
 		d.press(scr, "V")
 		d.want("nothing to revalidate")
 		if d.m.(*app).nt != nil {
 			t.Fatal("nothing to ask")
 		}
 	}
-	d.press("3", "enter", "V")
+	d.screen("projects")
+	d.press("enter", "V")
 	d.want("nothing to revalidate")
 	if b.backfilled() != 0 {
 		t.Fatal("nothing ran")
@@ -194,7 +195,8 @@ func TestVPreviewCanBeDeclined(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
 	outOfDate(b)
-	d.press("3", "V")
+	d.screen("projects")
+	d.press("V")
 	d.want("closed by since", "esc: cancel")
 	d.press("esc")
 	if d.m.(*app).nt != nil || b.backfilled() != 0 {
@@ -205,12 +207,13 @@ func TestVPreviewCanBeDeclined(t *testing.T) {
 func TestVIsInTheHelpOfTheRootScreensAndOfAProject(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
 	d.send(tea_window(200, 60))
-	for _, scr := range []string{"1", "2", "3", "4", "5"} {
+	for _, scr := range []string{"O", "F", "P", "H", "S"} {
 		d.press(scr, "?")
 		d.want("revalidate now")
 		d.press("esc")
 	}
-	d.press("3", "enter", "?")
+	d.screen("projects")
+	d.press("enter", "?")
 	d.want("revalidate now")
 }
 

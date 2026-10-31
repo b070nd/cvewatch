@@ -197,7 +197,7 @@ func fields() []Field {
 	f = Field{Path: "access", Doc: KindSettings, Section: SecAccess, Label: "Access rules", Type: TypeMap, Elem: TypeRecord, Key: "",
 		Help: "Who may see and change which projects, by actor name. Empty means everyone may do everything. Authorization on a local identity, not authentication."}
 	add(f)
-	f = Field{Path: "access.*.projects", Doc: KindSettings, Section: SecAccess, Label: "Projects", Type: TypeList, Elem: TypeString, Help: `Project names; "*" means every project.`}
+	f = Field{Path: "access.*.projects", Doc: KindSettings, Section: SecAccess, Label: "Projects", Type: TypeList, Elem: TypeString, Help: `Project names; vendor:NAME means every project of that vendor, also one added later; "*" means every project.`}
 	add(f)
 	add(Field{Path: "access.*.write", Doc: KindSettings, Section: SecAccess, Label: "Write", Type: TypeBool, Help: "May change what the projects hold."})
 
@@ -254,7 +254,7 @@ func sourceFields(fs *[]Field, prefix, doc, section string) {
 		*fs = append(*fs, Field{Path: "sources", Doc: doc, Section: section, Label: "Feeds", Type: TypeList, Elem: TypeRecord, Key: "id",
 			Help: "Your own feeds, added to the shipped ones. A feed with a shipped id replaces it."})
 	}
-	*fs = append(*fs, row("id", "Id", TypeString, "Unique; the same id as a shipped feed replaces it."))
+	*fs = append(*fs, row("id", "Id", TypeString, "Unique; the same id as an existing feed changes only the fields given here."))
 	t := row("type", "Type", TypeEnum, "")
 	t.Enum = feeds.Types()
 	u := row("url", "URL", TypeString, "May contain {since}, {since_unix}, {since_date}, {now}. Never put credentials in it.")

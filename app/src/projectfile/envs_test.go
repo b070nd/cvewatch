@@ -149,7 +149,7 @@ func TestEnvHints(t *testing.T) {
 		len(noProd[0].Fix) != 1 || noProd[0].Fix[0].Kind != "add_env" || noProd[0].Fix[0].Env != "prod" {
 		t.Errorf("no-prod hints = %+v", noProd)
 	}
-	for _, envs := range [][]model.Env{{"local", "prod"}, {"production"}} {
+	for _, envs := range [][]model.Env{{"local", "prod"}, {"production"}, {"local", "prod-eu", "prod-us"}} {
 		if h := EnvHints(model.Project{Envs: envs}); len(h) != 0 {
 			t.Errorf("%v should have no hints: %+v", envs, h)
 		}

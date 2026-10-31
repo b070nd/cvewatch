@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -134,7 +135,8 @@ type Storage struct {
 	Backend string `yaml:"backend"` // file (default) or sqlite
 }
 
-// Grant is what one actor may do. "*" in Projects means every project.
+// Grant is what one actor may do. "*" in Projects means every project, and
+// "vendor:acme" every project of that vendor, also one added later.
 type Grant struct {
 	Projects []string `yaml:"projects"`
 	Write    bool     `yaml:"write"`
@@ -359,8 +361,8 @@ func assemble(root string, lenient bool, over Overlay) (*Bundle, []Issue) {
 
 	// The technology catalog and the feed list ship inside the binary. Files
 	// in the folder layer on top by name (technologies) or id (feeds): an entry
-	// replaces the shipped one, a new one is added, and `disabled: true` removes
-	// a shipped one.
+	// replaces the shipped one (a feed entry changes only the fields it gives), a
+	// new one is added, and `disabled: true` removes a shipped one.
 	var shippedTechs, userTechs struct {
 		Techs []model.Tech `yaml:"techs"`
 	}
@@ -412,15 +414,16 @@ func assemble(root string, lenient bool, over Overlay) (*Bundle, []Issue) {
 		decoded[br.Name] = true
 	}
 
-	var shippedSrc, userSrc struct {
+	var shippedSrc struct {
 		Sources []model.Source `yaml:"sources"`
 	}
+	var userSrc []userSource
 	if err := decodeBytes("shipped sources", shipped.Sources(), &shippedSrc); err != nil {
 		return fail(err)
 	}
 	err = rd.each(SourcesDir(root), func(path string) error {
 		var s struct {
-			Sources []model.Source `yaml:"sources"`
+			Sources []userSource `yaml:"sources"`
 		}
 		if err := rd.decode(path, &s, false); err != nil {
 			return err
@@ -428,15 +431,14 @@ func assemble(root string, lenient bool, over Overlay) (*Bundle, []Issue) {
 		for i, src := range s.Sources {
 			og.sources[src.ID] = sourceAt{file: path, index: i}
 		}
-		userSrc.Sources = append(userSrc.Sources, s.Sources...)
+		userSrc = append(userSrc, s.Sources...)
 		return nil
 	})
 	if err != nil {
 		return fail(err)
 	}
-	b.DefaultSources = len(userSrc.Sources) == 0
-	b.Sources = mergeSources(shippedSrc.Sources, userSrc.Sources)
-	b.Sources = b.withTechFeeds(b.Sources)
+	b.DefaultSources = len(userSrc) == 0
+	b.Sources = mergeSources(b.withTechFeeds(shippedSrc.Sources), userSrc)
 
 	return b, b.validate(decoded, og)
 }
@@ -483,6 +485,12 @@ func (b *Bundle) validate(decoded map[string]bool, og origins) []Issue {
 	for _, actor := range slices.Sorted(maps.Keys(b.Access)) {
 		g := b.Access[actor]
 		for _, name := range g.Projects {
+			if vendor, ok := VendorGrant(name); ok {
+				if vendor == "" || !model.ValidVendor(vendor) {
+					fail(og.settings, "access."+actor+".projects", "access for %q names the vendor %q, which is not a valid vendor name", actor, vendor)
+				}
+				continue
+			}
 			if name != "*" && !decoded[name] {
 				fail(og.settings, "access."+actor+".projects", "access for %q names unknown project %q", actor, name)
 			}
@@ -612,6 +620,9 @@ func projectErrors(p model.Project, seen map[string]bool) []fieldErr {
 		fail("name", "project name %q is empty or duplicated", p.Name)
 	}
 	seen[p.Name] = true
+	if !model.ValidVendor(p.Vendor) {
+		fail("vendor", "project %s: vendor %q is not valid (lowercase letters, digits, - and _, at most 63 characters)", p.Name, p.Vendor)
+	}
 	for _, e := range p.Envs {
 		if !e.Valid() {
 			fail("envs", "project %s: %q is not a valid environment name (lowercase letters, digits, - and _)", p.Name, e)
@@ -793,10 +804,31 @@ func (r reader) each(dir string, fn func(path string) error) error {
 // open is true when no access rules exist, so everything is allowed. A nil
 // projects slice with open false means the actor has no access at all.
 func (b *Bundle) Allowed(actor string) (projects []string, write, open bool) {
-	return AllowedBy(b.Access, actor)
+	projects, write, open = AllowedBy(b.Access, actor)
+	if open || !slices.ContainsFunc(projects, func(p string) bool { _, ok := VendorGrant(p); return ok }) {
+		return projects, write, open
+	}
+	var out []string
+	for _, name := range projects {
+		if vendor, ok := VendorGrant(name); ok {
+			for _, p := range b.Projects {
+				if p.Vendor == vendor && !slices.Contains(out, p.Name) {
+					out = append(out, p.Name)
+				}
+			}
+		} else if !slices.Contains(out, name) {
+			out = append(out, name)
+		}
+	}
+	return out, write, open
 }
 
-// AllowedBy is Allowed for a bare list of access rules.
+// VendorGrant reads an entry of a grant's Projects that names a vendor
+// ("vendor:acme"), as the vendor it names.
+func VendorGrant(entry string) (vendor string, ok bool) { return strings.CutPrefix(entry, "vendor:") }
+
+// AllowedBy is Allowed for a bare list of access rules. Vendor entries are
+// returned as they are written: only Bundle.Allowed knows the projects.
 func AllowedBy(access map[string]Grant, actor string) (projects []string, write, open bool) {
 	if len(access) == 0 {
 		return nil, true, true
@@ -811,14 +843,52 @@ func AllowedBy(access map[string]Grant, actor string) (projects []string, write,
 	return g.Projects, g.Write, false
 }
 
-// mergeSources layers user feeds over shipped ones by id, in shipped order.
-func mergeSources(shipped, user []model.Source) []model.Source {
-	out := slices.Clone(shipped)
+// userSource is a feed entry of sources/*.yaml. It keeps the YAML it came from,
+// so an entry for a known id changes only the fields it names.
+type userSource struct {
+	model.Source
+	node yaml.Node
+}
+
+var sourceKeys = func() map[string]bool {
+	out := map[string]bool{}
+	t := reflect.TypeFor[model.Source]()
+	for i := range t.NumField() {
+		out[strings.Split(t.Field(i).Tag.Get("yaml"), ",")[0]] = true
+	}
+	return out
+}()
+
+// UnmarshalYAML is as strict as the rest of the loader: an unknown key is an error.
+func (u *userSource) UnmarshalYAML(n *yaml.Node) error {
+	var errs []string
+	for i := 0; n.Kind == yaml.MappingNode && i+1 < len(n.Content); i += 2 {
+		if k := n.Content[i]; !sourceKeys[k.Value] {
+			errs = append(errs, fmt.Sprintf("line %d: field %s not found in type model.Source", k.Line, k.Value))
+		}
+	}
+	if len(errs) > 0 {
+		return &yaml.TypeError{Errors: errs}
+	}
+	u.node = *n
+	return n.Decode(&u.Source)
+}
+
+// mergeSources layers user feeds over the shipped ones by id, in shipped
+// order: an entry for a known id overrides the fields it gives and keeps the
+// rest, so `{id: cve-records, disabled: true}` is enough to switch one off.
+func mergeSources(base []model.Source, user []userSource) []model.Source {
+	out := slices.Clone(base)
 	for _, u := range user {
-		if i := slices.IndexFunc(out, func(s model.Source) bool { return s.ID == u.ID }); i >= 0 {
-			out[i] = u
-		} else {
-			out = append(out, u)
+		i := slices.IndexFunc(out, func(s model.Source) bool { return s.ID == u.ID && u.ID != "" })
+		if i < 0 {
+			out = append(out, u.Source)
+			continue
+		}
+		merged := out[i]
+		merged.Headers = maps.Clone(merged.Headers)
+		if err := u.node.Decode(&merged); err == nil {
+			out[i] = merged
 		}
 	}
 	return out

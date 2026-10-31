@@ -121,6 +121,7 @@ type Op struct {
 	Version  string         `json:"version,omitempty"`
 	Image    string         `json:"image,omitempty"`
 	Since    string         `json:"since,omitempty"`    // YYYY-MM-DD, for set_since; empty clears
+	Vendor   string         `json:"vendor,omitempty"`   // for set_vendor; empty clears
 	Every    string         `json:"every,omitempty"`    // a period, for set_update; "default" removes it, empty leaves it
 	Auto     *bool          `json:"auto,omitempty"`     // for set_update; nil leaves it
 	Lockfile model.Lockfile `json:"lockfile,omitempty"` // for set_lockfile_dev its Dev is the new value
@@ -228,6 +229,8 @@ func apply(root *yaml.Node, op Op) error {
 		return setSince(root, strings.TrimSpace(op.Since))
 	case "set_update":
 		return setUpdate(root, strings.TrimSpace(op.Every), op.Auto)
+	case "set_vendor":
+		return setVendor(root, strings.TrimSpace(op.Vendor))
 	}
 	return fmt.Errorf("unknown kind %q", op.Kind)
 }
@@ -257,9 +260,11 @@ func setEnvs(root *yaml.Node, envs []model.Env) error {
 		root.Content[i+1] = seq
 		return nil
 	}
-	at := len(root.Content) // new envs go right after the name
-	if i := mapIndex(root, "name"); i >= 0 {
-		at = i + 2
+	at := len(root.Content) // new envs go right after the name and the vendor
+	for _, k := range []string{"name", "vendor"} {
+		if i := mapIndex(root, k); i >= 0 {
+			at = i + 2
+		}
 	}
 	root.Content = append(root.Content[:at], append([]*yaml.Node{str("envs", 0), seq}, root.Content[at:]...)...)
 	return nil
@@ -383,13 +388,33 @@ func setSince(root *yaml.Node, since string) error {
 		return nil
 	}
 	at := len(root.Content) // a new date goes after the inventory, before what differs per environment
-	for _, k := range []string{"lockfiles", "techs", "envs", "name"} {
+	for _, k := range []string{"lockfiles", "techs", "envs", "vendor", "name"} {
 		if i := mapIndex(root, k); i >= 0 {
 			at = i + 2
 			break
 		}
 	}
 	root.Content = append(root.Content[:at], append([]*yaml.Node{str("since", 0), v}, root.Content[at:]...)...)
+	return nil
+}
+
+func setVendor(root *yaml.Node, vendor string) error {
+	if vendor == "" { // an empty vendor clears it
+		mapDel(root, "vendor")
+		return nil
+	}
+	if !model.ValidVendor(vendor) {
+		return fmt.Errorf("invalid vendor %q (use lowercase letters, digits, - and _, at most 63 characters)", vendor)
+	}
+	if mapGet(root, "vendor") != nil {
+		setStr(root, "vendor", vendor, 0)
+		return nil
+	}
+	at := len(root.Content) // a new vendor goes right after the name
+	if i := mapIndex(root, "name"); i >= 0 {
+		at = i + 2
+	}
+	root.Content = append(root.Content[:at], append([]*yaml.Node{str("vendor", 0), str(vendor, 0)}, root.Content[at:]...)...)
 	return nil
 }
 
@@ -432,7 +457,7 @@ func setUpdate(root *yaml.Node, every string, auto *bool) error {
 	}
 	if mapGet(root, "update") == nil {
 		at := 0 // a new block goes after the inventory, before what differs per environment
-		for _, k := range []string{"name", "envs", "techs", "lockfiles", "since"} {
+		for _, k := range []string{"name", "vendor", "envs", "techs", "lockfiles", "since"} {
 			if i := mapIndex(root, k); i >= 0 {
 				at = max(at, i+2)
 			}

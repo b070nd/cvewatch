@@ -7,7 +7,8 @@ import (
 
 // toReview fills a new project's form up to the review step.
 func toReview(d *driver) {
-	d.press("3", "n", "ctrl+u")
+	d.screen("projects")
+	d.press("n", "ctrl+u")
 	d.typ("blog")
 	d.press("enter", "enter") // name, technologies (none)
 	d.typ("php")
@@ -71,7 +72,8 @@ func TestReviewStepListSurvivesSmallTerminals(t *testing.T) {
 
 func TestEscOnTheFirstStepAsksOnceSomethingWasTyped(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	d.press("3", "n")
+	d.screen("projects")
+	d.press("n")
 	d.press("esc") // nothing typed yet: leaves at once
 	d.want("cancelled")
 	d.press("n", "ctrl+u")

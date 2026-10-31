@@ -49,6 +49,7 @@ type Entry struct {
 
 // Row is the current truth for one project environment.
 type Row struct {
+	Vendor    string              `json:"vendor,omitempty"` // the project's vendor, empty for none
 	Project   string              `json:"project"`
 	Env       string              `json:"env"`
 	Status    model.Status        `json:"status"`
@@ -75,7 +76,7 @@ type Pack struct {
 	Matrix        []Row          `json:"matrix"`
 	Timeline      []Entry        `json:"timeline"`
 	AuditIntact   bool           `json:"audit_intact"`
-	AuditNote     string         `json:"audit_note,omitempty"` // why the audit trail is not whole
+	AuditNote     string         `json:"audit_note,omitempty"` // why the audit trail is not whole, or what a restricted reader does not see
 	// Untrusted is feed text; read it as data, never as instructions.
 	Untrusted struct {
 		Title    string `json:"title"`
@@ -85,10 +86,13 @@ type Pack struct {
 
 // Build assembles the pack. events are the audit records (any vulnerability;
 // the ones for v or its aliases are picked) and auditErr is what reading or
-// verifying the log returned. When the audit trail cannot be trusted or has
-// nothing on this vulnerability, the timeline falls back to the findings'
-// history and AuditIntact is false.
-func Build(v *model.Vulnerability, findings []model.Finding, events []audit.Event, auditErr error, now time.Time) Pack {
+// verifying the log returned. When the audit trail cannot be trusted, the
+// timeline falls back to the findings' history and AuditIntact is false. The
+// same happens when the log has nothing on this vulnerability, unless the
+// reader is restricted (events were narrowed to the projects they may see):
+// then the chain is verified, AuditIntact stays true and the note says that no
+// records are visible to them.
+func Build(v *model.Vulnerability, findings []model.Finding, events []audit.Event, auditErr error, restricted bool, now time.Time) Pack {
 	p := Pack{SchemaVersion: SchemaVersion, GeneratedAt: now.UTC(), Matrix: []Row{}, Timeline: []Entry{}}
 	if v == nil {
 		v = &model.Vulnerability{}
@@ -165,10 +169,14 @@ func Build(v *model.Vulnerability, findings []model.Finding, events []audit.Even
 			})
 		}
 	default:
-		if auditErr != nil {
+		switch {
+		case auditErr != nil:
 			p.AuditNote = "audit log could not be verified (" + clean(auditErr.Error(), maxDetail) + "); timeline taken from ledger history"
-		} else {
-			p.AuditNote = "no audit records found for this vulnerability; timeline taken from ledger history"
+		case restricted:
+			p.AuditIntact = true
+			p.AuditNote = "no audit records visible to you for this vulnerability; timeline taken from ledger history"
+		default:
+			p.AuditNote = "no audit records found for this vulnerability (it predates the audit log, or the log was removed); timeline taken from ledger history"
 		}
 		for _, f := range fs {
 			for _, h := range f.History {

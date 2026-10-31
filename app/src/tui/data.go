@@ -29,7 +29,7 @@ import (
 type snapshot struct {
 	At         time.Time
 	Root       string
-	Issues     []query.Issue // open issues, most urgent first
+	ByProject  map[string][]query.Issue // the open issues of each project, most urgent first, read project by project so that no row mixes projects
 	Status     status.Report
 	Violations []priority.Violation
 	Projects   []projectRow
@@ -76,11 +76,11 @@ func loadSnapshot(s *ops.Session) (*snapshot, error) { return loadSnapshotMemo(s
 // loadSnapshotMemo is loadSnapshot that asks the memo for the staleness, which
 // reads lockfiles, so it is only worked out again when the files changed.
 func loadSnapshotMemo(s *ops.Session, memo *staleMemo) (*snapshot, error) {
-	issues, err := s.List(query.Filter{})
-	if err != nil {
-		return nil, err
+	if _, err := s.List(query.Filter{Project: noProject}); err != nil {
+		return nil, err // access denied shows here
 	}
-	sn := &snapshot{At: s.Now(), Root: s.Cfg.Root, Issues: issues, Horizon: s.Cfg.Horizon, Stamp: inputStamp(s.Cfg)}
+	sn := &snapshot{At: s.Now(), Root: s.Cfg.Root, ByProject: map[string][]query.Issue{}, Horizon: s.Cfg.Horizon, Stamp: inputStamp(s.Cfg)}
+	var err error
 	sn.Stale, sn.StaleKnown = memo.staleness(s, sn.Stamp)
 	warn := func(what string, err error) { sn.Warnings = append(sn.Warnings, what+": "+oneLine(err.Error())) }
 	if sn.Status, err = s.Status(); err != nil {
@@ -148,9 +148,41 @@ func loadSnapshotMemo(s *ops.Session, memo *staleMemo) (*snapshot, error) {
 		file, _ := s.DisabledFile(name)
 		sn.Projects = append(sn.Projects, projectRow{ProjectView: ops.ProjectView{Name: name}, HasFile: true, File: file, Disabled: true})
 	}
+	sn.sortByVendor()
+	for _, p := range sn.Projects {
+		if p.Disabled {
+			continue
+		}
+		issues, err := s.List(query.Filter{Project: p.Name})
+		if err != nil {
+			return nil, err
+		}
+		if len(issues) > 0 {
+			sn.ByProject[p.Name] = issues
+		}
+	}
 	sn.markUnjudged()
 	sn.markUpdates()
 	return sn, nil
+}
+
+// noProject is a name no project has, for a read that only checks access.
+const noProject = "\x00"
+
+// sortByVendor lists the projects of one vendor together, the vendors in
+// alphabetical order and the projects without a vendor last. Without any
+// vendor the order stays as it was.
+func (sn *snapshot) sortByVendor() {
+	if !slices.ContainsFunc(sn.Projects, func(p projectRow) bool { return p.Vendor != "" }) {
+		return
+	}
+	rank := func(p projectRow) string {
+		if p.Vendor == "" {
+			return "\xff"
+		}
+		return p.Vendor
+	}
+	slices.SortStableFunc(sn.Projects, func(a, b projectRow) int { return strings.Compare(rank(a), rank(b)) })
 }
 
 // markUpdates says in words when each project is refreshed.
@@ -287,16 +319,19 @@ func loadLandCmd(b Backend, memo *staleMemo, land *landing) tea.Cmd {
 
 // detailCmd reads the page of an issue. Reading the audit trail for its
 // history makes this the dearest read, so it runs once per open and refresh.
-func detailCmd(b Backend, id string) tea.Cmd {
+func detailCmd(b Backend, id string, f query.Filter) tea.Cmd {
 	return func() tea.Msg {
 		m := detailMsg{id: id}
 		m.err = b.Read(func(s *ops.Session) (e error) {
-			full, e := s.IssueDetail(id)
+			full, e := s.IssueDetailIn(id, f)
 			if e != nil {
 				return e
 			}
+			if ps := projectsOf(full.Issue); len(ps) > 1 {
+				return fmt.Errorf("%s is open in several projects here (%s): choose the project first (C), so that the page shows one", id, strings.Join(ps, ", "))
+			}
 			m.is, m.det, m.md = full.Issue, &full.Detail, full.Markdown
-			ex, xe := s.Explain(id)
+			ex, xe := s.ExplainIn(id, f)
 			if xe != nil {
 				m.exErr = xe
 			} else {
@@ -399,7 +434,7 @@ func bulkCmd(b Backend, cs []ops.Change) tea.Cmd {
 	return func() tea.Msg {
 		left := map[string]int{}
 		for _, c := range cs {
-			left[c.ID]++
+			left[c.Project+"\x00"+c.ID]++
 		}
 		var findings, applied int
 		var late error
@@ -415,8 +450,9 @@ func bulkCmd(b Backend, cs []ops.Change) tea.Cmd {
 				}
 				findings += n
 				applied++
-				if left[c.ID]--; left[c.ID] == 0 {
-					done = append(done, c.ID)
+				key := c.Project + "\x00" + c.ID
+				if left[key]--; left[key] == 0 {
+					done = append(done, key)
 				}
 			}
 			return nil

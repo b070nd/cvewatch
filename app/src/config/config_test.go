@@ -57,6 +57,10 @@ func TestLoadRejectsMistakes(t *testing.T) {
 		"both":        {"config/projects/a.yaml", "name: a\nenvs: [prod]\nenvironments: {prod: {image: a}}\nwhen@prod: {image: b}\n"},
 		"tech envs":   {"config/projects/a.yaml", "name: a\ntechs: [{name: php, envs: [Prod]}]\n"},
 		"top key":     {"config/projects/a.yaml", "name: a\nwhens@prod: {}\n"},
+		"vendor":      {"config/projects/a.yaml", "name: a\nvendor: Acme Corp\n"},
+		"vendor long": {"config/projects/a.yaml", "name: a\nvendor: " + strings.Repeat("a", 64) + "\n"},
+		"grant":       {"config/config.yaml", "access:\n  alice: {projects: ['vendor:Acme Corp']}\n"},
+		"grant empty": {"config/config.yaml", "access:\n  alice: {projects: ['vendor:']}\n"},
 	}
 	for name, c := range cases {
 		root := t.TempDir()
@@ -427,5 +431,115 @@ func TestWarningsNameTheSpellingOfTheFile(t *testing.T) {
 	all := strings.Join(b.Warnings, "\n")
 	if !strings.Contains(all, "project a: when@prod: tech \"cobol\"") || !strings.Contains(all, "project b: environments.prod: tech \"cobol\"") {
 		t.Errorf("warnings:\n%s", all)
+	}
+}
+
+func sourceByID(b *Bundle, id string) (model.Source, bool) {
+	i := slices.IndexFunc(b.Sources, func(s model.Source) bool { return s.ID == id })
+	if i < 0 {
+		return model.Source{}, false
+	}
+	return b.Sources[i], true
+}
+
+func TestSourceEntryForAShippedIDOverridesOnlyItsFields(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, "sources/a.yaml", "sources:\n  - {id: cve-records, disabled: true}\n  - {id: nvd, url: 'https://nvd.test/?s={since}'}\n")
+	b, issues := Check(root, nil)
+	if len(issues) != 0 {
+		t.Fatalf("shorthand rejected: %+v", issues)
+	}
+	if s, ok := sourceByID(b, "cve-records"); !ok || !s.Disabled || s.Type != "cve" || s.URL == "" || !s.MatchTitleOnly {
+		t.Fatalf("cve-records = %+v", s)
+	}
+	if s, _ := sourceByID(b, "nvd"); s.Disabled || s.Type != "nvd" || s.URL != "https://nvd.test/?s={since}" || !s.MatchStructured || !s.MatchTitleOnly {
+		t.Fatalf("nvd = %+v", s)
+	}
+	if s, _ := sourceByID(b, "kev"); s.Disabled {
+		t.Fatalf("an untouched feed changed: %+v", s)
+	}
+	if b.DefaultSources {
+		t.Error("a user file is present")
+	}
+
+	put(t, root, "sources/b.yaml", "sources: [{id: cve-records, disabled: false}]\n")
+	b, issues = Check(root, nil)
+	if s, _ := sourceByID(b, "cve-records"); len(issues) != 0 || s.Disabled {
+		t.Fatalf("a later file did not switch it back on: %+v %+v", issues, s)
+	}
+}
+
+func TestSourceEntryForAnUnknownIDStillNeedsATypeAndURL(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, "sources/a.yaml", "sources: [{id: nope, disabled: true}]\n")
+	if _, issues := Check(root, nil); len(issues) == 0 || issues[0].Field != "sources.[id=nope].type" {
+		t.Fatalf("%+v", issues)
+	}
+	put(t, root, "sources/a.yaml", "sources: [{id: cve-records, disable: true}]\n")
+	if _, issues := Check(root, nil); len(issues) == 0 || issues[0].Line != 1 || !strings.Contains(issues[0].Msg, "disable") {
+		t.Fatalf("a mistyped key must fail: %+v", issues)
+	}
+}
+
+func TestSourceEntryCanOverrideAVendorFeedOfATechnology(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, "config/projects/a.yaml", "name: a\ntechs: [{name: fortios}]\n")
+	b, _ := Check(root, nil)
+	var feed string
+	for _, tc := range b.Techs {
+		if tc.Name == "fortios" && len(tc.Feeds) > 0 {
+			feed = tc.Feeds[0].ID
+		}
+	}
+	if feed == "" {
+		t.Skip("fortios has no shipped feed")
+	}
+	put(t, root, "sources/a.yaml", "sources: [{id: "+feed+", disabled: true}]\n")
+	b, issues := Check(root, nil)
+	if s, ok := sourceByID(b, feed); len(issues) != 0 || !ok || !s.Disabled || s.URL == "" {
+		t.Fatalf("%+v %+v", issues, s)
+	}
+}
+
+func TestVendorGrantCoversEveryProjectOfTheVendorAtRequestTime(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, "config/config.yaml", "access:\n  alice: {projects: ['vendor:acme', blog]}\n  carol: {projects: ['vendor:acme'], write: true}\n  bob: {projects: ['*']}\n")
+	put(t, root, "config/projects/shop.yaml", "name: shop\nvendor: acme\n")
+	put(t, root, "config/projects/crm.yaml", "name: crm\nvendor: acme\n")
+	put(t, root, "config/projects/blog.yaml", "name: blog\n")
+	put(t, root, "config/projects/other.yaml", "name: other\nvendor: globex\n")
+	b, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, write, open := b.Allowed("alice"); open || write || !slices.Equal(slices.Sorted(slices.Values(got)), []string{"blog", "crm", "shop"}) {
+		t.Fatalf("alice: %v write=%v open=%v", got, write, open)
+	}
+	if got, write, _ := b.Allowed("carol"); !write || !slices.Equal(slices.Sorted(slices.Values(got)), []string{"crm", "shop"}) {
+		t.Fatalf("carol: %v write=%v", got, write)
+	}
+	if got, _, open := b.Allowed("bob"); !open || got != nil {
+		t.Fatalf("bob: %v open=%v", got, open)
+	}
+
+	// a project added later is covered by the next request, and one that left the vendor is not
+	put(t, root, "config/projects/erp.yaml", "name: erp\nvendor: acme\n")
+	put(t, root, "config/projects/crm.yaml", "name: crm\nvendor: globex\n")
+	b, err = Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := b.Allowed("carol"); !slices.Equal(slices.Sorted(slices.Values(got)), []string{"erp", "shop"}) {
+		t.Fatalf("carol after the change: %v", got)
+	}
+
+	// a vendor without projects grants nothing, and is no error: its last project may be deleted
+	put(t, root, "config/config.yaml", "access:\n  dave: {projects: ['vendor:nobody']}\n")
+	b, err = Load(root)
+	if err != nil {
+		t.Fatalf("a vendor without projects must stay valid: %v", err)
+	}
+	if got, _, open := b.Allowed("dave"); open || len(got) != 0 {
+		t.Fatalf("dave: %v open=%v", got, open)
 	}
 }

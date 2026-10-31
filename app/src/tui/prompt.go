@@ -52,10 +52,13 @@ type prompt struct {
 	submitting bool   // the write is in flight; the prompt stays open until it ends
 	problem    string // why the last submit was refused
 
-	change ops.Change     // pkStatus
-	assign ops.Assignment // pkAssign
-	bulk   model.Status   // pkBulk
-	attach ops.Attachment // pkEvidence
+	change  ops.Change     // pkStatus
+	assign  ops.Assignment // pkAssign
+	selEnv  model.Env      // pkStatus, pkAssign: the environment that was selected; whole makes the change cover them all
+	whole   bool
+	retitle func(env model.Env) string
+	bulk    model.Status   // pkBulk
+	attach  ops.Attachment // pkEvidence
 
 	project string                                                                // pkEdit, pkRename, pkDuplicate, pkDelete: the project
 	known   []projectfile.Issue                                                   // pkEdit: the problems the file had before
@@ -130,10 +133,10 @@ func (p *prompt) status(w int) []string {
 }
 
 // startStatus asks for a note, then changes the status of the selected
-// environment of the open issue (the whole project when whole is set).
-// not-affected is a human assertion, so its label says a reason is required;
-// ops enforces it.
-func (m *app) startStatus(st model.Status, whole bool) {
+// environment of the open issue; ctrl+p in the prompt makes it the whole
+// project. not-affected is a human assertion, so its label says a reason is
+// required; ops enforces it.
+func (m *app) startStatus(st model.Status) {
 	d := m.fnd.det
 	if d == nil || d.loading || d.err != nil || len(d.is.Targets) == 0 {
 		m.fail("nothing selected: open an issue with an environment first")
@@ -141,16 +144,37 @@ func (m *app) startStatus(st model.Status, whole bool) {
 	}
 	t := d.is.Targets[d.sel.at()]
 	c := ops.Change{ID: d.is.ID, Project: t.Project, Env: t.Env, Status: st}
-	if whole {
-		c.Env = ""
-	}
 	label := "Note (optional)"
 	if st == model.StatusNotAffected {
 		label = "Reason (required)"
 	}
-	title := fmt.Sprintf("%s: %s", changeWords[st], where(c.Project, c.Env))
-	m.prm = &prompt{kind: pkStatus, title: oneLine(c.ID + " " + title), change: c, fields: []field{{label: label}}, hint: noteHint(st)}
+	retitle := func(env model.Env) string {
+		return oneLine(c.ID + " " + changeWords[st] + ": " + where(c.Project, env))
+	}
+	m.prm = &prompt{kind: pkStatus, title: retitle(c.Env), change: c, selEnv: t.Env, retitle: retitle, fields: []field{{label: label}}, hint: noteHint(st) + wholeHint}
 }
+
+// wholeHint is what a prompt that can cover every environment says about it.
+const wholeHint = "; ctrl+p switches between this environment and all of the project"
+
+// toggleWhole switches a status or assign prompt between the selected
+// environment and every environment of the project.
+func (p *prompt) toggleWhole() {
+	p.whole = !p.whole
+	env := p.selEnv
+	if p.whole {
+		env = ""
+	}
+	switch p.kind {
+	case pkStatus:
+		p.change.Env = env
+	case pkAssign:
+		p.assign.Env = env
+	}
+	p.title = p.retitle(env)
+}
+
+func canWhole(m *app) bool { return m.prm != nil && m.prm.retitle != nil }
 
 // noteHint is what the prompt says about the note: enter saves at once unless
 // the status is a human assertion that needs its reason.
@@ -166,7 +190,7 @@ func noteHint(st model.Status) string {
 func (m *app) bulkChanges(st model.Status, note string) []ops.Change {
 	var out []ops.Change
 	for _, is := range m.dataIssues() {
-		if !m.fnd.sel[is.ID] {
+		if !m.fnd.sel[issueKey(is)] {
 			continue
 		}
 		for _, t := range is.Targets {
@@ -218,17 +242,21 @@ func (m *app) startAssign(whole bool) {
 	}
 	t := d.is.Targets[d.sel.at()]
 	a := ops.Assignment{ID: d.is.ID, Project: t.Project, Env: t.Env}
-	if whole {
-		a.Env = ""
+	retitle := func(env model.Env) string {
+		return oneLine("Assign " + a.ID + " in " + where(a.Project, env))
 	}
-	p := &prompt{kind: pkAssign, assign: a, title: oneLine("Assign " + a.ID + " in " + where(a.Project, a.Env)),
-		hint:   "empty keeps a value, - clears it; due is YYYY-MM-DD",
+	p := &prompt{kind: pkAssign, assign: a, selEnv: t.Env, retitle: retitle,
+		hint:   "empty keeps a value, - clears it; due is YYYY-MM-DD" + wholeHint,
 		fields: []field{{label: "Owner"}, {label: "Due"}, {label: "Ticket"}}}
 	p.fields[0].in.set(t.Owner)
 	if !t.Due.IsZero() {
 		p.fields[1].in.set(day(t.Due))
 	}
 	p.fields[2].in.set(t.Ticket)
+	p.title = retitle(a.Env)
+	if whole {
+		p.toggleWhole()
+	}
 	m.prm = p
 }
 

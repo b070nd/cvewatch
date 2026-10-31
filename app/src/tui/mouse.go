@@ -45,8 +45,8 @@ func (m *app) click(md *mode, x, y int) tea.Cmd {
 			}
 		}
 	case y == 1 && !md.modal:
-		if m.clickChip(x, w) {
-			return nil
+		if cmd, ok := m.clickChipAt(x, w); ok {
+			return cmd
 		}
 		_, spans := m.crumbLine(w)
 		cs := m.crumbs()

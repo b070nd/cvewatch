@@ -165,7 +165,16 @@ func (s *Session) reload() error {
 
 // ParseFilter validates the flags shared by every listing.
 func ParseFilter(min, project, env string) (query.Filter, error) {
-	f := query.Filter{Project: project, Env: model.Env(env)}
+	return ParseTenantFilter(min, "", project, env)
+}
+
+// ParseTenantFilter is ParseFilter with a vendor: only the projects of that
+// vendor, or model.NoVendor for those that have none.
+func ParseTenantFilter(min, vendor, project, env string) (query.Filter, error) {
+	f := query.Filter{Vendor: strings.ToLower(strings.TrimSpace(vendor)), Project: project, Env: model.Env(env)}
+	if f.Vendor != "" && f.Vendor != model.NoVendor && !model.ValidVendor(f.Vendor) {
+		return f, fmt.Errorf("%q is not a valid vendor name (lowercase letters, digits, - and _), use %s for projects without one", vendor, model.NoVendor)
+	}
 	if env != "" && !f.Env.Valid() {
 		return f, fmt.Errorf("%q is not a valid environment name (lowercase letters, digits, - and _)", env)
 	}
@@ -181,6 +190,7 @@ func ParseFilter(min, project, env string) (query.Filter, error) {
 
 // scope narrows a filter to what the actor may see.
 func (s *Session) scope(f query.Filter) (query.Filter, error) {
+	f.Vendors = s.vendors()
 	projects, _, open := s.Cfg.Allowed(baseActor(s.Actor))
 	switch {
 	case open:
@@ -190,6 +200,17 @@ func (s *Session) scope(f query.Filter) (query.Filter, error) {
 	}
 	f.Projects = projects
 	return f, nil
+}
+
+// vendors maps each project that has a vendor to it.
+func (s *Session) vendors() map[string]string {
+	out := map[string]string{}
+	for _, p := range s.Cfg.Projects {
+		if p.Vendor != "" {
+			out[p.Name] = p.Vendor
+		}
+	}
+	return out
 }
 
 // mayWrite checks write access to one project ("" means all projects).
@@ -269,8 +290,11 @@ type Explanation struct {
 // Explain re-judges the stored record with the current config and shows it
 // next to the decision taken at the time. Irrelevant records keep a short
 // summary and part of their product list, so for them the comparison is partial.
-func (s *Session) Explain(id string) (Explanation, error) {
-	f, err := s.scope(query.Filter{})
+func (s *Session) Explain(id string) (Explanation, error) { return s.ExplainIn(id, query.Filter{}) }
+
+// ExplainIn is Explain for the projects the filter names.
+func (s *Session) ExplainIn(id string, f query.Filter) (Explanation, error) {
+	f, err := s.scope(f)
 	if err != nil {
 		return Explanation{}, err
 	}
@@ -282,7 +306,7 @@ func (s *Session) Explain(id string) (Explanation, error) {
 	verdict := s.judge(v)
 	ex := Explanation{ID: v.ID, Stored: is.Targets, Notes: verdict.Notes, Relevant: verdict.Relevant()}
 	for _, m := range verdict.Matches {
-		if len(f.Projects) > 0 && !slices.Contains(f.Projects, m.Project) {
+		if !f.Allows(m.Project) {
 			continue
 		}
 		ex.Today = append(ex.Today, fmt.Sprintf("%s: %s — %s", m.Project, m.Applies, strings.Join(m.Reasons, "; ")))
@@ -512,25 +536,16 @@ func (s *Session) Export(f query.Filter) (export.Document, error) {
 
 // Evidence assembles the evidence pack for one issue: facts from the feeds,
 // the per-environment truth, and the audit trail, in time order.
-func (s *Session) Evidence(id string) (evidence.Pack, error) {
-	p, err := s.issueParts(id)
+func (s *Session) Evidence(id string) (evidence.Pack, error) { return s.EvidenceIn(id, query.Filter{}) }
+
+// EvidenceIn is Evidence for the projects the filter names: the matrix, the
+// timeline and the audit records hold nothing of the others.
+func (s *Session) EvidenceIn(id string, f query.Filter) (evidence.Pack, error) {
+	p, err := s.issueParts(id, f)
 	if err != nil {
 		return evidence.Pack{}, err
 	}
 	return p.pack(s.Now()), nil
-}
-
-// visibleTo reports whether an audit record concerns no project or one of the allowed ones.
-func visibleTo(allowed []string, project string) bool {
-	if project == "" {
-		return true
-	}
-	for _, p := range strings.Split(project, ",") {
-		if slices.Contains(allowed, p) {
-			return true
-		}
-	}
-	return false
 }
 
 // Violations lists open findings that break a policy rule or their own due date.
@@ -648,6 +663,7 @@ func (s *Session) Status() (status.Report, error) {
 		}
 	}
 	in.Cycles, in.Health, in.Delivery, in.Beat = s.Ledger.Health()
+	in.Problems = s.healthProblems(f.Projects)
 	return status.Build(in), nil
 }
 

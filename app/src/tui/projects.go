@@ -59,11 +59,11 @@ func (m *app) refitProjects(before string) {
 	m.prj.prob.refit(len(probs), func(i int) string { return problemID(probs[i]) })
 }
 
-// stepProblem is the p/P alias: it steps the problem cursor from the project list.
+// stepProblem is the p and [ alias: it steps the problem cursor from the project list.
 func (m *app) stepProblem(k tea.KeyMsg) tea.Cmd {
 	if p, ok := m.selectedProject(); ok && len(p.Problems) > 0 {
 		d := 1
-		if k.String() == "P" {
+		if k.String() == "[" {
 			d = len(p.Problems) - 1
 		}
 		m.prj.prob.to((m.prj.prob.at() + d) % len(p.Problems))
@@ -79,8 +79,8 @@ func (m *app) enterProject() tea.Cmd {
 		return nil
 	}
 	m.prj.deep, m.prj.sec.focus = true, false
-	if !p.Disabled && m.scope != p.Name {
-		m.setScope(p.Name)
+	if !p.Disabled {
+		m.setTenant(tenant{project: p.Name}, false)
 	}
 	return nil
 }
@@ -162,9 +162,26 @@ func renderProjects(rows []projectRow, st *projectsState, w, h int) []string {
 	for _, p := range rows {
 		nameW = max(nameW, min(width(projectLabel(p)), 24))
 	}
+	vendW := 0 // the vendor column is there only when some project has a vendor
+	for _, p := range rows {
+		if p.Vendor != "" {
+			vendW = max(vendW, 6, min(width(oneLine(p.Vendor)), 16))
+		}
+	}
+	vendor := func(p projectRow) string {
+		if vendW == 0 {
+			return ""
+		}
+		return pad(orDash(oneLine(p.Vendor)), vendW) + " "
+	}
+	vendHead := ""
+	if vendW > 0 {
+		vendHead = pad("VENDOR", vendW) + " "
+		nameW = min(nameW, 20)
+	}
 	const envW, lockW, probW, hintW = 22, 9, 13, 8
-	techW := max(w-2-nameW-1-envW-1-lockW-1-probW-1-hintW-1, 10)
-	lines := []string{stHead.Render(trunc("  "+pad("PROJECT", nameW)+" "+pad("ENVIRONMENTS", envW)+" "+pad("LOCKFILES", lockW)+" "+pad("PROBLEMS", probW)+" "+pad("HINTS", hintW)+" TECHNOLOGIES", w))}
+	techW := max(w-2-width(vendHead)-nameW-1-envW-1-lockW-1-probW-1-hintW-1, 10)
+	lines := []string{stHead.Render(trunc("  "+vendHead+pad("PROJECT", nameW)+" "+pad("ENVIRONMENTS", envW)+" "+pad("LOCKFILES", lockW)+" "+pad("PROBLEMS", probW)+" "+pad("HINTS", hintW)+" TECHNOLOGIES", w))}
 
 	detail, room := projectsPanel(rows, st, w, h)
 	start, end := st.proj.window(room)
@@ -178,7 +195,7 @@ func renderProjects(rows []projectRow, st *projectsState, w, h int) []string {
 		if p.Broken != "" {
 			envs, techs = "-", oneLine(p.Broken)
 		}
-		cells := pad(projectLabel(p), nameW) + " " + pad(envs, envW) + " " + pad(fmt.Sprint(len(p.Lockfiles)), lockW) + " " + pad(problemBadge(p), probW) + " " + pad(hintBadge(p), hintW) + " " + trunc(techs, techW)
+		cells := vendor(p) + pad(projectLabel(p), nameW) + " " + pad(envs, envW) + " " + pad(fmt.Sprint(len(p.Lockfiles)), lockW) + " " + pad(problemBadge(p), probW) + " " + pad(hintBadge(p), hintW) + " " + trunc(techs, techW)
 		if i == st.proj.at() {
 			lines = append(lines, stSel.Render(pad("> "+cells, w)))
 		} else {
@@ -239,6 +256,9 @@ func projectDetail(p projectRow, st *projectsState, w, room int, deep bool) []st
 		out = append(out, clip(indentWrap("  "+stErr.Render("broken: "), oneLine(p.Broken), w), 3)...)
 		out = append(out, "  file: "+trunc(oneLine(p.File), w-8))
 	} else {
+		if p.Vendor != "" {
+			out = append(out, "  vendor: "+trunc(oneLine(p.Vendor), w-10))
+		}
 		out = append(out, indentWrap("  technologies: ", techList(p), w)...)
 		if p.Updates != "" {
 			out = append(out, "  updates: "+trunc(oneLine(p.Updates), w-11))
@@ -357,7 +377,7 @@ func (m *app) syncSecurity() {
 		sc.focus = false
 	}
 	sc.snap, sc.project, sc.envs = m.data, p.Name, p.Envs
-	sc.issues = narrow(m.data.Issues, p.Name)
+	sc.issues = m.data.ByProject[p.Name]
 	sc.vp.refit(len(sc.issues), func(i int) string { return sc.issues[i].ID })
 }
 
@@ -454,10 +474,8 @@ func (m *app) openSecurityIssue() tea.Cmd {
 	if len(sc.issues) == 0 {
 		return nil
 	}
-	if m.scope != sc.project {
-		m.setScope(sc.project)
-	}
-	return m.goTo(issueTarget(sc.issues[sc.vp.at()].ID, true))
+	m.setTenant(tenant{project: sc.project}, false)
+	return m.goTo(issueIn(sc.project, sc.issues[sc.vp.at()].ID, true))
 }
 
 // clickSecurity selects the issue drawn on the given body row; a click on the selected one opens it.

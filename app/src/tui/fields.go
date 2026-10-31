@@ -21,7 +21,7 @@ import (
 // for the test that keeps the front ends in step with projectfile.
 var OpKinds = []string{
 	"set_envs", "set_tech", "remove_tech", "set_env_tech", "remove_env_tech",
-	"set_image", "add_lockfile", "remove_lockfile", "set_lockfile_dev", "set_since", "set_update",
+	"set_image", "add_lockfile", "remove_lockfile", "set_lockfile_dev", "set_since", "set_update", "set_vendor",
 	"add_env", "remove_env", "rename_env",
 	"set_tech_envs", "exclude_env_tech", "include_env_tech", "migrate_envs",
 }
@@ -64,11 +64,12 @@ const (
 	fldDiff   = "diff"
 	fldSince  = "since"
 	fldUpdate = "update"
+	fldVendor = "vendor"
 )
 
 var fieldLabels = map[string]string{
 	fldEnvs: "Environments", fldTechs: "Technologies", fldLocks: "Lockfiles",
-	fldDiff: "Differences per environment", fldSince: "Since", fldUpdate: "Updates",
+	fldDiff: "Differences per environment", fldSince: "Since", fldUpdate: "Updates", fldVendor: "Vendor",
 }
 
 var fieldHeads = map[string][]string{
@@ -155,8 +156,16 @@ func topRows(p projectRow) []fieldRow {
 	row := func(id, value string) fieldRow { return fieldRow{id: id, cells: []string{fieldLabels[id], value}} }
 	return []fieldRow{
 		row(fldEnvs, envList(p)), row(fldTechs, techList(p)), row(fldLocks, locks),
-		row(fldDiff, diffs), row(fldSince, since), row(fldUpdate, orDash(p.Updates)),
+		row(fldDiff, diffs), row(fldSince, since), row(fldUpdate, orDash(p.Updates)), row(fldVendor, vendorText(p)),
 	}
+}
+
+// vendorText is the vendor as the field list shows it: the customer or organisation that owns the project.
+func vendorText(p projectRow) string {
+	if p.Vendor == "" {
+		return "none: the project belongs to no vendor"
+	}
+	return oneLine(p.Vendor)
 }
 
 // genericTechs are the technologies of the project as the model has them, for the differences.
@@ -475,6 +484,8 @@ func (m *app) fieldOpen() tea.Cmd {
 			m.promptSince(p)
 		case fldUpdate:
 			m.promptUpdate(p)
+		case fldVendor:
+			m.promptVendor(p)
 		default:
 			ed.open = row.id
 			ed.sub.reset(len(subRows(p, row.id)))
@@ -730,6 +741,22 @@ func (m *app) promptSince(p projectRow) {
 				label = "clear since"
 			}
 			return label, []projectfile.Op{{Kind: "set_since", Since: v[0]}}, nil
+		})
+}
+
+func (m *app) promptVendor(p projectRow) {
+	f := field{label: "Vendor"}
+	f.in.set(p.Vendor)
+	m.editPrompt(p, "Vendor of "+p.Name, "the customer or organisation that owns the project, a lowercase name such as acme; the findings, the lists and the access rules keep vendors apart; empty clears it", []field{f},
+		func(v []string) (string, []projectfile.Op, error) {
+			if !model.ValidVendor(v[0]) {
+				return "", nil, errors.New("a vendor is lowercase letters, digits, - and _, up to 63 characters")
+			}
+			label := "set the vendor to " + v[0]
+			if v[0] == "" {
+				label = "clear the vendor"
+			}
+			return label, []projectfile.Op{{Kind: "set_vendor", Vendor: v[0]}}, nil
 		})
 }
 

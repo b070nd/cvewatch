@@ -37,7 +37,7 @@ HIGH (1)
 | **Decides** | what matters to you, whether your version is affected, and what to do first |
 | **Tracks** | open, fixed, ignored or not-affected per environment, with owner, deadline, ticket and evidence |
 | **Tells** | Slack, signed webhook, email, a daily digest, JSON/CSV/Markdown/SARIF exports, a status page, an MCP server |
-| **Shows** | a full-screen TUI, a static dashboard and `cvewatch status`: is the monitor itself working? |
+| **Shows** | a full-screen TUI, a static dashboard and `cvewatch status`: is the monitor itself working? GREEN, YELLOW or RED, as for an Elasticsearch cluster, with the problems listed until they are fixed |
 | **Proves** | a hash-chained audit log and an evidence pack per issue |
 | **Runs as** | one binary, on your machine, no telemetry |
 
@@ -149,8 +149,9 @@ The technology catalog and the feeds are built in, so one binary is enough. `set
 - **Puts the urgent things first.** Order: actively exploited (CISA KEV), then severity, open in prod, exploit probability (EPSS, optional), age. Every issue says why it ranks where it does.
 - **Merges the duplicates.** The NVD entry, the GitHub advisory, the CISA listing and two news stories become one record with all links, the articles in order, and the known fix.
 - **Tells you where you already look.** Slack, a signed webhook or email, plus a daily "still open in prod" digest.
-- **Refreshes each project on its own schedule.** A project file can hold `update: {every: 1h}` to be refreshed more or less often than the `interval`, or `auto: false` to be left out of scheduled runs. The daemon wakes when the first project is due and judges and alerts only the projects that are due. `cvewatch update` and `F` in the TUI always cover every project.
+- **Refreshes each project on its own schedule.** A project file can hold `update: {every: 1h}` to be refreshed more or less often than the `interval`, or `auto: false` to be left out of scheduled runs. The daemon wakes when the first project is due and judges and alerts only the projects that are due. `cvewatch update` and `u` in the TUI always cover every project.
 - **Starts each project when you say.** A `since` date skips advisories published before it, for that project only, and closes the open findings from before it as not affected. Moving the date earlier reopens them. Other projects are not affected.
+- **Keeps projects apart.** A project can name its vendor, and the full-screen interface always works in one context, such as `acme ▸ shop`: its lists, counts and actions hold that project only and never mix rows of two projects. `C` chooses the context, and the screens are switched by the highlighted letters in the tab bar (`O` `F` `P` `H` `S`). When the monitor is YELLOW or RED, its problems are listed first on the Overview, until they are fixed.
 - **Searches what you track.** `cvewatch search` finds issues by ID, part of an ID, words or fields such as `severity:high+` and `project:shop`, in every status.
 - **Looks back only as far as you say.** `horizon` in `config.yaml` limits what is judged, alerted and digested to the past hour, day, week, month or year, or to a custom range. It is unlimited by default, and findings that already exist stay.
 - **Names its environments.** `local`, `dev`, `prod` or any name you choose. A new project starts with `local`, and what differs in one environment is written once, in a `when@prod:` block.
@@ -193,7 +194,7 @@ cvewatch not-affected CVE-2026-109619 -project shop -env dev -note "dev has no n
 cvewatch evidence CVE-2026-109618
 ```
 
-**Always on.** Run `cvewatch daemon` (or the Docker image) and it refreshes every few hours. The full-screen interface re-reads the state every `tui.refresh` (30 seconds by default) and fetches the feeds when you press `F`. Without a running daemon it also updates the projects that are due by itself (`tui.auto`, on by default), so `cvewatch status` does not stay at "never succeeded"; with a daemon it leaves the fetching to it. `tui.fetch` in `config.yaml` sets a fixed period instead. If you upgrade a lockfile, the open findings are re-checked on their own and each finding's history says what changed. Editing a project, `techs.yaml` or the alert horizon works the same way: the daemon notices within about 15 seconds, judges the stored advisories again and fetches older ones when the change needs them.
+**Always on.** Run `cvewatch daemon` (or the Docker image) and it refreshes every few hours. The full-screen interface re-reads the state every `tui.refresh` (30 seconds by default) and fetches the feeds when you press `u`. Without a running daemon it also updates the projects that are due by itself (`tui.auto`, on by default), so `cvewatch status` does not stay at "never succeeded"; with a daemon it leaves the fetching to it. `tui.fetch` in `config.yaml` sets a fixed period instead. If you upgrade a lockfile, the open findings are re-checked on their own and each finding's history says what changed. Editing a project, `techs.yaml` or the alert horizon works the same way: the daemon notices within about 15 seconds, judges the stored advisories again and fetches older ones when the change needs them.
 
 ### The life of a finding
 
@@ -310,7 +311,7 @@ Read-only by default. The agent can call:
 | `get_evidence` | the full timeline and per-environment matrix for one issue |
 | `policy_violations` | which deadlines are broken right now |
 | `get_calendar` | what was published this month |
-| `get_status` | whether the monitor itself is healthy: daemon, feeds, channels |
+| `get_status` | whether the monitor itself is healthy: GREEN, YELLOW or RED, the problems behind it, daemon, feeds, channels |
 | `search_catalog`, `suggest_tech`, `preview_tech_change`, `discover_stack`, `list_projects`, `check_projects`, `preview_project_change`, `get_settings`, `preview_settings_change` | set a project and the settings up: find technologies (and the closest names for a typo), read a repository, find problems and hints in project files, preview a change to a project, to your own technologies or to the settings |
 
 Opt in to writing with `mcp -allow-write`, and the agent can also `set_status`, `assign`, `attach_evidence`, `refresh`, `edit_project`, `edit_settings`, `edit_tech` and `manage_project`. The skills in [`skills/`](skills) walk an agent through setup (`cvewatch-setup`) and triage (`cvewatch-triage`), asking the human at every step that matters.
@@ -336,18 +337,19 @@ sequenceDiagram
 
 - **Feed text is untrusted data.** Titles and descriptions come from public websites. They are cleaned on the way in, escaped on the way out and delivered under `untrusted`; the server instructions tell the agent never to follow instructions found there.
 - **Writes are opt-in and recorded.** Every change is an audit-log entry with the actor (`mcp:<user>`), and the log is hash-chained, so editing history is detectable.
-- **Per-actor access.** `access:` in `config.yaml` limits which projects an actor sees and whether it may write; an agent never sees projects it has no access to.
+- **Per-actor access.** `access:` in `config.yaml` limits which projects an actor sees and whether it may write; `vendor:acme` grants every project of a vendor. An agent never sees projects it has no access to.
 - **Nothing leaves the machine** except the feeds you configure, your channels and NVD lookups of the CVSS score and (only if you enable it) EPSS lookups for tracked CVE ids.
 
 ```yaml
 access:
   alice:  {projects: [shop, admin], write: true}
   ci-bot: {projects: ["*"], write: false}
+  acme-team: {projects: ["vendor:acme"], write: false}
 ```
 
 ### Run it for the whole factory
 
-- **One install, many products.** Each repository gets a project file (`cvewatch setup DIR`), each environment its own versions, SBOM and image reference. The ledger is shared, so a CVE that touches three products appears once, with three rows.
+- **One install, many products.** Each repository gets a project file (`cvewatch setup DIR`), each environment its own versions, SBOM and image reference. The ledger is shared, so a CVE that touches three products appears once, with three rows. Projects can belong to a vendor (a customer or team, `vendor: acme` in the project file); rows of different projects or vendors are never merged, and every list, search and export can be narrowed to one vendor or project.
 - **A ritual that fits your process.** A daily digest of what is still open in prod; `policy` as the escalation trigger; `assign` for owner, deadline and ticket.
 - **Evidence on demand.** `cvewatch evidence CVE-...` is the pack you hand to an auditor or a customer: when it was published, when you detected it, who was told, who owned it, what was attached, when each environment was fixed, and whether the audit chain verified. [docs/compliance.md](docs/compliance.md) explains how this supports NIS2 vulnerability-handling duties and the GDPR (it supports them; it does not make you compliant).
 - **Plays with your scanners.** Run Trivy, Grype or OSV-Scanner for detection and SBOM generation; let cvewatch own the multi-environment open/fixed truth and the deadlines.

@@ -79,7 +79,7 @@ func TestCycle(t *testing.T) {
 			t.Fatal("fix status was reset")
 		}
 	}
-	if n, err := g.Runner.Audit.Verify(); err != nil || n != 4 { // detected x2, alerted x2
+	if n, err := g.Runner.Audit.Verify(); err != nil || n != 7 { // detected x5 (one per finding), alerted x2
 		t.Fatalf("audit: n=%d err=%v", n, err)
 	}
 }

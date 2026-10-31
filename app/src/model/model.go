@@ -39,12 +39,36 @@ var envSlug = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 // Valid says whether e is a usable name: a lowercase slug of 1 to 32 characters.
 func (e Env) Valid() bool { return envSlug.MatchString(string(e)) }
 
-// IsProd says whether e is a production environment.
-func IsProd(e Env) bool { return e == EnvProd || e == "production" }
+// IsProd says whether e is a production environment: prod or production, also
+// with a region or similar around it (prod-eu, eu_prod, production-us). A
+// leading non or pre (non-prod, pre-prod) makes it the opposite.
+func IsProd(e Env) bool {
+	s := string(e)
+	if s == "prod" || s == "production" {
+		return true
+	}
+	for _, w := range []string{"prod", "production"} {
+		for _, sep := range []string{"-", "_"} {
+			if strings.HasPrefix(s, w+sep) {
+				return true
+			}
+			if head, ok := strings.CutSuffix(s, sep+w); ok {
+				last := head[strings.LastIndexAny(head, "-_")+1:]
+				if last != "non" && last != "pre" && last != "not" && last != "no" {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
 
 // IsDevLike says whether e is a development environment, where
 // development-only packages count by default.
 func IsDevLike(e Env) bool {
+	if IsProd(e) {
+		return false
+	}
 	switch e {
 	case EnvLocal, EnvDev, EnvInt, "development", "test":
 		return true
@@ -226,7 +250,8 @@ func (t Tech) Terms() []string {
 // holds for every environment; a when@<env> block holds only what differs there.
 type Project struct {
 	Name      string        `yaml:"name"`
-	Envs      []Env         `yaml:"envs"` // none means LegacyEnvs
+	Vendor    string        `yaml:"vendor"` // the customer or organisation that owns the project; empty means none
+	Envs      []Env         `yaml:"envs"`   // none means LegacyEnvs
 	Techs     []ProjectTech `yaml:"techs"`
 	Lockfiles []Lockfile    `yaml:"lockfiles"`
 	Since     time.Time     `yaml:"since"` // vulnerabilities published before this day are not checked
@@ -260,6 +285,23 @@ func Span(d time.Duration) string {
 		s = s[:len(s)-2]
 	}
 	return s
+}
+
+var vendorSlug = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
+
+// ValidVendor says whether v is a usable vendor name: a lowercase slug of at
+// most 63 characters (letters, digits, - and _). The empty vendor is valid too.
+func ValidVendor(v string) bool { return v == "" || vendorSlug.MatchString(v) }
+
+// NoVendor is how projects without a vendor are shown and selected: vendor:-.
+const NoVendor = "-"
+
+// VendorLabel is the vendor as shown to people: NoVendor for none.
+func VendorLabel(v string) string {
+	if v == "" {
+		return NoVendor
+	}
+	return v
 }
 
 // AutoUpdate is whether scheduled runs include the project.
@@ -301,7 +343,7 @@ func (k *keyAt) UnmarshalYAML(n *yaml.Node) error {
 	return nil
 }
 
-var projectKeys = []string{"name", "envs", "techs", "lockfiles", "since", "update", "environments"}
+var projectKeys = []string{"name", "vendor", "envs", "techs", "lockfiles", "since", "update", "environments"}
 
 // UnmarshalYAML gathers the when@<env> blocks into Environments next to the
 // old environments: map; any other unknown key stays an error.
@@ -781,6 +823,8 @@ type SourceHealth struct {
 	Failures    int       `json:"failures"` // consecutive failed attempts
 	LastError   string    `json:"last_error,omitempty"`
 	Items       int       `json:"items"`
+	// FailingSince is the first attempt of the current failure streak.
+	FailingSince time.Time `json:"failing_since,omitempty"`
 }
 
 // ChannelHealth is the same for a notification channel.
@@ -789,6 +833,8 @@ type ChannelHealth struct {
 	LastSuccess time.Time `json:"last_success,omitempty"`
 	Failures    int       `json:"failures"`
 	LastError   string    `json:"last_error,omitempty"`
+	// FailingSince is the first attempt of the current failure streak.
+	FailingSince time.Time `json:"failing_since,omitempty"`
 }
 
 // Heartbeat is written by the daemon after every cycle, so any other process

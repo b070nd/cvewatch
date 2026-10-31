@@ -13,6 +13,7 @@ func TestDetailShowsTheScoreWithItsVersionAndVector(t *testing.T) {
 	}))
 	d := start(t, b, Options{})
 	d.send(tea_window(150, 70))
-	d.press("2", "enter")
+	d.screen("findings")
+	d.press("enter")
 	d.want("CVSS 9.3 (v4.0)", "cvss: CVSS:4.0/AV:N/AC:L from cna")
 }

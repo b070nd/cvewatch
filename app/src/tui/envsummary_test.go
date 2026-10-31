@@ -152,22 +152,42 @@ func alikeFake(t *testing.T, issues int) *fake {
 func TestIssueListsDoNotRepeatTheEnvironmentsOfAProject(t *testing.T) {
 	d := start(t, alikeFake(t, 18), Options{})
 	d.send(tea_window(110, 30))
-	d.want("by environment", "all 4 environments alike (18 open each)", "PROJECTS (ONLY IN)", "18 of 18 open issues")
-	d.wantNot("dev 18", "int 18", "shop:", "…")
-	for _, l := range strings.Split(d.view(), "\n") {
-		if strings.Contains(l, "CVE-2026-100") && !strings.Contains(l, " shop ") {
-			t.Errorf("the row names the project alone: %q", l)
+	d.want("by environment", "all 4 environments alike (18 open each)", "OPEN IN", "18 of 18 open issues")
+	d.wantNot("dev 18", "int 18", "shop:")
+	rows := func() {
+		for _, l := range strings.Split(d.view(), "\n") {
+			if strings.Contains(l, "CVE-2026-1") && strings.Contains(l, "…") {
+				t.Errorf("a row of the list is cut: %q", l)
+			}
+			if strings.Contains(l, "CVE-2026-100") && !strings.Contains(l, " shop ") {
+				t.Errorf("the row names the project alone: %q", l)
+			}
 		}
 	}
-	d.press("2")
-	d.want("PROJECTS (ONLY IN)", "CVE-2026-100")
-	d.wantNot("shop:", "…")
+	rows()
+	d.screen("findings")
+	d.want("OPEN IN", "CVE-2026-100")
+	d.wantNot("shop:")
+	rows()
 }
 
 func TestIssueListsNameOnlyWhereAnIssueIsOpenWhenItDiffers(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{}) // shop has the old default four environments, mw only prod
 	d.send(tea_window(110, 30))
-	d.want("shop:dev", "shop:staging", "mw shop:prod")
-	d.wantNot("dev,int,staging", "all 4 environments alike")
-	d.want("dev,staging 1", "prod 2")
+	d.want("shop:dev", "shop:staging", "shop:prod", "dev,staging,prod 1", "in prod 1")
+	d.wantNot("dev,int,staging", "all 4 environments alike", "mw")
+
+	d = startAll(t, newFake(t, nil), Options{})
+	d.send(tea_window(110, 30))
+	d.screen("findings")
+	d.want("shop:dev", "shop:staging", "shop:prod")
+	row := ""
+	for _, l := range strings.Split(d.view(), "\n") {
+		if strings.Contains(l, "CVE-2026-1") && !strings.Contains(l, "shop") {
+			row = l // the row of mw: open in every environment it monitors, so the name alone
+		}
+	}
+	if !strings.Contains(row, " mw ") || strings.Contains(row, "mw:") {
+		t.Fatalf("the row of mw names the project alone: %q\n%s", row, d.view())
+	}
 }

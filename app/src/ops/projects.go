@@ -56,6 +56,7 @@ type EnvMove struct {
 // ProjectView is a project as shown to people and agents.
 type ProjectView struct {
 	Name      string      `json:"name"`
+	Vendor    string      `json:"vendor,omitempty"` // the customer or organisation that owns it; empty for none
 	Envs      []string    `json:"envs"`
 	Techs     []TechPin   `json:"techs"`
 	Lockfiles []LockEntry `json:"lockfiles"`
@@ -95,7 +96,7 @@ type LockEntry struct {
 
 // ViewOf copies the parts of a project worth showing.
 func ViewOf(p model.Project) ProjectView {
-	v := ProjectView{Name: p.Name, Envs: []string{}, Techs: []TechPin{}, Lockfiles: []LockEntry{}}
+	v := ProjectView{Name: p.Name, Vendor: p.Vendor, Envs: []string{}, Techs: []TechPin{}, Lockfiles: []LockEntry{}}
 	for _, e := range p.Envs {
 		v.Envs = append(v.Envs, string(e))
 	}
@@ -327,6 +328,11 @@ func (s *Session) EditProject(c ProjectChange) (ProjectPreview, error) {
 		}
 	} else if err := s.mayWrite(""); err != nil {
 		return out, err
+	}
+	if slices.ContainsFunc(c.Ops, func(o projectfile.Op) bool { return o.Kind == "set_vendor" }) {
+		if err := s.mayWrite(""); err != nil { // moving a project to another vendor changes who may see it
+			return out, fmt.Errorf("%w: setting a vendor needs write access to every project", ErrDenied)
+		}
 	}
 	if out.Blocked() {
 		return out, errors.New("the project has errors; fix them before saving")

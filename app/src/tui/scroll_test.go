@@ -35,7 +35,7 @@ func TestProjectsPageAndJumpKeys(t *testing.T) {
 	addProjects(b, 40)
 	d := start(t, b, Options{})
 	d.send(tea_window(100, 24))
-	d.press("3")
+	d.screen("projects")
 	a := d.m.(*app)
 	rows := a.data.Projects
 	vp := &a.prj.proj
@@ -77,7 +77,8 @@ func TestProjectsCursorStaysOnItsProjectWhenRowsChange(t *testing.T) {
 	b := newFake(t, nil)
 	addProjects(b, 6)
 	d := start(t, b, Options{})
-	d.press("3", "G")
+	d.screen("projects")
+	d.press("G")
 	if selectedName(t, d) != "app05" {
 		t.Fatalf("selected %q", selectedName(t, d))
 	}
@@ -106,7 +107,8 @@ func TestProjectsProblemCursorFollowsItsProblemAndRestartsOnAnotherProject(t *te
 	b := newFake(t, nil)
 	writeProjectFile(t, b.cfg.Root, "shop", shopWithProblems)
 	d := start(t, b, Options{})
-	d.press("3", "p")
+	d.screen("projects")
+	d.press("p")
 	d.want("> warning")
 	d.press("r")
 	d.want("> warning") // a reload keeps the problem
@@ -124,7 +126,7 @@ func TestFindingsListPagesAndJumps(t *testing.T) {
 		}
 	})
 	d := start(t, newFake(t, st), Options{})
-	d.press("2")
+	d.screen("findings")
 	a := d.m.(*app)
 	vp := &a.fnd.vp
 	if len(a.fnd.vis) != 43 {
@@ -152,7 +154,7 @@ func TestTextScreensAndHelpScroll(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
 	d.send(tea_window(80, 10))
 	a := d.m.(*app)
-	d.press("4")
+	d.screen("health")
 	d.want("Overall")
 	d.press("pgdown")
 	if a.txt[scrStatus].at() != 5 {
@@ -178,19 +180,22 @@ func TestTextScreensAndHelpScroll(t *testing.T) {
 }
 
 func TestDetailPageScrollsAndKeepsItsLayoutWhileTheRowMoves(t *testing.T) {
-	d := start(t, newFake(t, nil), Options{})
+	d := start(t, alikeFake(t, 3), Options{})
 	d.send(tea_window(100, 12))
-	d.press("2", "down", "enter")
+	d.screen("findings")
+	d.press("enter")
 	a := d.m.(*app)
 	det := a.fnd.det
 	lay := det.lay
-	if lay == nil || len(lay.rows) != 2 {
+	if lay == nil || len(lay.rows) != 4 {
 		t.Fatalf("layout %+v", lay)
 	}
-	d.press("down")
-	d.want("> shop")
+	first := det.sel.at()
 	d.press("up")
-	d.want("> mw")
+	d.want("> shop")
+	if det.sel.at() != first-1 {
+		t.Fatalf("row %d after %d", det.sel.at(), first)
+	}
 	d.press("down", "down", "up")
 	if det.lay != lay {
 		t.Fatal("the page was laid out again for a move of the row")
@@ -200,7 +205,7 @@ func TestDetailPageScrollsAndKeepsItsLayoutWhileTheRowMoves(t *testing.T) {
 		t.Fatalf("scrolled to %d, a page is %d", det.body.at(), det.body.page())
 	}
 	d.press("home")
-	d.want("CVE-2026-1")
+	d.want("CVE-2026-100")
 	d.press("G")
 	d.want("first seen by cvewatch")
 	d.press("g")
@@ -237,7 +242,8 @@ func TestFormListsPageAndJump(t *testing.T) {
 	for _, kind := range []setup.Kind{setup.KindChoice, setup.KindMulti} {
 		d := start(t, newFake(t, nil), Options{})
 		d.send(tea_window(80, 16))
-		d.press("3", "n")
+		d.screen("projects")
+		d.press("n")
 		f := d.m.(*app).frm
 		var opts []setup.Option
 		for i := 0; i < 30; i++ {
@@ -284,7 +290,8 @@ func TestFormListsPageAndJump(t *testing.T) {
 func TestFormReviewScrollsWithPageKeys(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
 	d.send(tea_window(80, 12))
-	d.press("3", "n")
+	d.screen("projects")
+	d.press("n")
 	f := d.m.(*app).frm
 	f.step = setup.Step{ID: "review", Kind: setup.KindConfirm}
 	f.rev.reset(0)
@@ -315,7 +322,8 @@ func TestFolderBoxShowsSuggestionsOnASmallTerminal(t *testing.T) {
 	folderTree(t)
 	d := start(t, newFake(t, nil), Options{})
 	d.send(tea_window(80, 14))
-	d.press("3", "d")
+	d.screen("projects")
+	d.press("d")
 	d.want("Scan a folder", "4 folders", "zeta-app")
 	if n := strings.Count(d.view(), "\n") + 1; n > 14 {
 		t.Fatalf("%d lines on a 14 line screen", n)
@@ -332,7 +340,8 @@ func TestFolderBoxPagesThroughSuggestions(t *testing.T) {
 	t.Chdir(root)
 	d := start(t, newFake(t, nil), Options{})
 	d.send(tea_window(80, 24))
-	d.press("3", "d")
+	d.screen("projects")
+	d.press("d")
 	b := d.m.(*app).prm.box
 	d.press("pgdown")
 	if b.sel() != b.vp.page()-1 {
@@ -355,7 +364,8 @@ func TestHelpOpensInAFormStep(t *testing.T) {
 	b := newFake(t, nil)
 	writeProjectFile(t, b.cfg.Root, "shop", "name: shop\ntechs:\n  - {name: php, version: \"8.2\"}\n  - {name: nginx}\n")
 	d := start(t, b, Options{})
-	d.press("3", "e")
+	d.screen("projects")
+	d.press("e")
 	d.want("What do you want to change?", "? help")
 	d.press("?")
 	d.want("Keys in the project form")

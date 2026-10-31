@@ -179,7 +179,7 @@ func TestSetupToolsReadOnlyAndWrite(t *testing.T) {
 	if res, _ := call(t, ro, "discover_stack", map[string]any{"dir": "relative/path"}); !res.IsError {
 		t.Fatal("a relative dir must be rejected")
 	}
-	if _, out := call(t, ro, "get_status", map[string]any{}); !strings.Contains(out, `"daemon"`) {
+	if _, out := call(t, ro, "get_status", map[string]any{}); !strings.Contains(out, `"daemon"`) || !strings.Contains(out, `"problems":[`) || !strings.Contains(out, `"level":"yellow"`) {
 		t.Fatalf("status: %s", out)
 	}
 	if _, out := call(t, ro, "list_projects", map[string]any{}); !strings.Contains(out, `"shop"`) {

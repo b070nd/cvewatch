@@ -26,7 +26,8 @@ func twoFixesFake(t *testing.T) (*fake, string) {
 func TestProjectLevelShowsEveryFixAndPreviewsTheChosenOne(t *testing.T) {
 	b, path := twoFixesFake(t)
 	d := start(t, b, Options{})
-	d.press("3", "enter")
+	d.screen("projects")
+	d.press("enter")
 	d.want("fix 1: monitor environment dev", "fix 2: remove lockfile x/composer.lock for dev", "[ and ] choose another", "[/] fix")
 	d.press("]")
 	d.want("> fix 2: remove lockfile")
@@ -60,7 +61,8 @@ func TestFixPreviewWithOneFixKeepsLeftAsCancel(t *testing.T) {
 	b := newFake(t, nil)
 	writeProjectFile(t, b.cfg.Root, "shop", shopWithProblems)
 	d := start(t, b, Options{})
-	d.press("3", "x")
+	d.screen("projects")
+	d.press("x")
 	d.want("Fix project: shop", "esc cancel")
 	d.wantNot("fix 1 of")
 	d.press("]")
@@ -72,7 +74,8 @@ func TestFixPreviewWithOneFixKeepsLeftAsCancel(t *testing.T) {
 func TestAnAnswerForAnotherFixIsDropped(t *testing.T) {
 	b, _ := twoFixesFake(t)
 	d := start(t, b, Options{})
-	d.press("3", "x")
+	d.screen("projects")
+	d.press("x")
 	a := d.m.(*app)
 	fx := a.prj.fix
 	d.press("]")
@@ -119,7 +122,7 @@ func TestEditorArgv(t *testing.T) {
 func TestEditorOpensAtTheLineOfTheProblemOnlyInsideTheProject(t *testing.T) {
 	b, _ := twoFixesFake(t)
 	d := start(t, b, Options{})
-	d.press("3")
+	d.screen("projects")
 	a := d.m.(*app)
 	p, _ := a.selectedProject()
 	if len(p.Problems) != 1 || p.Problems[0].Line != 6 {

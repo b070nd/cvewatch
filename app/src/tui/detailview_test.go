@@ -40,7 +40,8 @@ func richDriver(t *testing.T) (*driver, *fakeDesktop, *fake) {
 	d := start(t, b, Options{})
 	d.send(tea_window(150, 70))
 	fd := d.app().sys.(*fakeDesktop)
-	d.press("2", "enter") // KEV puts it first
+	d.screen("findings")
+	d.press("enter") // KEV puts it first
 	return d, fd, b
 }
 
@@ -69,7 +70,7 @@ func TestSelectingALinkOpensAndCopiesIt(t *testing.T) {
 	}
 	d.press("l")
 	d.want(">  1. advisory")
-	if got := crumbOf(d); got != "Findings › CVE-2026-1 › mw:prod › References 1/5" {
+	if got := crumbOf(d); got != "Findings › CVE-2026-1 › shop:prod › References 1/5" {
 		t.Errorf("breadcrumb %q", got)
 	}
 	d.press("enter")
@@ -108,7 +109,7 @@ func TestEscUnselectsTheLinkBeforeLeavingThePage(t *testing.T) {
 	d, _, _ := richDriver(t)
 	d.press("l")
 	d.press("esc")
-	d.want("Findings › CVE-2026-1 › mw:prod")
+	d.want("Findings › CVE-2026-1 › shop:prod")
 	d.wantNot("References 1/5")
 	d.want("Tracked PHP bug")
 	d.press("esc")
@@ -158,7 +159,7 @@ func TestEvidencePackViewIsInTheFrameAndScrolls(t *testing.T) {
 	d.send(tea_window(80, 14))
 	d.press("v")
 	d.want("# Evidence pack: CVE-2026-1")
-	if got := crumbOf(d); got != "Findings › CVE-2026-1 › mw:prod › evidence pack" {
+	if got := crumbOf(d); got != "Findings › CVE-2026-1 › shop:prod › evidence pack" {
 		t.Errorf("breadcrumb %q", got)
 	}
 	d.want("cvewatch", "up/down scroll", "esc, left back")
@@ -170,7 +171,7 @@ func TestEvidencePackViewIsInTheFrameAndScrolls(t *testing.T) {
 	d.want("# Evidence pack: CVE-2026-1")
 	d.press("esc")
 	d.want("Tracked PHP bug")
-	if got := crumbOf(d); got != "Findings › CVE-2026-1 › mw:prod" {
+	if got := crumbOf(d); got != "Findings › CVE-2026-1 › shop:prod" {
 		t.Errorf("back on the page: %q", got)
 	}
 	d.press("esc")
@@ -197,7 +198,7 @@ func TestReportViewShowsTheMarkdownInTheFrame(t *testing.T) {
 	d.send(tea_window(60, 16))
 	d.press("R")
 	d.want("# CVE-2026-1")
-	if got := crumbOf(d); got != "Findings › CVE-2026-1 › mw:prod › report" {
+	if got := crumbOf(d); got != "Findings › CVE-2026-1 › shop:prod › report" {
 		t.Errorf("breadcrumb %q", got)
 	}
 	d.press("G")
@@ -276,7 +277,7 @@ func TestAddEvidenceEscCancelsWithoutWriting(t *testing.T) {
 	if d.app().prm != nil || b.writes != 0 {
 		t.Fatalf("prompt %v, writes %d", d.app().prm, b.writes)
 	}
-	d.want("Findings › CVE-2026-1 › mw:prod")
+	d.want("Findings › CVE-2026-1 › shop:prod")
 }
 
 func TestDetailKeysAreInTheFooterAndTheHelp(t *testing.T) {

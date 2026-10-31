@@ -77,7 +77,8 @@ func TestRenameShowsConsequencesBeforeAnyChangeThenLandsOnTheRenamedProject(t *t
 	t.Setenv("CVEWATCH_ACTOR", "root")
 	b, root := diskFake(t, map[string]string{"config/config.yaml": accessCfg})
 	d := start(t, b, Options{})
-	d.press("3", "down") // shop
+	d.screen("projects")
+	d.press("down") // shop
 	before := treeOf(t, root)
 	d.press("R")
 	d.want("Rename project shop", "> New name: shop", "findings and access rules follow")
@@ -142,7 +143,8 @@ func TestRenameShowsConsequencesBeforeAnyChangeThenLandsOnTheRenamedProject(t *t
 func TestRenameInsideAProjectLandsInsideTheRenamedOne(t *testing.T) {
 	b, root := diskFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "down", "enter", "R")
+	d.screen("projects")
+	d.press("down", "enter", "R")
 	d.press("ctrl+u")
 	d.typ("webshop")
 	d.press("enter")
@@ -167,7 +169,8 @@ func TestRenameInsideAProjectLandsInsideTheRenamedOne(t *testing.T) {
 func TestEscCancelsALifecycleChangeAndNothingChanges(t *testing.T) {
 	b, root := diskFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "down")
+	d.screen("projects")
+	d.press("down")
 	before := treeOf(t, root)
 	for _, keys := range [][]string{{"X"}, {"Z"}, {"R", "ctrl+u"}, {"D"}} {
 		d.press(keys[0])
@@ -195,7 +198,8 @@ func TestEscCancelsALifecycleChangeAndNothingChanges(t *testing.T) {
 func TestDuplicateNeedsNoConfirmationOfItsOwnAndLandsOnTheCopy(t *testing.T) {
 	b, root := diskFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "down", "D")
+	d.screen("projects")
+	d.press("down", "D")
 	d.want("Duplicate project shop", "> Name of the copy: shop-copy")
 	d.press("enter")
 	d.want("Duplicate project: shop as shop-copy", "Findings: 3 findings", "create", "Duplicate shop?")
@@ -213,7 +217,8 @@ func TestDuplicateNeedsNoConfirmationOfItsOwnAndLandsOnTheCopy(t *testing.T) {
 func TestDeleteNeedsTheTypedNameAndOptionallyClosesFindings(t *testing.T) {
 	b, root := diskFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "down", "X")
+	d.screen("projects")
+	d.press("down", "X")
 	d.want("Delete project: shop", "Findings: 3 findings (3 open)", "[ ] close the open findings", "backup", "3 findings stay in the ledger unchanged", "Delete shop?")
 	d.press("c")
 	d.want("[x] close the open findings", "3 open findings are marked ignored")
@@ -256,7 +261,8 @@ func TestDeleteNeedsTheTypedNameAndOptionallyClosesFindings(t *testing.T) {
 func TestDisableListsTheProjectAsDisabledAndEnableBringsItBack(t *testing.T) {
 	b, root := diskFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "down", "Z")
+	d.screen("projects")
+	d.press("down", "Z")
 	d.want("Disable project: shop", "rename", "config/projects/shop.yaml -> config/projects/shop.yaml.disabled", "Disable shop?")
 	d.press("enter")
 	d.want("ok: disabled shop", "shop", "disabled", "switched off")
@@ -300,7 +306,7 @@ func TestLifecycleOfAccessControlledProjects(t *testing.T) {
 	t.Setenv("CVEWATCH_ACTOR", "bob")
 	b, root := diskFake(t, map[string]string{"config/config.yaml": accessCfg})
 	d := start(t, b, Options{})
-	d.press("3")
+	d.screen("projects")
 	if got := strings.Join(rowNames(d), ","); got != "shop" {
 		t.Fatalf("bob sees %s", got)
 	}
@@ -322,7 +328,8 @@ func TestLifecycleOfAccessControlledProjects(t *testing.T) {
 func TestLifecycleFailureIsShownAndStaysUntilTheUserActs(t *testing.T) {
 	b, root := diskFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "down", "R", "ctrl+u")
+	d.screen("projects")
+	d.press("down", "R", "ctrl+u")
 	d.typ("webshop")
 	d.press("enter")
 	d.want("Rename project: shop to webshop")
@@ -349,7 +356,8 @@ func TestLifecycleFailureIsShownAndStaysUntilTheUserActs(t *testing.T) {
 func TestLifecycleRefusalByTheCheckAtApplyTimeStaysOnScreen(t *testing.T) {
 	b, root := diskFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "down", "R", "ctrl+u")
+	d.screen("projects")
+	d.press("down", "R", "ctrl+u")
 	d.typ("webshop")
 	d.press("enter")
 	if err := os.WriteFile(filepath.Join(root, "config", "projects", "webshop.yaml"), []byte("name: webshop\n"), 0o644); err != nil {
@@ -364,7 +372,8 @@ func TestLifecycleRefusalByTheCheckAtApplyTimeStaysOnScreen(t *testing.T) {
 func TestLifecyclePreviewErrorsAreShownAsErrors(t *testing.T) {
 	b, _ := diskFake(t, map[string]string{"config/projects/bad.yaml": "name: bad\ntechs: [oops\n"})
 	d := start(t, b, Options{})
-	d.press("3", "down", "down", "R")
+	d.screen("projects")
+	d.press("down", "down", "R")
 	d.want("error: the file of bad does not load")
 	d.press("X")
 	d.want("Delete project: bad", "does not parse")
@@ -373,7 +382,8 @@ func TestLifecyclePreviewErrorsAreShownAsErrors(t *testing.T) {
 func TestNewEmptyProjectNeedsNoFolder(t *testing.T) {
 	b, root := diskFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "N")
+	d.screen("projects")
+	d.press("N")
 	d.want("New empty project", "> Name", "Environments")
 	d.press("enter", "enter")
 	d.want("problem: give the project a name")
@@ -410,7 +420,7 @@ func TestLifecycleScreensFitSmallTerminals(t *testing.T) {
 	d := start(t, b, Options{})
 	for _, size := range [][2]int{{30, 8}, {40, 10}, {70, 16}, {120, 40}} {
 		d.send(tea_window(size[0], size[1]))
-		for _, keys := range [][]string{{"3", "down"}, {"R", "ctrl+u"}, {"x", "y", "z", "enter"}, {"esc"}, {"X"}, {"enter"}, {"esc", "esc"}, {"D", "enter"}, {"esc"}, {"j", "j", "j"}, {"Z"}, {"esc"}} {
+		for _, keys := range [][]string{{"P", "down"}, {"R", "ctrl+u"}, {"x", "y", "z", "enter"}, {"esc"}, {"X"}, {"enter"}, {"esc", "esc"}, {"D", "enter"}, {"esc"}, {"j", "j", "j"}, {"Z"}, {"esc"}} {
 			d.press(keys...)
 			lines := strings.Split(d.view(), "\n")
 			if len(lines) > size[1] {
@@ -429,7 +439,8 @@ func TestLifecycleScreensFitSmallTerminals(t *testing.T) {
 func TestStaleListIsReloadedAfterAnExternalChange(t *testing.T) {
 	b, root := diskFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "down", "Z")
+	d.screen("projects")
+	d.press("down", "Z")
 	// the file is switched on again behind the TUI's back, so the confirmation fails and the list reloads
 	os.Rename(filepath.Join(root, "config", "projects", "shop.yaml"), filepath.Join(root, "config", "projects", "shop.yaml.disabled"))
 	d.press("enter")
@@ -445,7 +456,7 @@ func TestProjectRowOfAFileNamedDifferentlyHasItsFileAndCanBeDeleted(t *testing.T
 		t.Fatal(err)
 	}
 	d := start(t, b, Options{})
-	d.press("3")
+	d.screen("projects")
 	if selectedName(t, d) != "shop" {
 		d.press("down")
 	}
@@ -468,7 +479,8 @@ func TestProjectRowOfAFileNamedDifferentlyHasItsFileAndCanBeDeleted(t *testing.T
 func TestNewEmptyProjectWithoutEnvironmentsRunsInLocalOnly(t *testing.T) {
 	b, root := diskFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "N")
+	d.screen("projects")
+	d.press("N")
 	d.typ("solo")
 	d.press("enter", "enter")
 	d.want("New project: solo", "envs: [local]", "Save this change?")
