@@ -311,7 +311,7 @@ func (d *driver) run(cmd tea.Cmd) {
 		case <-time.After(20 * time.Millisecond):
 			// A backend call still running is real work on a slow machine;
 			// anything else that takes this long is a timer.
-			if f, ok := d.b.(*fake); ok && f.busy() {
+			if f, ok := d.b.(interface{ busy() bool }); ok && f.busy() {
 				continue
 			}
 			if time.Since(start) > 400*time.Millisecond {

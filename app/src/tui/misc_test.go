@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -265,28 +266,45 @@ func TestRefreshKeepsTheSelectedIssue(t *testing.T) {
 
 func TestLoadErrorIsShownAndRecovers(t *testing.T) {
 	b := newFake(t, nil)
-	bad := &flaky{Backend: b, fail: errors.New("disk on fire")}
+	bad := &flaky{Backend: b}
+	bad.set(errors.New("disk on fire"))
 	d := start(t, bad, Options{})
 	d.want("error: disk on fire")
-	bad.fail = nil
+	bad.set(nil)
 	d.press("r")
 	d.want("open issues", "[1 Overview]")
 	d.wantNot("disk on fire")
-	bad.fail = errors.New("later trouble")
+	bad.set(errors.New("later trouble"))
 	d.press("r")
 	d.want("open issues", "refresh failed: later trouble") // stale data stays visible
 }
 
 type flaky struct {
 	Backend
+	mu   sync.Mutex
 	fail error
 }
 
+func (f *flaky) set(err error) {
+	f.mu.Lock()
+	f.fail = err
+	f.mu.Unlock()
+}
+
 func (f *flaky) Read(fn func(*ops.Session) error) error {
-	if f.fail != nil {
-		return f.fail
+	f.mu.Lock()
+	err := f.fail
+	f.mu.Unlock()
+	if err != nil {
+		return err
 	}
 	return f.Backend.Read(fn)
+}
+
+// busy lets the test driver wait for a slow read instead of dropping it as a timer.
+func (f *flaky) busy() bool {
+	b, ok := f.Backend.(interface{ busy() bool })
+	return ok && b.busy()
 }
 
 func TestEmptyLedger(t *testing.T) {
