@@ -67,7 +67,7 @@ The TUI is a Bubble Tea program in `app/src/tui`. Its state is the `app` model i
 | `jump.go` | the jump box: matching issues and projects as the user types |
 | `overview.go` | the Overview: the summary above the list of every open issue, and the policy violations page (`v`) |
 | `findings.go` | `issueList`, the searchable list that Findings and Overview share: rows, cursor, severity floor and search text. Each screen has its own, so a search on one does not narrow the other |
-| `scope.go` | the project scope: `m.scope` narrows the issues (`narrow`, `dataIssues`), the policy violations and the counts to one project, and is dropped when its project is gone or disabled |
+| `scope.go` | the context: `m.tenant` is one project, the projects of one vendor, or all projects. It decides which snapshot rows the lists and counts read (`rescope`, `dataIssues`), narrows the policy violations, and is dropped when its project is gone or disabled. Rows are always read per project, so two projects are never merged; `C` opens the choice |
 | `fetch.go` | the background fetch: one run at a time (`fetchJob`), the progress cell in the header, progress messages throttled per phase, the failed sources, the timers of `tui.refresh` and `tui.fetch`, and the update on the project schedule (`autoUpdate`, which starts only when `tui.auto` is on, `tui.fetch` is zero, no daemon is alive and a project is due, and waits a minute after an attempt). The run holds the store only inside `Backend.Fetch`; the screens keep reading the ledger meanwhile, and quitting cancels the run |
 | `revalidate.go` | the revalidation job in the TUI: the quiet run when a read finds the findings out of date, the words of its note, and the `V` preview with its yes prompt |
 | `editor.go` | which editor `E` runs: `resolveEditor` takes `tui.editor`, then `$VISUAL`, then `$EDITOR`, then the usual editors on the path, with the environment and the lookup injected for tests |
@@ -79,11 +79,11 @@ Rule for keys: a key is one binding in its mode's table (`keymap.go`, `editkeys.
 
 | Key | Screen | Shows |
 |---|---|---|
-| 1 | Overview | the health line, the list of every open issue (searchable, narrowed by the project scope) and the policy violations (`v`), each opening its issue |
-| 2 | Findings | the issue list, the issue page, triage and the filter |
-| 3 | Projects | the project list, each project's problems and fixes, its security issues, the field editor, the add chooser (`+`), the folder box and the lifecycle keys; Enter on a project sets the scope |
-| 4 | Status | the daemon, the feeds, the channels and the last cycles |
-| 5 | Settings | the configuration files as sections and fields. It is the only screen that works without the snapshot of the others, so it opens when a file is broken |
+| O | Overview | the health line, the open health problems, the list of every open issue of the context (searchable) and the policy violations (`v`), each opening its target |
+| F | Findings | the issue list, the issue page, triage and the filter |
+| P | Projects | the project list, each project's problems and fixes, its security issues, the field editor, the add chooser (`+`), the folder box and the lifecycle keys; Enter on a project sets the context |
+| H | Health | the problems, then the daemon, the feeds, the channels and the last cycles |
+| S | Settings | the configuration files as sections and fields. It is the only screen that works without the snapshot of the others, so it opens when a file is broken |
 
 Settings reads the documents through `ops.OpenSettings`, which loads nothing. Nothing is written before the yes on a preview: every editor builds a list of `confdoc.Edit` values, and `ops` checks and previews them. A list of edits is one change; it saves all of them or none.
 

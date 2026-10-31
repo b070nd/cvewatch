@@ -84,7 +84,7 @@ Hints show in the setup review, in `cvewatch project NAME`, in the `hints` of `c
 
 `cvewatch tui` opens the full-screen interface. It has five screens, shown as tabs under the title: **O**verview, **F**indings, **P**rojects, **H**ealth and **S**ettings. The highlighted letter is the key that jumps to the screen (see [Screen keys](#screen-keys)). Findings shows the number of open issues, and Settings shows `(!)` when a settings file has an error.
 
-The header also shows what is going on. `refreshing...` means the data is being read. While a change is written, the header shows what runs, such as `saving...`, with `+1` when more run. Otherwise it shows the health and the time of the last read. Press `r` to reload now.
+The header also shows what is going on. `refreshing...` means the data is being read. While a change is written, the header shows what runs, such as `saving...`, with `+1` when more run. Otherwise it shows the health of the monitor on the right, as for an Elasticsearch cluster: `● GREEN · last check 12:13 (4m ago)` when nothing needs attention, and `▲ YELLOW · 2 problems` or `✖ RED · 1 problem` when something does. The glyph carries the level where there is no colour. The problems themselves are listed on Overview and Health (see [Health problems](#health-problems)). Press `r` to reload now.
 
 ### Refresh and fetch
 
@@ -114,10 +114,10 @@ When a project, `techs.yaml` or the alert horizon changed (in the TUI, in your e
 
 Some keys take you to another place. Esc (or Backspace) brings you back to where you came from, on the level you land on.
 
-- Overview: Enter on an issue opens it. Enter on a policy violation (`v`) opens its issue.
+- Overview: Enter on an issue opens it. Enter on a policy violation (`v`) opens its issue. Enter on a health problem opens Health on that problem.
 - Health: Enter on an error that names a project goes to that project. Other errors show in full.
 - Issue: `p` goes to the project of the selected environment.
-- Projects: `i` shows that project's issues on Findings, filtered to it. Enter opens the project and sets the scope (see [Project scope](#project-scope)).
+- Projects: `i` shows that project's issues on Findings, filtered to it. Enter opens the project and sets the context (see [Context](#context)).
 
 If you type a new filter after the jump, Esc clears the filter first. Changing screen ends the way back. This happens with Tab, a screen letter, or Left and Right on a root.
 
@@ -130,9 +130,23 @@ The mouse is optional. Every action works from the keys.
 - In an issue, a click selects an environment row.
 - Click a screen tab to switch to it. Click a breadcrumb to go back to that level.
 
-### Project scope
+### Context
 
-Enter on a project on the Projects screen sets the project scope. The Overview and the Findings then list only that project's issues, with only its environments, and the counts and severity bars follow them. The breadcrumb line shows the chip `scope: shop ×`. `0`, or a click on the chip, shows all projects again. The scope survives a re-read, and it is dropped when its project is deleted or disabled. Opening one of a project's security issues (`s`, then Enter) sets it too. An issue opened under a scope lists that project's rows first and starts on its prod-like environment (else its first row); the rows of the other projects follow under "other projects" and can be selected, and the prompts of assign, status and evidence then say "outside scope".
+The interface always works in one context, and rows of two projects are never mixed. The context is a project, shown as `shop`, or `acme ▸ shop` when some project has a vendor (see [Vendors and projects](#vendors-and-projects)); all the projects of one vendor, `acme ▸ all projects`; or all projects. The breadcrumb line shows it as the chip `context: acme ▸ shop`, and a click on the chip opens the choice.
+
+- **One project.** Overview, Findings, the issue page, the prompts of assign, status and evidence, the search, the jump box, the counts and the severity bars show and change that project only. The rows of other projects are not shown at all, not even dimmed. An issue open in two projects is two rows, one in each.
+- **All projects.** This is a view of the portfolio. Overview shows one section for each project, with its counts and its top three issues, and Findings lists the issues grouped by project. An issue is never merged across projects. Enter on a row sets the context to that row's project first, then opens the issue.
+- **One vendor.** The same as all projects, for the projects of that vendor.
+- **Choosing.** `C` opens the choice from every screen: all projects, each vendor, and each project, with the cursor on the current context. Enter on a project on the Projects screen sets the context to it. Opening one of a project's security issues (`s`, then Enter) does too. With one project in the portfolio, that project is the context and is set by itself. If a project was in the context and is deleted or disabled, the context is cleared, and with one project left it is that project.
+- **Staying.** The context lasts for the session and survives a re-read. It is not stored between runs.
+
+The issue page of a vendor or all-projects row holds only the rows of that project, so assign, status and evidence act on that project.
+
+### Health problems
+
+When the monitor is not GREEN, Overview starts with the open problems, above the issues: `Needs attention first (2)`. Each is a row with the level glyph, the title and how long it has lasted, RED before YELLOW, then the oldest first. Enter opens Health on that problem, with its detail and what to do. The problems are shown in every context, because they belong to the monitor and not to a project. A problem has no dismiss, hide or snooze: it stays until its cause is gone. When the monitor is GREEN there is no such section on Overview.
+
+Health starts with the same list, `Problems (2)`, and then the daemon, the feeds, the channels, the projects and the last cycles. Each problem shows its detail and its hint under the row. The causes are listed under [Is it working?](#is-it-working).
 
 ### Environments in lists
 
@@ -140,7 +154,7 @@ Lists name environments only where it matters. An issue that is open in every en
 
 ### Time filter
 
-`t` on Overview and Findings cycles the filter on the publication date: any time, past hour, past 24 hours, past week, past month and past year. The chip `published: past week ×` on the breadcrumb line shows it; `0`, or a click on the chip, clears it. Counts and bars follow it, as they follow the project scope. A custom range is typed into the search, such as `published:2026-01-01..2026-03-01`, and the chip shows that too. The search syntax is in [search.md](search.md).
+`t` on Overview and Findings cycles the filter on the publication date: any time, past hour, past 24 hours, past week, past month and past year. The chip `published: past week ×` on the breadcrumb line shows it; `0`, or a click on the chip, clears it. Counts and bars follow it, as they follow the context. A custom range is typed into the search, such as `published:2026-01-01..2026-03-01`, and the chip shows that too. The search syntax is in [search.md](search.md).
 
 ### Screen keys
 
@@ -162,6 +176,8 @@ Keys that moved so that the screen letters are free:
 | Projects, a project, the setup review | `H` | `w` | work through the hints |
 | Projects | `P` | `[` | previous problem (`p` is the next) |
 | Settings | `u` | `d` | restore the default of a setting |
+| Overview, Findings | `0` | `0` | clears the time filter only; the project scope it used to clear first is now the [context](#context), chosen with `C` |
+| everywhere | (none) | `C` | choose the context |
 
 Every other key is unchanged: `a` `A` assign, `c` fields, `E` editor, `V` revalidate, `R` `D` `X` `Z` `N` on Projects, `/` filter, `s` severity, `t` time, `0` clear, `:` jump, `?` help, Esc, Enter and the arrows.
 
@@ -169,29 +185,31 @@ Every other key is unchanged: `a` `A` assign, `c` fields, `E` editor, `V` revali
 
 The footer at the bottom shows the keys for where you are. Keys in brackets also work, but the footer and the help leave them out.
 
-Everywhere except in forms, the fix preview and text boxes: `:` jump, `r` reload, `u` update (fetch the feeds), `V` revalidate, `?` help, Tab and the screen letters switch screens.
+Everywhere except in forms, the fix preview and text boxes: `:` jump, `C` choose the context, `r` reload, `u` update (fetch the feeds), `V` revalidate, `?` help, Tab and the screen letters switch screens.
 
 **Overview**
 
-Below the summary, the list holds every open issue. It is searched and sorted like the Findings list, and when a project scope is set, only that project's issues are listed (see [Project scope](#project-scope)).
+Below the summary, the list holds every open issue. It is searched and sorted like the Findings list, and only the issues of the context are listed, in sections when it holds several projects (see [Context](#context)). When the monitor is not GREEN, its problems come first, RED before YELLOW; Enter on one opens Health on it (see [Health problems](#health-problems)).
 
 | Key | What it does |
 |---|---|
 | Up, Down, PgUp, PgDn, Home, End | move in the list of open issues |
-| Enter | open the selected issue |
+| Enter | open the selected issue, or Health on the selected problem |
 | `/` | filter by words or fields, with the same syntax as Findings. Enter keeps the filter, Esc clears it |
 | `s` | cycle the minimum severity |
 | `v` | show the policy violations and the warnings, in place of the list. Enter on a violation opens its issue; Esc goes back to the list |
 | `t` | cycle the time filter on the publication date (see [Time filter](#time-filter)) |
-| `0` | clear the project scope when one is set, otherwise the time filter |
+| `0` | clear the time filter |
+| `C` | choose the context (see [Context](#context)) |
 
 **Health**
 
 | Key | What it does |
 |---|---|
-| Up, Down | select an error |
+| Up, Down | select a problem or an error |
 | PgUp, PgDn, Home, End | scroll the page |
-| Enter | go to the project the error names, else show the error in full |
+| Enter | go to the project the problem or error names, else show it in full |
+| `C` | choose the context |
 
 **Findings**
 
@@ -202,7 +220,7 @@ Below the summary, the list holds every open issue. It is searched and sorted li
 | `/` | filter by words or fields such as `severity:high`. The list narrows as you type. Enter keeps the filter, Esc clears it |
 | `s` | cycle the minimum severity: all, low+, medium+, high+, critical+ |
 | `t` | cycle the time filter on the publication date (see [Time filter](#time-filter)) |
-| `0` | clear the project scope when one is set, otherwise the time filter |
+| `0` | clear the time filter |
 | Space | mark or unmark the issue, then move down (see Triage) |
 | Ctrl+A | mark every issue in the list, or clear the marks when all are marked |
 | `f` `i` `n` `o` | with marks: set every marked issue fixed, ignored, not affected, or open again |
@@ -232,10 +250,10 @@ Below the summary, the list holds every open issue. It is searched and sorted li
 | Key | What it does |
 |---|---|
 | Up, Down | select a project |
-| Enter | open the project: its problems, each with its fix, and its security issues. It also sets the project scope (see [Project scope](#project-scope)) |
+| Enter | open the project: its problems, each with its fix, and its security issues. It also sets the context to the project (see [Context](#context)) |
 | `+` | add a project: from a folder, from a Dockerfile, compose or Kubernetes file, or an empty one (see [Adding a project](#adding-a-project-tui)) |
 | `-` | remove the selected project: it shows what it affects, asks for its name, and the file moves to the backups |
-| `c` | open the project's fields: environments, technologies, lockfiles, differences per environment, since, updates (see [Editing a project](#editing-a-project)) |
+| `c` | open the project's fields: environments, technologies, lockfiles, differences per environment, since, updates, vendor (see [Editing a project](#editing-a-project)) |
 | `w` | work through the project's hints (see [Hints](#hints)) |
 | `e` | edit the project step by step in the guided form |
 | `a` | add a project in the guided form (`n` too) |
@@ -421,7 +439,7 @@ Picking a folder reads folder and file names only. Nothing in the folder is run.
 
 ### Fixing projects (TUI)
 
-The Projects screen has a PROBLEMS column: `-` for none, or counts such as `2 err` and `1 warn`. A project file that cannot be read is shown as `BROKEN` with its error, and the rest of the TUI keeps working.
+The Projects screen has a VENDOR column when any project has a vendor, and the page of a project says its vendor. It has a PROBLEMS column: `-` for none, or counts such as `2 err` and `1 warn`. A project file that cannot be read is shown as `BROKEN` with its error, and the rest of the TUI keeps working.
 
 - Enter opens the project. Its problems are listed, each with its fix underneath. `p` and `[` select the next or previous problem.
 - Inside a project, Enter or `x` shows the fix of the selected problem as a diff. Enter or `y` applies it. Esc cancels, and nothing is saved.
@@ -441,6 +459,7 @@ On the Projects screen, `c` opens the fields of the selected project. Inside a p
 | Differences per environment | only what differs in an environment, one row each: another version (`prod  php 8.2.30`), a technology that runs only there (`+varnish 7.4`), a technology it leaves out (`-xdebug`) or its image | `+` (or `a`) adds one: pick the environment, then the technology and version, the technology to leave out, or the image; Enter changes one; `-` (or `x`) removes one after a question; `m` rewrites an old `environments:` block as `when@<env>` blocks |
 | Lockfiles | the type, path, environment and dev flag of each lockfile | Enter or `d` toggles dev; `+` (or `a`) adds a lockfile by picking its file with Tab completion: the type comes from the name, then the prompt asks for the environment (empty means every environment) and dev (yes or no); `-` (or `x`) removes it after a question |
 | Since | the first day advisories count from | Enter opens a date prompt (`YYYY-MM-DD`); an empty value clears it |
+| Vendor | the customer or organisation that owns the project (see [Vendors and projects](#vendors-and-projects)) | Enter opens a prompt for a lowercase name such as `acme`; an empty value clears it |
 
 A lockfile with dev set to yes counts its development-only packages in every environment. By default they count only in development-like environments (`local`, `dev`, `int`, `development` and `test`). The format of the differences is described in [Environments and differences](#environments-and-differences).
 
