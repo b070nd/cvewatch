@@ -242,7 +242,7 @@ func init() {
 		},
 		click: func(m *app, x, y int) tea.Cmd { return m.clickProject(y - 1) },
 		binds: rootBinds(
-			binding{keys: ks("enter"), help: "open the project: its problems and its security issues; the overview and the findings show only this project until 0 clears it", short: "open", prio: 1, do: plain((*app).enterProject)},
+			binding{keys: ks("enter"), help: "open the project: its problems and its security issues; the overview and the findings show only this project (the context; C chooses another)", short: "open", prio: 1, do: plain((*app).enterProject)},
 			binding{keys: ks("c"), help: "open the project's fields: environments, technologies, lockfiles, differences per environment, since", short: "fields", prio: 1, do: plain((*app).openFields)},
 			binding{keys: ks("w"), help: "work through the hints of the project: unknown technologies, missing versions or lockfiles, environments; each one can be acted on", short: "hints", prio: 2, when: hasHints, do: plain((*app).openHints)},
 			binding{keys: ks("e"), help: "edit the project step by step in a guided form (to change one field directly, press c)", short: "guided edit", prio: 3, do: plain((*app).editProject)},

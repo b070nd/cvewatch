@@ -21,6 +21,7 @@ import (
 	"github.com/b070nd/cvewatch/app/src/config"
 	"github.com/b070nd/cvewatch/app/src/daemon"
 	"github.com/b070nd/cvewatch/app/src/doctor"
+	"github.com/b070nd/cvewatch/app/src/envfile"
 	"github.com/b070nd/cvewatch/app/src/export"
 	"github.com/b070nd/cvewatch/app/src/host"
 	"github.com/b070nd/cvewatch/app/src/mcpserver"
@@ -91,11 +92,14 @@ Other
   version                                      print the version
 
 S is low, medium, high or critical. -all also lists versions known to be unaffected.
--root is the folder holding config/ and sources/ (default "."); cvewatch init creates it.`
+-root is the folder holding config/ and sources/ (default "."); cvewatch init creates it.
+-env-file FILE reads variables such as GITHUB_TOKEN from a .env file; repeat it for several, later files win and the real environment wins over all. Without it .env and .env.local are read from the current folder and from -root.`
 
 func main() {
 	root := flag.String("root", ".", "configuration folder")
 	verbose := flag.Bool("v", false, "debug logging")
+	var envFiles envfile.Files
+	flag.Var(&envFiles, "env-file", "read variables from this .env file; repeat for several, later ones win")
 	flag.Usage = func() { fmt.Fprintln(os.Stderr, usage) }
 	flag.Parse()
 	if flag.NArg() == 0 {
@@ -108,6 +112,11 @@ func main() {
 		level = slog.LevelDebug
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	mcpserver.Version = version
+	if err := envfile.Setup(envFiles, *root, log); err != nil {
+		log.Error("failed", "err", err)
+		os.Exit(1)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), host.StopSignals()...)
 	defer stop()
 
@@ -207,7 +216,7 @@ func dispatch(ctx context.Context, root string, log *slog.Logger, args []string)
 		return read(func(s *ops.Session) error { return inventoryCmd(s, rest) })
 	case "mcp":
 		fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
-		write := fs.Bool("allow-write", false, "also expose the tools that change things: set_status, refresh, edit_project, edit_settings, manage_project")
+		write := fs.Bool("allow-write", false, "also expose the tools that change things: set_status, assign, attach_evidence, refresh, edit_project, edit_settings, edit_tech, manage_project")
 		if err := fs.Parse(rest); err != nil {
 			return err
 		}

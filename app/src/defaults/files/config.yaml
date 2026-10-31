@@ -27,7 +27,7 @@ slack:
 # Scheduled refresh. A project picks its own period, or opts out, in its file:
 #   update: {every: 1h, auto: false}
 # auto: false below turns the schedule off for everything; then only
-# `cvewatch update` and the F key in the TUI refresh.
+# `cvewatch update` and the u key in the TUI refresh.
 # update:
 #   auto: true       # default
 
