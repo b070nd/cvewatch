@@ -45,6 +45,7 @@ type fake struct {
 	writes   int
 	settings int          // settings sessions opened
 	active   atomic.Int32 // backend calls started and not yet finished
+	lastEnd  atomic.Int64 // when the last one finished, in unix nanoseconds
 	disk     string       // when set, every session loads the configuration from this folder, like the real backend
 	fetches  int          // Fetch calls started
 	fetchFn  func(context.Context, func(ops.RefreshProgress)) (pipeline.Result, error)
@@ -57,7 +58,16 @@ type fake struct {
 	backfillFn func(context.Context, func(ops.RefreshProgress)) (pipeline.Result, error)
 }
 
-func (f *fake) busy() bool { return f.active.Load() > 0 }
+// busy is true while a backend call runs and for a moment after one ends, so a
+// command that makes several calls in a row is not taken for a timer between them.
+func (f *fake) busy() bool {
+	return f.active.Load() > 0 || time.Since(time.Unix(0, f.lastEnd.Load())) < 300*time.Millisecond
+}
+
+func (f *fake) done() {
+	f.lastEnd.Store(time.Now().UnixNano())
+	f.active.Add(-1)
+}
 
 func (f *fake) session(write bool) (*ops.Session, error) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -83,7 +93,7 @@ func (f *fake) session(write bool) (*ops.Session, error) {
 
 func (f *fake) Read(fn func(*ops.Session) error) error {
 	f.active.Add(1)
-	defer f.active.Add(-1)
+	defer f.done()
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reads++
@@ -99,7 +109,7 @@ func (f *fake) Read(fn func(*ops.Session) error) error {
 // backend does: without loading the configuration, so a broken one opens too.
 func (f *fake) Settings(fn func(*ops.SettingsSession) error) error {
 	f.active.Add(1)
-	defer f.active.Add(-1)
+	defer f.done()
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.settings++
@@ -119,7 +129,7 @@ func (f *fake) Settings(fn func(*ops.SettingsSession) error) error {
 // may script the whole call through fetchFn.
 func (f *fake) Fetch(ctx context.Context, progress func(ops.RefreshProgress)) (pipeline.Result, error) {
 	f.active.Add(1)
-	defer f.active.Add(-1)
+	defer f.done()
 	f.mu.Lock()
 	f.fetches++
 	fn := f.fetchFn
@@ -145,7 +155,7 @@ func (f *fake) Fetch(ctx context.Context, progress func(ops.RefreshProgress)) (p
 // as busy while it runs.
 func (f *fake) Update(ctx context.Context, progress func(ops.RefreshProgress)) (pipeline.Result, error) {
 	f.active.Add(1)
-	defer f.active.Add(-1)
+	defer f.done()
 	f.mu.Lock()
 	f.updates++
 	fn := f.updateFn
@@ -176,7 +186,7 @@ func (f *fake) updated() int {
 // network; a test may script the whole call through backfillFn.
 func (f *fake) Backfill(ctx context.Context, progress func(ops.RefreshProgress)) (pipeline.Result, error) {
 	f.active.Add(1)
-	defer f.active.Add(-1)
+	defer f.done()
 	f.mu.Lock()
 	f.backfills++
 	fn := f.backfillFn
@@ -219,7 +229,7 @@ func (f *fake) TUISettings() config.TUI {
 
 func (f *fake) Write(fn func(*ops.Session) error) error {
 	f.active.Add(1)
-	defer f.active.Add(-1)
+	defer f.done()
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.writes++
