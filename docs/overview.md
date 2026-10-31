@@ -132,7 +132,7 @@ The mouse is optional. Every action works from the keys.
 
 ### Project scope
 
-Enter on a project on the Projects screen sets the project scope. The Overview and the Findings then list only that project's issues, with only its environments, and the counts and severity bars follow them. The breadcrumb line shows the chip `scope: shop ×`. `0`, or a click on the chip, shows all projects again. The scope survives a re-read, and it is dropped when its project is deleted or disabled. Opening one of a project's security issues (`s`, then Enter) sets it too.
+Enter on a project on the Projects screen sets the project scope. The Overview and the Findings then list only that project's issues, with only its environments, and the counts and severity bars follow them. The breadcrumb line shows the chip `scope: shop ×`. `0`, or a click on the chip, shows all projects again. The scope survives a re-read, and it is dropped when its project is deleted or disabled. Opening one of a project's security issues (`s`, then Enter) sets it too. An issue opened under a scope lists that project's rows first and starts on its prod-like environment (else its first row); the rows of the other projects follow under "other projects" and can be selected, and the prompts of assign, status and evidence then say "outside scope".
 
 ### Environments in lists
 
@@ -508,7 +508,7 @@ cvewatch settings schema [-json] [SECTION]      # every setting: path, type, all
 
 ## Environments and differences
 
-Every project has environments, and their names are free: lowercase letters, digits, `-` and `_`, starting with a letter, up to 32 characters. `local`, `dev`, `int`, `staging` and `prod` are suggested and sorted first, but any other name works in project files, lockfiles, search (`env:qa-2`), the `-env` flags and the TUI. The names `prod` and `production` count as production for the "open in prod" ordering, and `local`, `dev`, `int`, `development` and `test` count as development-like, where development-only packages count by default.
+Every project has environments, and their names are free: lowercase letters, digits, `-` and `_`, starting with a letter, up to 32 characters. `local`, `dev`, `int`, `staging` and `prod` are suggested and sorted first, but any other name works in project files, lockfiles, search (`env:qa-2`), the `-env` flags and the TUI. A name counts as production for the "open in prod" ordering when it is `prod` or `production`, or starts or ends with one of them after a `-` or `_`: `prod-eu`, `prod_us`, `production-apac` and `eu-prod` all count, while `preprod`, `pre-prod` and `non-prod` do not. `local`, `dev`, `int`, `development` and `test` count as development-like, where development-only packages count by default.
 
 - A new project starts with `local`. Add `prod` and any others you deploy to. Setup offers the suggested names as a list, then `other...` for your own.
 - A project file without an `envs` key keeps its old meaning, `dev`, `int`, `staging` and `prod`, so its findings do not change. The review says so with a hint, `envs not set: using the old default dev, int, staging, prod`, and offers to write the list.
@@ -627,10 +627,13 @@ The judgement depends on the projects (their environments, technologies with the
 When the fingerprint differs from the recorded one, the stored advisories are judged again, offline, in this order:
 
 1. Every stored advisory is judged against the current configuration, including the ones that matched nothing before. A match creates its finding. Nothing that is stored is removed. An advisory that matched nothing kept only a short summary and up to 20 product names, so it is judged on those; its fix details come with the next sighting from a source.
-2. Open findings whose advisory was published before their project's `since` date are closed as not affected, with a note saying why and a mark that cvewatch set it. When the date moves earlier or is removed, the findings it closed reopen. A status a person set is never touched.
-3. Open findings are checked against the installed versions again, as after a lockfile upgrade. If a technology was removed from a project, its open findings stay open but stop applying: they are hidden from the lists (`-all` shows them), are not alerted, their reasons say `no longer installed`, and their history records the removal.
-4. The sources are asked to reach back if the change starts earlier than what they have covered (see [Back-fill](#back-fill)).
-5. The new fingerprint is recorded, and the run leaves one audit entry with the counts.
+2. Open findings of an environment the project no longer declares are set to `ignored`, with the note `environment removed from project`, the actor `cvewatch` and a mark that cvewatch set it. Their history stays. When the environment is declared again, those findings reopen. A project without `envs` declares the four default environments, so nothing of it is closed. A status a person set is never touched.
+3. Open findings whose advisory was published before their project's `since` date are closed as not affected, with a note saying why and a mark that cvewatch set it. When the date moves earlier or is removed, the findings it closed reopen. A status a person set is never touched.
+4. Open findings are checked against the installed versions again, as after a lockfile upgrade. If a technology was removed from a project, or a lockfile that is read no longer lists a package, its open findings stay open but stop applying: they are hidden from the lists (`-all` shows them), are not alerted, their reasons say `no longer installed`, and their history records the removal. A lockfile or SBOM that is missing or cannot be read proves nothing: the findings that came from it are left as they were until it can be read again, and the project check and the cycle log report the problem. A finding that stopped applying this way is judged again against the advisory when the package is installed again.
+5. The sources are asked to reach back if the change starts earlier than what they have covered (see [Back-fill](#back-fill)).
+6. The new fingerprint is recorded, and the run leaves one audit entry with the counts.
+
+Every finding this creates, and every status change cvewatch makes by itself (steps 2 and 3), also leaves its own audit entry: `detected` with the project and environment for a new finding, `status` with the actor `cvewatch` for a close or a reopen, and `inventory` when step 4 changes a finding. The environment and inventory checks also run at the end of every cycle, so data left by an earlier version is repaired.
 
 It runs in these places:
 
@@ -655,7 +658,7 @@ A back-fill that fails, or is cancelled, stays owed and is tried again at the ne
 
 ## Is it working?
 
-`cvewatch status` shows the daemon (running, overdue, or only manual runs), each feed (last success, failures in a row), each channel, the last update and next due time of each project, and the last cycles. It exits non-zero when something fails. `cvewatch dashboard` writes a static HTML page with the same plus open findings. Set `dashboard: {enabled: true}` in `config.yaml` and the daemon refreshes it every cycle. The page has no scripts and makes no external requests.
+`cvewatch status` shows the daemon (running, overdue, or only manual runs), each feed (last success, failures in a row), each channel, the last update and next due time of each project, and the last cycles. The overall level is `unknown` until a cycle has read at least one feed (a new monitor has shown nothing yet, so it is not `ok`), and `warn` when no feed is enabled. It exits non-zero only when something fails, so `unknown` and `warn` exit 0. `cvewatch dashboard` writes a static HTML page with the same plus open findings. Set `dashboard: {enabled: true}` in `config.yaml` and the daemon refreshes it every cycle. The page has no scripts and makes no external requests.
 
 ## Vendor records (CVE Program)
 
@@ -666,7 +669,7 @@ How it works, in short:
 - Each newly published record is fetched, oldest first, at most 500 per cycle. The place reached is stored, so a failed or interrupted cycle repeats instead of losing records. A record that is gone (404) is skipped; any other error repeats the cycle.
 - The title names the affected products, so technology matching works on it. Versions are checked only when the record has CPE names and plain version numbers; free text such as `2.4.9, 2.4.8-p5` stays `unchecked` for a person to confirm.
 - The first run takes only the newest 100 records. Older ones come from NVD and the lookback. Changes older than about a week (a week-long outage) are not recovered from this source.
-- Requests go to `raw.githubusercontent.com` at up to 5 a second (`host_rates`). Switch it off with `- {id: cve-records, disabled: true}` in a file in `sources/`.
+- Requests go to `raw.githubusercontent.com` at up to 5 a second (`host_rates`). Switch it off with `sources: [{id: cve-records, disabled: true}]` in a file in `sources/`. An entry for a feed that already exists changes only the fields it gives (here `disabled`), so it needs no type or url.
 
 ## Inventory
 
@@ -761,7 +764,7 @@ Channels switch on when their secret is in the environment, so one config file i
 | `config/config.yaml` | interval, HTTP limits, Slack, notify, policy, enrich, storage, access, horizon, tui (refresh, fetch and editor) |
 | `config/techs.yaml` | your additions to the built-in technology catalog, including your own keywords (`cvewatch tech`) |
 | `config/projects/*.yaml` | one file per project |
-| `sources/*.yaml` | your additions to the built-in feeds (same `id` replaces; `disabled: true` switches one off) |
+| `sources/*.yaml` | your additions to the built-in feeds (an entry with the id of an existing feed changes only the fields it gives, such as `disabled: true` to switch it off; a new id needs a `type` and a `url`) |
 | `data/` | state (`state.json`, or `state.db` with the SQLite backend), `audit.log`, `project-backups/` |
 | `alerts/` | generated markdown reports and calendar pages |
 

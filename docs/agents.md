@@ -16,7 +16,7 @@ It starts read-only with these tools:
 | `search_findings` | findings matching a query in the [search syntax](search.md): words, `"phrases"`, `-exclude`, `A OR B` and fields such as `severity:high+`; filters `open_only`, `min_severity`, `project`, `env`; closed findings are included unless `open_only` is set |
 | `get_vulnerability` | description, articles in chronological order, fix evidence, status per project and environment, report path |
 | `explain` | why it matched: recorded reasons and what today's config says |
-| `get_evidence` | evidence pack: facts, per-environment status, timeline of detection, alerts, changes and evidence |
+| `get_evidence` | evidence pack: facts, per-environment status, timeline of detection, alerts, changes and evidence (see below) |
 | `policy_violations` | open findings that break a policy rule or their due date |
 | `get_calendar` | issues published in a month, with severity, techs, article count and fix availability |
 
@@ -40,6 +40,17 @@ Setup tools (read-only unless noted) let an agent configure the monitor with the
 | `manage_project` | only with `-allow-write`: rename, duplicate, delete, disable or enable a whole project. Without `confirm` it returns the consequences and changes nothing; with `confirm: true` it carries the change out |
 
 The settings tools need an actor that may see every project, because the settings name all of them. A restricted actor gets an access refusal.
+
+The timeline of `get_evidence` (and of `cvewatch evidence`) holds the audit records of the vulnerability in time order: detections (also those of a project added later, found in an advisory that was already stored), alerts, status changes, owners and attached evidence. Changes the monitor makes by itself, such as closing findings of a removed environment or reopening them, carry the actor `cvewatch` and are shown as `cvewatch (automatic)` in the markdown and in the issue page. An actor limited to some projects sees only the records of those projects and the records that belong to no project.
+
+`audit_intact` and `audit_note` say how far the timeline can be trusted:
+
+| `audit_intact` | `audit_note` | Meaning |
+|---|---|---|
+| `true` | absent | the audit chain verified and the timeline is made of its records |
+| `true` | `no audit records visible to you for this vulnerability; ...` | the chain verified, but none of its records for this vulnerability is visible to a restricted actor; the timeline is taken from the ledger history of the projects the actor may see. This is not an integrity failure |
+| `false` | `no audit records found for this vulnerability ...` | no record exists (data from before the audit log, or the log was removed); the timeline is taken from the ledger history |
+| `false` | `audit log could not be verified (...)` | the chain is broken or unreadable; the timeline is taken from the ledger history |
 
 A project is named by the `name:` in its file, not by the file's name. The `project` input of these tools is that name, so `magento2-shop.yaml` declaring `shop` is `shop`.
 
