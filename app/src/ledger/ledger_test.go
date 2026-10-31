@@ -215,3 +215,96 @@ func TestRenameEnvMovesFindingsAndRefusesCollisions(t *testing.T) {
 		t.Error("state inconsistent")
 	}
 }
+
+func rated(it model.Item, score float64, version, source string, sev model.Severity) model.Item {
+	it.CVSS, it.CVSSVersion, it.CVSSSource, it.Severity = score, version, source, sev
+	it.CVSSVector = "CVSS:" + version + "/AV:N"
+	return it
+}
+
+func TestAbsorbKeepsTheBestRating(t *testing.T) {
+	l := New(State{})
+	v := l.Create(item("PHP bug", "https://a.test/1", "hn", "CVE-2026-1"), day, nil)
+	if v.CVSS != 0 || v.Severity != model.SevUnknown {
+		t.Fatalf("an article carries no score: %+v", v)
+	}
+
+	steps := []struct {
+		name  string
+		it    model.Item
+		score float64
+		ver   string
+		src   string
+		sev   model.Severity
+	}{
+		{"an NVD 3.1 score fills the gap", rated(item("PHP bug", "https://a.test/2", "nvd", "CVE-2026-1"), 9.8, "3.1", model.ScoreNVD, model.SevCritical), 9.8, "3.1", "nvd", model.SevCritical},
+		{"a secondary 4.0 does not replace the primary", rated(item("PHP bug", "https://a.test/3", "nvd2", "CVE-2026-1"), 5.0, "4.0", model.ScoreNVDSecondary, model.SevMedium), 9.8, "3.1", "nvd", model.SevCritical},
+		{"a primary 4.0 replaces a primary 3.1", rated(item("PHP bug", "https://a.test/4", "cve", "CVE-2026-1"), 9.3, "4.0", model.ScoreCNA, model.SevCritical), 9.3, "4.0", "cna", model.SevCritical},
+		{"a score quoted in text never replaces", rated(item("PHP bug", "https://a.test/5", "rss", "CVE-2026-1"), 10, "", model.ScoreText, model.SevCritical), 9.3, "4.0", "cna", model.SevCritical},
+	}
+	for _, s := range steps {
+		l.Absorb(v, s.it)
+		if v.CVSS != s.score || v.CVSSVersion != s.ver || v.CVSSSource != s.src || v.Severity != s.sev {
+			t.Fatalf("%s: got %v v%s %s sev=%s", s.name, v.CVSS, v.CVSSVersion, v.CVSSSource, v.Severity)
+		}
+	}
+	if v.CVSSVector != "CVSS:4.0/AV:N" {
+		t.Fatalf("the vector moves with its score: %q", v.CVSSVector)
+	}
+}
+
+func TestAbsorbSeverityFromAnotherSourceDoesNotZeroTheScore(t *testing.T) {
+	l := New(State{})
+	v := l.Create(rated(item("Bug", "https://a.test/1", "nvd", "CVE-2026-2"), 5.0, "3.1", model.ScoreNVD, model.SevMedium), day, nil)
+	kev := item("Bug", "https://a.test/2", "kev", "CVE-2026-2")
+	kev.Severity = model.SevHigh
+	l.Absorb(v, kev)
+	if v.Severity != model.SevHigh || v.CVSS != 5.0 || v.CVSSVersion != "3.1" {
+		t.Fatalf("a higher label raises the severity and keeps the score: %+v", v)
+	}
+}
+
+func TestSetRatingAndMarkRated(t *testing.T) {
+	l := New(State{})
+	v := l.Create(item("Bug", "https://a.test/1", "hn", "CVE-2026-3"), day, nil)
+	r := model.Rating{Score: 9.8, Version: "3.1", Vector: "CVSS:3.1/AV:N", Source: model.ScoreNVD}
+	if !l.SetRating(v.ID, r) || v.CVSS != 9.8 || v.Severity != model.SevCritical {
+		t.Fatalf("unrated -> rated: %+v", v)
+	}
+	if l.SetRating(v.ID, r) || l.SetRating("CVE-nope", r) {
+		t.Fatal("the same rating again, or an unknown id, changes nothing")
+	}
+	if l.SetRating(v.ID, model.Rating{Score: 4, Version: "4.0", Source: model.ScoreADP}) {
+		t.Fatal("a secondary score must not replace a primary one")
+	}
+	l.MarkRated(v.ID, day)
+	if re := New(l.State()); !re.Vuln(v.ID).CVSSChecked.Equal(day) || re.Vuln(v.ID).CVSSSource != "nvd" {
+		t.Fatal("the lookup time and the source survive a reload")
+	}
+}
+
+func TestAStatusFromAPersonClearsTheAutomaticMarker(t *testing.T) {
+	l := New(State{})
+	l.AddFinding(model.Finding{VulnID: "CVE-1", Project: "p", Env: model.EnvProd, Status: model.StatusNotAffected, Auto: true})
+	owner := "me"
+	if _, err := l.Update("CVE-1", "p", model.EnvProd, Update{Owner: &owner}, time.Now()); err != nil || !l.Findings()[0].Auto {
+		t.Fatalf("assigning an owner is not a status change: %+v %v", l.Findings()[0], err)
+	}
+	if _, err := l.SetStatus("CVE-1", "p", model.EnvProd, model.StatusNotAffected, "checked", time.Now()); err != nil || l.Findings()[0].Auto {
+		t.Fatalf("a status from a person is manual: %+v %v", l.Findings()[0], err)
+	}
+}
+
+func TestCloneIsIndependentAndKeepsTheJudging(t *testing.T) {
+	l := New(State{})
+	l.AddFinding(model.Finding{VulnID: "CVE-1", Project: "p", Env: model.EnvProd, Status: model.StatusOpen})
+	l.SetJudged(model.Judging{Hash: "abc"})
+	c, err := l.Clone()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetStatus("CVE-1", "p", model.EnvProd, model.StatusFixed, "x", time.Now())
+	if l.Findings()[0].Status != model.StatusOpen || c.Judged() == nil || c.Judged().Hash != "abc" {
+		t.Fatalf("original %+v clone judged %+v", l.Findings()[0], c.Judged())
+	}
+}

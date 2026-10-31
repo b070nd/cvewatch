@@ -116,7 +116,10 @@ func (l *Ledger) unify(vs []*model.Vulnerability) (*model.Vulnerability, []*mode
 			main.Summary = g.Summary
 		}
 		if g.Severity.Rank() > main.Severity.Rank() {
-			main.Severity, main.CVSS = g.Severity, g.CVSS
+			main.Severity = g.Severity
+		}
+		if r := g.Rating(); r.Better(main.Rating()) {
+			main.SetRating(r)
 		}
 		for key, f := range l.d.Findings {
 			if f.VulnID != g.ID {
@@ -152,7 +155,11 @@ func (l *Ledger) Absorb(v *model.Vulnerability, it model.Item) Change {
 	}
 	l.index(v)
 	if it.Severity.Rank() > v.Severity.Rank() {
-		v.Severity, v.CVSS, changed = it.Severity, it.CVSS, true
+		v.Severity, changed = it.Severity, true
+	}
+	if r := it.Rating(); r.Better(v.Rating()) { // see model.Rating for the precedence
+		v.SetRating(r)
+		changed = true
 	}
 	if a := mergeAffected(v.Affected, it.Affected); !affectedEqual(a, v.Affected) {
 		v.Affected, changed, c.Evidence = a, true, true

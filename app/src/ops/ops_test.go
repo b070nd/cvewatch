@@ -129,8 +129,9 @@ func TestRescanAddsFindingsOnlyWhenAsked(t *testing.T) {
 	cfg, st := bundle(t, nil), seeded(t)
 	s := open(t, cfg, st, "alice")
 
+	// CVE-2026-1 is tracked in prod only; shop also runs in three more environments.
 	dry, err := s.Rescan(false)
-	if err != nil || len(dry.Candidates) != 1 || dry.Candidates[0].ID != "CVE-2026-2" || dry.Applied {
+	if err != nil || len(dry.Candidates) != 2 || dry.Candidates[0].ID != "CVE-2026-1" || dry.Candidates[1].ID != "CVE-2026-2" || dry.Applied {
 		t.Fatalf("dry run: %+v %v", dry, err)
 	}
 	if got := len(s.Ledger.FindingsOf("CVE-2026-2")); got != 0 {

@@ -35,6 +35,10 @@ type snapshot struct {
 	Projects   []projectRow
 	Warnings   []string       // parts that could not be read; the rest is still shown
 	Horizon    config.Horizon // which publication dates the daemon judges and alerts
+
+	Stamp      string        // the files the findings are judged from, as they were when read (see inputStamp)
+	Stale      ops.Staleness // whether the findings were judged against something else
+	StaleKnown bool          // Stale was read; false when it could not be
 }
 
 type projectRow struct {
@@ -50,6 +54,7 @@ type projectRow struct {
 	Disabled     bool                          // the file is switched off (<name>.yaml.disabled): listed, not loaded
 	Environments map[model.Env]model.EnvConfig // deployed versions and image per environment
 	EnvsUnset    bool                          // the file has no envs: Envs is the old default
+	Unjudged     bool                          // its changes are not judged against the stored findings yet
 }
 
 func (p projectRow) counts() (errs, warns int) {
@@ -65,12 +70,17 @@ func (p projectRow) counts() (errs, warns int) {
 
 // loadSnapshot reads the issue list (fatal when it fails: access denied, no
 // state) and the rest best-effort.
-func loadSnapshot(s *ops.Session) (*snapshot, error) {
+func loadSnapshot(s *ops.Session) (*snapshot, error) { return loadSnapshotMemo(s, nil) }
+
+// loadSnapshotMemo is loadSnapshot that asks the memo for the staleness, which
+// reads lockfiles, so it is only worked out again when the files changed.
+func loadSnapshotMemo(s *ops.Session, memo *staleMemo) (*snapshot, error) {
 	issues, err := s.List(query.Filter{})
 	if err != nil {
 		return nil, err
 	}
-	sn := &snapshot{At: s.Now(), Root: s.Cfg.Root, Issues: issues, Horizon: s.Cfg.Horizon}
+	sn := &snapshot{At: s.Now(), Root: s.Cfg.Root, Issues: issues, Horizon: s.Cfg.Horizon, Stamp: inputStamp(s.Cfg)}
+	sn.Stale, sn.StaleKnown = memo.staleness(s, sn.Stamp)
 	warn := func(what string, err error) { sn.Warnings = append(sn.Warnings, what+": "+oneLine(err.Error())) }
 	if sn.Status, err = s.Status(); err != nil {
 		warn("status", err)
@@ -137,6 +147,7 @@ func loadSnapshot(s *ops.Session) (*snapshot, error) {
 		file, _ := s.DisabledFile(name)
 		sn.Projects = append(sn.Projects, projectRow{ProjectView: ops.ProjectView{Name: name}, HasFile: true, File: file, Disabled: true})
 	}
+	sn.markUnjudged()
 	return sn, nil
 }
 
@@ -249,14 +260,14 @@ func tickCmd(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(time.Time) tea.Msg { return tickMsg{} })
 }
 
-func loadCmd(b Backend) tea.Cmd { return loadLandCmd(b, nil) }
+func loadCmd(b Backend) tea.Cmd { return loadLandCmd(b, nil, nil) }
 
 // loadLandCmd reads the snapshot and, once it is in, puts the Projects screen
 // on a project (see landing).
-func loadLandCmd(b Backend, land *landing) tea.Cmd {
+func loadLandCmd(b Backend, memo *staleMemo, land *landing) tea.Cmd {
 	return func() tea.Msg {
 		var sn *snapshot
-		err := b.Read(func(s *ops.Session) (e error) { sn, e = loadSnapshot(s); return e })
+		err := b.Read(func(s *ops.Session) (e error) { sn, e = loadSnapshotMemo(s, memo); return e })
 		return dataMsg{snap: sn, err: err, land: land}
 	}
 }

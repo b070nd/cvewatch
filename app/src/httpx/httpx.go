@@ -60,6 +60,7 @@ type Response struct {
 	Body        []byte
 	NotModified bool // server answered 304; Body is empty
 	Validators  model.Validators
+	Link        string // the Link header, for paged APIs
 }
 
 // StatusError reports an unexpected HTTP status.
@@ -286,6 +287,7 @@ func (c *Client) readBody(ctx context.Context, resp *http.Response) (*Response, 
 			ETag:         resp.Header.Get("ETag"),
 			LastModified: resp.Header.Get("Last-Modified"),
 		},
+		Link: resp.Header.Get("Link"),
 	}, nil
 }
 

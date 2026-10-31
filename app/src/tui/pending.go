@@ -112,6 +112,8 @@ func (m *app) start(label, key string, after reloadSet, prm *prompt, cmd tea.Cmd
 // opDone is the one place an operation ends.
 func (m *app) opDone(msg opMsg) tea.Cmd {
 	op, _ := m.pend.end(msg.id)
+	m.stl.invalidate() // what the operation did may change what the findings are judged against
+	m.tried = ""
 	out := m.result(msg.msg)
 	if p := msg.prm; p != nil && p == m.prm { // else it was closed meanwhile: the result is not its to take
 		if out.err != nil {
@@ -169,10 +171,13 @@ func (m *app) result(msg tea.Msg) outcome {
 		return m.lifePreviewed(msg)
 	case lifeAppliedMsg:
 		return m.lifeApplied(msg)
+	case revalPreviewMsg:
+		return m.revalPreviewed(msg)
 	case editedMsg:
 		if msg.err != nil {
 			return outcome{err: fmt.Errorf("editor: %w", msg.err)}
 		}
+		return outcome{note: msg.note}
 	}
 	return outcome{}
 }
@@ -191,7 +196,7 @@ func (m *app) refresh(set reloadSet) tea.Cmd {
 	}
 	if set&reList != 0 {
 		m.loading = true
-		cmds = append(cmds, loadCmd(m.b))
+		cmds = append(cmds, loadLandCmd(m.b, m.stl, nil))
 	}
 	if d := m.fnd.det; set&reDetail != 0 && d != nil {
 		cmds = append(cmds, detailCmd(m.b, d.id))

@@ -146,7 +146,7 @@ func HintsFor(p model.Project, issues []Issue, o HintOptions) []Hint {
 	}
 	if p.Since.IsZero() {
 		add(Hint{Level: "info", Field: "since",
-			Message: "no start date: every advisory ever published counts, old ones included; set since (YYYY-MM-DD) to look only at newer ones"})
+			Message: "no start date: every advisory the sources serve counts, old ones included; set since (YYYY-MM-DD) to ignore older ones (their open findings close by themselves; an earlier date fetches older advisories and reopens those)"})
 	}
 
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Level == "warn" && out[j].Level != "warn" })

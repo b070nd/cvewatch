@@ -267,8 +267,8 @@ type Explanation struct {
 }
 
 // Explain re-judges the stored record with the current config and shows it
-// next to the decision taken at the time. Irrelevant records keep only their
-// title, so for them the comparison is title-only.
+// next to the decision taken at the time. Irrelevant records keep a short
+// summary and part of their product list, so for them the comparison is partial.
 func (s *Session) Explain(id string) (Explanation, error) {
 	f, err := s.scope(query.Filter{})
 	if err != nil {
@@ -291,11 +291,7 @@ func (s *Session) Explain(id string) (Explanation, error) {
 }
 
 func (s *Session) judge(v *model.Vulnerability) relevance.Verdict {
-	it := model.Item{
-		Title: v.Title, Summary: v.Summary, IDs: v.Keys(), Affected: v.Affected, Severity: v.Severity,
-		Published: v.Published, TitleOnly: v.Summary == "", // irrelevant records kept no summary
-	}
-	return relevance.New(s.Cfg.Techs).Judge(it, inventory.Load(s.Cfg).Within(s.Cfg.Horizon, s.Now()).Targets())
+	return relevance.New(s.Cfg.Techs).Judge(pipeline.ItemOf(v, s.Cfg.Sources), inventory.Load(s.Cfg).Within(s.Cfg.Horizon, s.Now()).Targets())
 }
 
 // ---- writes ----
@@ -462,74 +458,6 @@ func (s *Session) applyOnce(id, project string, env model.Env, u ledger.Update, 
 		return 0, err
 	}
 	return n, rerr
-}
-
-// Rescan re-judges tracked records that matched nothing against the current
-// config. It only adds findings, never removes any, and only when apply is
-// set; without it the call reports what would be created.
-type Rescan struct {
-	Candidates []Candidate `json:"candidates"`
-	Applied    bool        `json:"applied"`
-}
-
-type Candidate struct {
-	ID       string   `json:"id"`
-	Title    string   `json:"title"`
-	Projects []string `json:"projects"`
-}
-
-func (s *Session) Rescan(apply bool) (Rescan, error) {
-	if apply {
-		if err := s.mayWrite(""); err != nil {
-			return Rescan{}, err
-		}
-	}
-	out := Rescan{Applied: apply}
-	now := s.Now()
-	targets := inventory.Load(s.Cfg).Within(s.Cfg.Horizon, now).Targets()
-	judge := relevance.New(s.Cfg.Techs)
-	relevant := map[string]bool{}
-	for _, v := range s.Ledger.Relevant() {
-		relevant[v.ID] = true
-	}
-	var ids []string
-	for id := range s.Ledger.State().Vulns {
-		if !relevant[id] {
-			ids = append(ids, id)
-		}
-	}
-	slices.Sort(ids)
-	for _, id := range ids {
-		v := s.Ledger.Vuln(id)
-		it := model.Item{Title: v.Title, Summary: v.Summary, IDs: v.Keys(), Affected: v.Affected,
-			Severity: v.Severity, Published: v.Published, TitleOnly: v.Summary == ""}
-		verdict := judge.Judge(it, targets)
-		if len(verdict.Matches) == 0 {
-			continue
-		}
-		c := Candidate{ID: v.ID, Title: query.Clip(v.Title, 120)}
-		for _, m := range verdict.Matches {
-			if !slices.Contains(c.Projects, m.Project) {
-				c.Projects = append(c.Projects, m.Project)
-			}
-		}
-		out.Candidates = append(out.Candidates, c)
-		if !apply {
-			continue
-		}
-		v.Techs = verdict.Techs
-		if pipeline.AddFindings(s.Ledger, v.ID, verdict.Matches, now) > 0 {
-			if path, err := report.Write(s.Cfg.AlertsDir, v, s.Ledger.FindingsOf(v.ID), now); err == nil {
-				v.ReportPath = path
-			}
-			s.Audit.Append(audit.Event{Time: now, Actor: s.Actor, Action: "detected", Vuln: v.ID,
-				Project: strings.Join(c.Projects, ","), Note: "rescan"})
-		}
-	}
-	if apply && len(out.Candidates) > 0 {
-		return out, s.Commit()
-	}
-	return out, nil
 }
 
 // Refresh fetches every source, records findings and alerts. It touches all

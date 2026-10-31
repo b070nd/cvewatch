@@ -70,9 +70,12 @@ func RenderDetail(d query.Detail) string {
 	}
 	fmt.Fprintf(&b, " · **Articles found:** %d", is.ArticleCount)
 	if is.CVSS > 0 {
-		fmt.Fprintf(&b, " · **CVSS:** %.1f", is.CVSS)
+		fmt.Fprintf(&b, " · **CVSS:** %s", is.CVSSText())
 	}
 	b.WriteString("\n\n")
+	if o := is.CVSSOrigin(); o != "" {
+		fmt.Fprintf(&b, "**CVSS detail:** %s\n\n", o)
+	}
 	if k := is.KEV; k != nil {
 		fmt.Fprintf(&b, "**KEV:** on CISA's Known Exploited Vulnerabilities list since %s", k.DateAdded.UTC().Format("2006-01-02"))
 		if !k.DueDate.IsZero() {

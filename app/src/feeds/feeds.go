@@ -68,22 +68,46 @@ func Types() []string {
 }
 
 // Fetch downloads src and returns its new items and the validators to store.
-// The window starts at st.LastRun, or at now-lookback on the first run.
+// The window starts at st.LastRun, or at now-lookback on the first run, or at
+// st.Backfill when that reaches further back.
 // On NotModified it returns no items and the previous validators; on error
 // it also returns the previous validators, so callers can keep them.
 //
 // URL placeholders: {since} (RFC3339 UTC; NVD format for type nvd),
 // {since_unix}, {since_date} (YYYY-MM-DD) and {now} (same format as {since}).
 func Fetch(ctx context.Context, g Getter, src model.Source, st model.FeedState, now time.Time, lookback time.Duration) ([]model.Item, model.Validators, error) {
+	o, err := FetchRange(ctx, g, src, st, now, lookback, nil)
+	return o.Items, o.Validators, err
+}
+
+// Outcome is what a fetch returned and which part of history it asked for.
+type Outcome struct {
+	Items      []model.Item
+	Validators model.Validators
+	From       time.Time // start of the window that was asked for
+	Backfilled bool      // the window reached back further than usual for a pending back-fill
+	Note       string    // informational: what the source could not serve
+}
+
+// FetchRange is Fetch that also says what window it covered. progress, which
+// may be nil, is told after each finished chunk of a long window or page of a
+// paged answer; total is 0 when the number of pages is not known.
+func FetchRange(ctx context.Context, g Getter, src model.Source, st model.FeedState, now time.Time, lookback time.Duration, progress func(done, total int)) (Outcome, error) {
+	out := Outcome{Validators: st.Validators}
 	f, isFetcher := fetchers[src.Type]
 	p, isParser := parsers[src.Type]
 	if !isFetcher && !isParser {
-		return nil, st.Validators, fmt.Errorf("feeds: source %q: unknown type %q", src.ID, src.Type)
+		return out, fmt.Errorf("feeds: source %q: unknown type %q", src.ID, src.Type)
 	}
 	since := st.LastRun
 	if since.IsZero() {
 		since = now.Add(-lookback)
 	}
+	prev := st.Validators
+	if !st.Backfill.IsZero() && st.Backfill.Before(since) {
+		since, prev, out.Backfilled = st.Backfill, model.Validators{}, true // a conditional GET would answer "unchanged"
+	}
+	out.From = since
 	var (
 		items  []model.Item
 		valids model.Validators
@@ -92,21 +116,18 @@ func Fetch(ctx context.Context, g Getter, src model.Source, st model.FeedState, 
 		var err error
 		items, valids, err = f(ctx, g, src, st, since)
 		if err != nil {
-			return nil, st.Validators, fmt.Errorf("feeds: source %q: %w", src.ID, err)
+			return out, fmt.Errorf("feeds: source %q: %w", src.ID, err)
 		}
 	} else {
-		resp, err := g.Get(ctx, expand(src, since, now), st.Validators, mergeHeaders(p.accept, src.Headers))
+		var notModified bool
+		var err error
+		items, valids, notModified, err = fetchPages(ctx, g, src, p, prev, since, now, progress)
 		if err != nil {
-			return nil, st.Validators, fmt.Errorf("feeds: source %q: %w", src.ID, err)
+			return out, fmt.Errorf("feeds: source %q: %w", src.ID, err)
 		}
-		if resp.NotModified {
-			return nil, st.Validators, nil
+		if notModified {
+			return out, nil
 		}
-		items, err = p.parse(resp.Body, src, since)
-		if err != nil {
-			return nil, st.Validators, fmt.Errorf("feeds: source %q: parse %s: %w", src.ID, src.Type, err)
-		}
-		valids = resp.Validators
 	}
 	if src.Type != "cve" { // its cursor, not the date, decides what is new
 		items = recent(items, since)
@@ -116,8 +137,16 @@ func Fetch(ctx context.Context, g Getter, src model.Source, st model.FeedState, 
 		items[i].TitleOnly = src.MatchTitleOnly
 		items[i].StructuredOnly = src.MatchStructured
 	}
-	return items, valids, nil
+	if out.Backfilled && slices.Contains(recentOnly, src.Type) {
+		out.Note = "cannot go back: only serves recent items"
+	}
+	out.Items, out.Validators = items, valids
+	return out, nil
 }
+
+// recentOnly are the source types that cannot serve items older than a feed's
+// own depth, whatever window is asked for.
+var recentOnly = []string{"rss", "hn", "cve"}
 
 // feedLag is how far before the window an item may be dated and still count,
 // since feeds can publish entries late. Repeats are removed by deduplication.

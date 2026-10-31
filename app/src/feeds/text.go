@@ -4,6 +4,7 @@ import (
 	"html"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -59,10 +60,63 @@ func finish(srcID string, it model.Item, explicit ...string) (_ model.Item, ok b
 	it.IDs = mergeIDs(explicit, model.ExtractIDs(title+"\n"+summary))
 	it.Title = truncate(title, maxText)
 	it.Summary = truncate(summary, maxText)
+	if !it.Rating().Valid() {
+		if r, ok := textRating(title+"\n"+summary, it.IDs); ok {
+			rate(&it, r, "")
+		}
+	}
 	if it.Severity == "" {
 		it.Severity = model.SevUnknown
 	}
 	return it, true
+}
+
+// rate gives the item a rating and the severity the source printed for it,
+// or the band of the score when it printed none.
+func rate(it *model.Item, r model.Rating, label string) {
+	if r.Valid() {
+		it.SetRating(r)
+	}
+	if s := model.ParseSeverity(label); s != model.SevUnknown {
+		it.Severity = s
+	} else if r.Valid() {
+		it.Severity = r.Severity()
+	}
+}
+
+var cvssText = regexp.MustCompile(`(?i)\bCVSS(?:\s*(?:v(?:ersion)?|:)?\s*([234](?:\.[01])?)\b)?[^0-9\n]{0,40}?\b(10(?:\.0)?|\d\.\d)\b`)
+
+// textRating reads "CVSS 9.8" or "CVSS v4.0 base score 9.3" out of an article.
+// It is the weakest rating (see Rating), and it is skipped for roundups that
+// name several CVEs, where the score may belong to any of them.
+func textRating(text string, ids []string) (model.Rating, bool) {
+	cves := 0
+	for _, id := range ids {
+		if strings.HasPrefix(id, "CVE-") {
+			cves++
+		}
+	}
+	if cves > 1 {
+		return model.Rating{}, false
+	}
+	for _, m := range cvssText.FindAllStringSubmatchIndex(text, -1) {
+		if prev := text[m[4]-1]; prev == ':' || prev == '/' || (m[5] < len(text) && text[m[5]] == '/') ||
+			(m[5]+1 < len(text) && text[m[5]] == '.' && text[m[5]+1] >= '0' && text[m[5]+1] <= '9') {
+			continue // part of a vector or a longer number
+		}
+		score, err := strconv.ParseFloat(text[m[4]:m[5]], 64)
+		if err != nil {
+			continue
+		}
+		r := model.Rating{Score: score, Source: model.ScoreText}
+		if m[2] >= 0 {
+			r.Version = model.NormVersion(text[m[2]:m[3]])
+		}
+		if r.Valid() {
+			return r, true
+		}
+	}
+	return model.Rating{}, false
 }
 
 func mergeIDs(explicit, found []string) []string {
@@ -81,14 +135,6 @@ func mergeIDs(explicit, found []string) []string {
 		}
 	}
 	return append(cves, others...)
-}
-
-// severityOf prefers the label the feed gives and falls back to the score.
-func severityOf(label string, score float64) model.Severity {
-	if s := model.ParseSeverity(label); s != model.SevUnknown {
-		return s
-	}
-	return model.SeverityFromCVSS(score)
 }
 
 var timeLayouts = []string{

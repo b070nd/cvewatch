@@ -50,7 +50,7 @@ func Run(ctx context.Context, b Backend, o Options) error {
 func New(b Backend, o Options) tea.Model { return newApp(context.Background(), b, o) }
 
 func newApp(ctx context.Context, b Backend, o Options) *app {
-	m := &app{b: b, o: o, loading: true, helpVP: scrolling(), after: afterCmd, sys: newSysDesktop(), tui: config.TUI{Refresh: o.refresh(), Fetch: o.Fetch}}
+	m := &app{b: b, o: o, loading: true, helpVP: scrolling(), after: afterCmd, sys: newSysDesktop(), stl: &staleMemo{}, tui: config.TUI{Refresh: o.refresh(), Fetch: o.Fetch}}
 	m.ctx, m.stop = context.WithCancel(ctx)
 	for i := range m.txt {
 		m.txt[i] = scrolling()
@@ -81,7 +81,10 @@ type app struct {
 	stop    context.CancelFunc
 	tui     config.TUI // the tui settings as last read: the periods of the re-read and the fetch
 	fet     fetchState
-	sys     desktop // the browser and the clipboard
+	stl     *staleMemo        // the staleness of the snapshot, worked out again only when the files change
+	tried   string            // the files (snapshot stamp) a revalidation started by itself was tried on
+	sinces  map[string]string // the since dates a revalidation preview read, until its job ends
+	sys     desktop           // the browser and the clipboard
 
 	flash    string
 	flashErr bool
@@ -111,7 +114,7 @@ type app struct {
 // ---- tea.Model ----
 
 func (m *app) Init() tea.Cmd {
-	cmds := []tea.Cmd{loadCmd(m.b), tickCmd(m.refreshEvery())}
+	cmds := []tea.Cmd{loadLandCmd(m.b, m.stl, nil), tickCmd(m.refreshEvery())}
 	if m.tui.Fetch > 0 {
 		cmds = append(cmds, m.fetchBegin(true), m.armFetch())
 	}
@@ -224,7 +227,7 @@ func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.land != nil {
 			m.landOn(*msg.land)
 		}
-		return m, nil
+		return m, m.autoBackfill()
 	case detailMsg:
 		m.detailLoaded(msg)
 		return m, nil

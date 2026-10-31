@@ -13,16 +13,18 @@ import (
 
 // ghsaAdvisory is one entry of the GitHub advisories REST answer.
 type ghsaAdvisory struct {
-	GHSAID      string  `json:"ghsa_id"`
-	CVEID       *string `json:"cve_id"`
-	Summary     string  `json:"summary"`
-	Description string  `json:"description"`
-	Severity    string  `json:"severity"`
-	HTMLURL     string  `json:"html_url"`
-	PublishedAt string  `json:"published_at"`
-	CVSS        struct {
-		Score float64 `json:"score"`
-	} `json:"cvss"`
+	GHSAID      string    `json:"ghsa_id"`
+	CVEID       *string   `json:"cve_id"`
+	Summary     string    `json:"summary"`
+	Description string    `json:"description"`
+	Severity    string    `json:"severity"`
+	HTMLURL     string    `json:"html_url"`
+	PublishedAt string    `json:"published_at"`
+	CVSS        ghsaScore `json:"cvss"` // the older single score, normally the 3.x one
+	CVSSLevels  struct {
+		V3 ghsaScore `json:"cvss_v3"`
+		V4 ghsaScore `json:"cvss_v4"`
+	} `json:"cvss_severities"`
 	Vulnerabilities []struct {
 		Package *struct {
 			Ecosystem string `json:"ecosystem"`
@@ -32,6 +34,11 @@ type ghsaAdvisory struct {
 		// FirstPatched is a plain string or an object with an identifier.
 		FirstPatched json.RawMessage `json:"first_patched_version"`
 	} `json:"vulnerabilities"`
+}
+
+type ghsaScore struct {
+	Score  float64 `json:"score"`
+	Vector string  `json:"vector_string"`
 }
 
 func parseGHSA(body []byte, src model.Source, _ time.Time) ([]model.Item, error) {
@@ -48,16 +55,16 @@ func parseGHSA(body []byte, src model.Source, _ time.Time) ([]model.Item, error)
 		ids = append(ids, a.GHSAID)
 
 		affected, fixes := a.affected(src.ID)
-		it, ok := finish(src.ID, model.Item{
+		it := model.Item{
 			Title:     a.Summary,
 			URL:       a.HTMLURL,
 			Summary:   firstNonEmpty(a.Description, a.Summary),
 			Affected:  affected,
 			Fixes:     fixes,
 			Published: parseTime(a.PublishedAt),
-			Severity:  severityOf(a.Severity, a.CVSS.Score),
-			CVSS:      a.CVSS.Score,
-		}, ids...)
+		}
+		rate(&it, a.rating(), a.Severity)
+		it, ok := finish(src.ID, it, ids...)
 		if ok {
 			items = append(items, it)
 		}

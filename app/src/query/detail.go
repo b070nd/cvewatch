@@ -3,6 +3,7 @@ package query
 import (
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,6 +28,31 @@ type Link struct {
 	Title  string    `json:"title,omitempty"`
 	URL    string    `json:"url"`
 	Time   time.Time `json:"time,omitzero"`
+}
+
+// CVSSText words the score with its version, e.g. "9.8 (v3.1)"; empty without a score.
+func (i Issue) CVSSText() string {
+	if i.CVSS <= 0 {
+		return ""
+	}
+	s := strconv.FormatFloat(i.CVSS, 'f', 1, 64)
+	if i.CVSSVersion != "" {
+		s += " (v" + i.CVSSVersion + ")"
+	}
+	return s
+}
+
+// CVSSOrigin words the vector and who scored, e.g. "CVSS:3.1/AV:N/... from nvd"; empty when neither is known.
+func (i Issue) CVSSOrigin() string {
+	switch {
+	case i.CVSSVector != "" && i.CVSSSource != "":
+		return i.CVSSVector + " from " + i.CVSSSource
+	case i.CVSSVector != "":
+		return i.CVSSVector
+	case i.CVSSSource != "":
+		return "from " + i.CVSSSource
+	}
+	return ""
 }
 
 // SafeLink reports whether raw is a plain http(s) URL with a host and no
@@ -62,8 +88,6 @@ type HistoryEntry struct {
 // Detail is everything shown about one issue: the Issue, which the JSON
 // exports carry, and the facts only a full page needs. The markdown report
 // and the terminal page both draw from it.
-//
-// The model holds no CVSS vector, only the base score in Issue.CVSS.
 type Detail struct {
 	Issue    Issue
 	Why      []string       // why it ranks where it does, from our own data

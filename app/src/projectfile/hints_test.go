@@ -2,6 +2,7 @@ package projectfile
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -122,5 +123,50 @@ func TestHintsAboutEnvironments(t *testing.T) {
 	hs = hintsOf(t, "name: a\nenvs: [local, production]\nsince: 2026-01-01\ntechs:\n  - {name: mysql, version: \"8\"}\n", HintOptions{})
 	if len(hs) != 0 {
 		t.Fatalf("production counts as prod: %+v", hs)
+	}
+}
+
+func TestKernelTermsGetARenameFixAndSuggestions(t *testing.T) {
+	cat := catalog.New([]model.Tech{
+		{Name: "linux-kernel", Title: "Linux kernel", Aliases: []string{"linux kernel", "ubuntu kernel", "debian kernel"}, CPE: []string{"linux:linux_kernel"}},
+		{Name: "ubuntu", Title: "Ubuntu", Aliases: []string{"ubuntu linux", "ubuntu"}},
+		{Name: "debian", Title: "Debian", Aliases: []string{"debian linux", "debian"}},
+	})
+	src := "name: shop\nenvs: [prod]\nsince: 2026-01-01\ntechs:\n  - {name: ubuntu kernel, version: \"6.12.85+\"}\n  - {name: kernal, version: \"6.1\"}\n  - {name: linux, version: \"6.1\"}\n"
+	f := mustParse(t, src)
+	issues := f.ValidateCatalog(cat)
+	for i, want := range []string{"linux-kernel", "linux-kernel", ""} {
+		field := "techs[" + string(rune('0'+i)) + "]"
+		var got *Issue
+		for j := range issues {
+			if issues[j].Field == field {
+				got = &issues[j]
+			}
+		}
+		switch {
+		case got == nil:
+			t.Fatalf("%s: no issue in %+v", field, issues)
+		case want == "" && len(got.Fixes) != 0:
+			t.Errorf("%s is ambiguous, but has fixes %+v", field, got.Fixes)
+		case want != "" && (len(got.Fixes) != 1 || !strings.Contains(got.Fixes[0].Label, "use technology name \""+want+"\"")):
+			t.Errorf("%s: %+v", field, got)
+		}
+	}
+	if err := f.Apply(issues[0].Fixes[0].Ops...); err != nil {
+		t.Fatal(err)
+	}
+	var renamed model.ProjectTech
+	for _, pt := range f.Project().Techs {
+		if pt.Name == "linux-kernel" {
+			renamed = pt
+		}
+	}
+	if renamed.Version != "6.12.85+" {
+		t.Fatalf("rename keeps the version: %+v", f.Project().Techs)
+	}
+
+	h, ok := hintAt(hintsOf(t, src, HintOptions{Catalog: cat}), "techs[0]", "not in the catalog")
+	if !ok || len(h.Suggest) == 0 || h.Suggest[0] != "linux-kernel" || !slices.Contains(h.Suggest, "ubuntu") {
+		t.Fatalf("hint: %+v", h)
 	}
 }

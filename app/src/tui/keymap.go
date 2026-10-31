@@ -108,7 +108,7 @@ func bindReturn(level string) binding {
 }
 
 func rootBinds(own ...binding) []binding {
-	return append(append(own, bindScreens(), bindTabs(), bindJump(), bindClearScope(), bindClearTime(), bindRefresh(), bindFetch(), bindHelp()), bindQuit())
+	return append(append(own, bindScreens(), bindTabs(), bindJump(), bindClearScope(), bindClearTime(), bindRefresh(), bindFetch(), bindRevalidate(), bindHelp()), bindQuit())
 }
 
 func viewportOf(get func(m *app) *viewport) func(m *app, key string) bool {
@@ -242,7 +242,7 @@ func init() {
 			binding{keys: ks("N"), alias: true, help: "new empty project: a name and its environments, no folder needed", do: plain((*app).newProject)},
 			binding{keys: ks("d"), help: "add a project from a folder or a Dockerfile: it is scanned and proposals are offered", short: "scan", prio: 3, do: plain((*app).scanFolder)},
 			binding{keys: ks("x", "f"), disp: "x", help: "fix the selected problem: shows the change to the file, enter or y applies it", short: "fix", prio: 2, do: plain((*app).startFix)},
-			binding{keys: ks("E", "o"), disp: "E", help: "open the project's file in $EDITOR (also when it is broken), then reload", short: "editor", prio: 3, do: plain((*app).openEditor)},
+			binding{keys: ks("E", "o"), disp: "E", help: "open the project's file in your editor (also when it is broken), then reload", short: "editor", prio: 3, do: plain((*app).openEditor)},
 			binding{keys: ks("p", "P"), alias: true, help: "next or previous problem of the project", do: (*app).stepProblem},
 			binding{keys: ks("i"), help: "the issues of this project: the findings screen filtered by it", short: "issues", prio: 2, do: plain((*app).goFindings)},
 			binding{keys: ks("R"), help: "rename the project: its findings and access rules follow the new name", short: "rename", prio: 4, do: lifeKey(ops.VerbRename)},
@@ -265,7 +265,7 @@ func init() {
 			{keys: ks("c"), help: "edit the project's fields directly: environments, technologies, lockfiles, differences per environment, since", short: "fields", prio: 1, do: plain((*app).openFields)},
 			{keys: ks("H"), help: "work through the hints of the project: unknown technologies, missing versions or lockfiles, environments; each one can be acted on", short: "hints", prio: 2, when: hasHints, do: plain((*app).openHints)},
 			{keys: ks("e"), help: "edit the project step by step in a guided form (to change one field directly, press c)", short: "guided edit", prio: 4, do: plain((*app).editProject)},
-			{keys: ks("E", "o"), disp: "E", help: "open the project's file in $EDITOR (also when it is broken), then reload", short: "editor", prio: 3, do: plain((*app).openEditor)},
+			{keys: ks("E", "o"), disp: "E", help: "open the project's file in your editor (also when it is broken), then reload", short: "editor", prio: 3, do: plain((*app).openEditor)},
 			{keys: ks("R"), help: "rename the project: its findings and access rules follow the new name", short: "rename", prio: 4, do: lifeKey(ops.VerbRename)},
 			{keys: ks("D"), help: "duplicate the project under another name", short: "duplicate", prio: 5, do: lifeKey(ops.VerbDuplicate)},
 			{keys: ks("X"), alias: true, help: "delete the project", do: lifeKey(ops.VerbDelete)},
@@ -283,7 +283,7 @@ func init() {
 				m.prj.deep = false
 				return nil
 			}),
-			bindJump(), bindClearScope(), bindRefresh(), bindFetch(), bindTabs(), bindHelp(),
+			bindJump(), bindClearScope(), bindRefresh(), bindFetch(), bindRevalidate(), bindTabs(), bindHelp(),
 		}}
 	mo.projectIssues = &mode{name: "project issues", title: "Keys in the security issues of a project", level: true,
 		move:      viewportOf(func(m *app) *viewport { return &m.prj.sec.vp }),
@@ -439,6 +439,8 @@ func init() {
 		}}
 	mo.notice = &mode{name: "notice", title: "Keys in a message", modal: true,
 		binds: []binding{
+			{keys: ks("y", "Y", "enter"), disp: "y/enter", help: "when the message offers a change, apply it (esc leaves it)", short: "apply", when: func(m *app) bool { return m.nt != nil && m.nt.yes != nil },
+				do: plain(func(m *app) tea.Cmd { n := m.nt; m.nt = nil; return n.yes(m) })},
 			{keys: ks("enter", "esc", "q", "left", "h", "backspace"), disp: "enter/esc", help: "close the message", short: "close", do: plain(func(m *app) tea.Cmd { m.nt = nil; return nil })},
 			bindHelp(),
 		}}

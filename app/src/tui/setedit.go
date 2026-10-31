@@ -719,7 +719,7 @@ func (s *settingsState) editorTarget() (id, file string, line int, why string) {
 	return id, path, line, ""
 }
 
-// openSettingsEditor opens the file of the selected row in $EDITOR, then reads
+// openSettingsEditor opens the file of the selected row in the editor, then reads
 // the settings again. A broken file can only be repaired this way.
 func (m *app) openSettingsEditor() tea.Cmd {
 	s := &m.set

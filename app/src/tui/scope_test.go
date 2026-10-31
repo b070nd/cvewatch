@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"regexp"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"github.com/b070nd/cvewatch/app/src/ledger"
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/ops"
+	"github.com/b070nd/cvewatch/app/src/pipeline"
 	"github.com/b070nd/cvewatch/app/src/query"
 )
 
@@ -177,6 +179,9 @@ func TestScopeIsDroppedWhenItsProjectIsGone(t *testing.T) {
 	d.press("2")
 	d.want("1 of 1 open issues")
 
+	b.backfillFn = func(context.Context, func(ops.RefreshProgress)) (pipeline.Result, error) {
+		return pipeline.Result{}, nil
+	}
 	b.cfg.Projects = b.cfg.Projects[:1] // mw is deleted
 	d.press("r")
 	a := d.m.(*app)

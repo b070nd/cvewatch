@@ -515,6 +515,8 @@ type Item struct {
 	TitleOnly  bool // tech matching ignores the summary (set from Source.MatchTitleOnly)
 	// StructuredOnly: techs with CPE names ignore text and need product data (Source.MatchStructured).
 	StructuredOnly bool
+	// The rest of the rating next to CVSS: its version, vector and who scored (see Rating).
+	CVSSVersion, CVSSVector, CVSSSource string
 }
 
 // Keys are the identities used for deduplication. Items without any
@@ -583,6 +585,27 @@ type Validators struct {
 type FeedState struct {
 	Validators Validators `json:"validators"`
 	LastRun    time.Time  `json:"last_run"` // last successful fetch
+	// Covered is the earliest start of a window this source was asked for;
+	// zero when unknown. Backfill is a date the next fetch must reach back to,
+	// set when a config change needs older items; a successful fetch clears it.
+	Covered  time.Time `json:"covered,omitempty"`
+	Backfill time.Time `json:"backfill,omitempty"`
+}
+
+// Judging records what the findings were last judged against: a hash of every
+// input of the judgement, and per project enough to tell what changed.
+type Judging struct {
+	At       time.Time                `json:"at"`
+	Hash     string                   `json:"hash"`
+	Horizon  string                   `json:"horizon,omitempty"`
+	Projects map[string]JudgedProject `json:"projects,omitempty"`
+}
+
+// JudgedProject is one project's part of a Judging.
+type JudgedProject struct {
+	Hash  string    `json:"hash"`
+	Since time.Time `json:"since,omitempty"`
+	Techs []string  `json:"techs,omitempty"` // lower-case names over every environment
 }
 
 // Ref kinds: news-style reports versus authoritative advisory databases.
@@ -612,21 +635,25 @@ type Ref struct {
 // Vulnerability is the deduplicated record. Techs is frozen at first
 // evaluation: later config changes never rewrite history.
 type Vulnerability struct {
-	ID         string     `json:"id"`
-	Aliases    []string   `json:"aliases,omitempty"`
-	Title      string     `json:"title"`
-	Summary    string     `json:"summary"`
-	Severity   Severity   `json:"severity"`
-	CVSS       float64    `json:"cvss,omitempty"`
-	Published  time.Time  `json:"published"`
-	FirstSeen  time.Time  `json:"first_seen"`
-	Refs       []Ref      `json:"refs"`
-	Affected   []Affected `json:"affected,omitempty"`
-	Fixes      []Fix      `json:"fixes,omitempty"`
-	KEV        *KEV       `json:"kev,omitempty"`
-	EPSS       *EPSS      `json:"epss,omitempty"`
-	Techs      []string   `json:"techs,omitempty"` // matched at evaluation time
-	ReportPath string     `json:"report_path,omitempty"`
+	ID          string     `json:"id"`
+	Aliases     []string   `json:"aliases,omitempty"`
+	Title       string     `json:"title"`
+	Summary     string     `json:"summary"`
+	Severity    Severity   `json:"severity"`
+	CVSS        float64    `json:"cvss,omitempty"`
+	CVSSVersion string     `json:"cvss_version,omitempty"` // 2.0, 3.0, 3.1 or 4.0; empty when the source did not say
+	CVSSVector  string     `json:"cvss_vector,omitempty"`
+	CVSSSource  string     `json:"cvss_source,omitempty"` // who scored: see the Score* labels
+	CVSSChecked time.Time  `json:"cvss_checked,omitzero"` // when the unrated enrichment last looked this up
+	Published   time.Time  `json:"published"`
+	FirstSeen   time.Time  `json:"first_seen"`
+	Refs        []Ref      `json:"refs"`
+	Affected    []Affected `json:"affected,omitempty"`
+	Fixes       []Fix      `json:"fixes,omitempty"`
+	KEV         *KEV       `json:"kev,omitempty"`
+	EPSS        *EPSS      `json:"epss,omitempty"`
+	Techs       []string   `json:"techs,omitempty"` // matched at evaluation time
+	ReportPath  string     `json:"report_path,omitempty"`
 }
 
 func (v *Vulnerability) Keys() []string { return append([]string{v.ID}, v.Aliases...) }
@@ -638,7 +665,8 @@ type Finding struct {
 	Env       Env           `json:"env"`
 	Status    Status        `json:"status"`
 	Note      string        `json:"note,omitempty"`
-	Matched   []string      `json:"matched"` // "php@8.2", "symfony/http-kernel@6.4.1"
+	Auto      bool          `json:"auto,omitempty"` // the status was set by cvewatch itself (project since date); a person's change clears it
+	Matched   []string      `json:"matched"`        // "php@8.2", "symfony/http-kernel@6.4.1"
 	Installed []Installed   `json:"installed,omitempty"`
 	Applies   Applicability `json:"applies,omitempty"` // whether the installed version is in the affected range
 	Reasons   []string      `json:"reasons,omitempty"` // why this finding exists, in plain words

@@ -334,7 +334,7 @@ func TestProjectProblemsHaveRealNavigation(t *testing.T) {
 func TestProjectKeyAliasesStillWork(t *testing.T) {
 	b := newFake(t, nil)
 	writeProjectFile(t, b.cfg.Root, "shop", shopWithProblems)
-	t.Setenv("EDITOR", "")
+	noEditor(t)
 	d := start(t, b, Options{})
 	d.press("3", "p")
 	d.want("> warning")
@@ -343,7 +343,7 @@ func TestProjectKeyAliasesStillWork(t *testing.T) {
 	d.press("f")
 	d.want("Apply this fix?")
 	d.press("esc", "o")
-	if f := d.m.(*app).flash; !strings.Contains(f, "$EDITOR is not set") {
+	if f := d.m.(*app).flash; !strings.Contains(f, "no editor found") {
 		t.Fatalf("o still opens the editor: %q", f)
 	}
 	d.press("n")

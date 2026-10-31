@@ -573,6 +573,9 @@ func TestShippedTemplatesEditCleanly(t *testing.T) {
 
 func TestTUISettingsAreEditableAndChecked(t *testing.T) {
 	root := t.TempDir()
+	if f, ok := Lookup(KindSettings, "tui.editor"); !ok || f.Type != TypeString || f.Default != "" || !strings.Contains(f.Help, "VISUAL") {
+		t.Fatalf("tui.editor: %+v", f)
+	}
 	f, ok := Lookup(KindSettings, "tui.refresh")
 	if !ok || f.Default != "30s" || f.Type != TypeDuration || f.Min == nil || *f.Min != 1 {
 		t.Fatalf("tui.refresh: %+v", f)
@@ -596,6 +599,16 @@ func TestTUISettingsAreEditableAndChecked(t *testing.T) {
 	}
 	if got := text(t, c, IDSettings); !strings.Contains(got, "refresh: 5s") || !strings.Contains(got, "fetch: 0s") {
 		t.Fatalf("\n%s", got)
+	}
+	c = mustWith(t, c, Edit{Op: OpSet, Path: "tui.editor", Value: "code --wait"})
+	if r := c.Validate(); r.Blocked() {
+		t.Fatalf("a valid editor must pass the loader: %+v", r.Issues)
+	}
+	if got := text(t, c, IDSettings); !strings.Contains(got, "editor: code --wait") {
+		t.Fatalf("\n%s", got)
+	}
+	if blank := mustWith(t, s, Edit{Op: OpSet, Path: "tui.editor", Value: "  "}); !blank.Validate().Blocked() {
+		t.Fatal("a blank editor must be refused")
 	}
 }
 

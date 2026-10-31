@@ -53,7 +53,7 @@ func (fx *fixState) settle(m *app) tea.Cmd {
 	if fx.land == "" {
 		return nil
 	}
-	return loadLandCmd(m.b, &landing{project: fx.land})
+	return loadLandCmd(m.b, m.stl, &landing{project: fx.land})
 }
 
 // The fields of a project file the editor changes.
@@ -720,7 +720,7 @@ func (m *app) editPrompt(p projectRow, title, hint string, fields []field, build
 func (m *app) promptSince(p projectRow) {
 	f := field{label: "Since"}
 	f.in.set(p.Since)
-	m.editPrompt(p, "Since date of "+p.Name, "a day, YYYY-MM-DD: vulnerabilities published before it are not checked; empty clears it", []field{f},
+	m.editPrompt(p, "Since date of "+p.Name, "a day, YYYY-MM-DD: older advisories are ignored and their open findings close; an earlier day fetches and reopens them", []field{f},
 		func(v []string) (string, []projectfile.Op, error) {
 			label := "set since to " + v[0]
 			if v[0] == "" {

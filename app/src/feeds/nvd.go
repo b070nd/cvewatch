@@ -38,6 +38,7 @@ type nvdCVE struct {
 		V31 []nvdMetric `json:"cvssMetricV31"`
 		V40 []nvdMetric `json:"cvssMetricV40"`
 		V30 []nvdMetric `json:"cvssMetricV30"`
+		V2  []nvdMetric `json:"cvssMetricV2"`
 	} `json:"metrics"`
 }
 
@@ -51,7 +52,11 @@ type nvdCPEMatch struct {
 }
 
 type nvdMetric struct {
-	CVSSData struct {
+	Type         string `json:"type"`         // Primary is NVD's own analysis, Secondary a CNA's score
+	BaseSeverity string `json:"baseSeverity"` // CVSS 2.0 keeps its label here, the others inside cvssData
+	CVSSData     struct {
+		Version      string  `json:"version"`
+		VectorString string  `json:"vectorString"`
 		BaseScore    float64 `json:"baseScore"`
 		BaseSeverity string  `json:"baseSeverity"`
 	} `json:"cvssData"`
@@ -80,17 +85,17 @@ func (c nvdCVE) item(srcID string) (model.Item, bool) {
 	if s := firstSentence(plain(desc)); s != "" {
 		title += ": " + s
 	}
-	m := c.metric()
-	return finish(srcID, model.Item{
+	it := model.Item{
 		Title:     title,
 		URL:       "https://nvd.nist.gov/vuln/detail/" + c.ID,
 		Summary:   desc,
 		Affected:  c.affected(),
 		Fixes:     c.fixes(srcID),
 		Published: parseTime(c.Published),
-		Severity:  severityOf(m.CVSSData.BaseSeverity, m.CVSSData.BaseScore),
-		CVSS:      m.CVSSData.BaseScore,
-	}, c.ID)
+	}
+	r, label := c.rating()
+	rate(&it, r, label)
+	return finish(srcID, it, c.ID)
 }
 
 func (c nvdCVE) description() string {
@@ -100,16 +105,6 @@ func (c nvdCVE) description() string {
 		}
 	}
 	return ""
-}
-
-// metric returns the first available CVSS metric, newest v3.x first.
-func (c nvdCVE) metric() nvdMetric {
-	for _, list := range [][]nvdMetric{c.Metrics.V31, c.Metrics.V40, c.Metrics.V30} {
-		if len(list) > 0 {
-			return list[0]
-		}
-	}
-	return nvdMetric{}
 }
 
 // firstSentence cuts s after the first period that is followed by a space.

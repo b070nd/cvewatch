@@ -277,6 +277,25 @@ func TestCheckAttributesTUIIssuesToTheirKeys(t *testing.T) {
 	}
 }
 
+func TestTUIEditorIsOptionalAndNotBlank(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, "config/config.yaml", "tui:\n  editor: code --wait\n")
+	if b, err := Load(root); err != nil || b.TUI.Editor != "code --wait" || LoadTUI(root).Editor != "code --wait" {
+		t.Fatalf("editor %+v %v", b.TUI, err)
+	}
+	put(t, root, "config/config.yaml", "tui:\n  editor: \"   \"\n")
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "tui.editor") {
+		t.Fatalf("a blank editor is refused: %v", err)
+	}
+	if got := LoadTUI(root); got != Defaults().TUI {
+		t.Fatalf("the interface still starts: %+v", got)
+	}
+	put(t, root, "config/config.yaml", "tui:\n  editor: \"\"\n")
+	if _, err := Load(root); err != nil {
+		t.Fatalf("empty means not set: %v", err)
+	}
+}
+
 func TestLoadTUIFallsBackPerValue(t *testing.T) {
 	root := t.TempDir()
 	if got := LoadTUI(root); got != Defaults().TUI {

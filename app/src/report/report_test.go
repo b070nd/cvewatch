@@ -122,3 +122,19 @@ func TestDigestFlagsKEVEPSSAndOverdue(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderDetailNamesTheScoreVersionAndVector(t *testing.T) {
+	v := &model.Vulnerability{ID: "CVE-1", Title: "Bug", Severity: model.SevCritical, Published: now.Add(-time.Hour),
+		CVSS: 9.3, CVSSVersion: model.CVSS40, CVSSVector: "CVSS:4.0/AV:N/AC:L", CVSSSource: model.ScoreCNA}
+	out := RenderDetail(query.DetailOf(v, nil, now))
+	for _, want := range []string{"**CVSS:** 9.3 (v4.0)", "**CVSS detail:** CVSS:4.0/AV:N/AC:L from cna"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	v.CVSSVersion, v.CVSSVector, v.CVSSSource = "", "", ""
+	out = RenderDetail(query.DetailOf(v, nil, now))
+	if !strings.Contains(out, "**CVSS:** 9.3\n") || strings.Contains(out, "CVSS detail") {
+		t.Errorf("an old score prints as before:\n%s", out)
+	}
+}

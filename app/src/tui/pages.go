@@ -141,12 +141,17 @@ func (m *app) clickPage(line int) tea.Cmd {
 
 // notice is a popup that shows a text in full until it is closed.
 type notice struct {
-	title string
-	text  string
+	title   string
+	text    string
+	yes     func(m *app) tea.Cmd // when set, y or enter does this and esc only closes
+	yesWord string               // what y does, for the last line
 }
 
 func (n *notice) view(w int) []string {
 	out := []string{stBold.Render(trunc(oneLine(n.title), w))}
 	out = append(out, clip(indentWrap("  ", oneLine(n.text), w), 6)...)
+	if n.yes != nil {
+		return append(out, stMuted.Render(trunc("  y or enter: "+n.yesWord+"   esc: cancel", w)))
+	}
 	return append(out, stMuted.Render(trunc("  enter or esc: close", w)))
 }

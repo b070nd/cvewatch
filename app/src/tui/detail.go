@@ -71,7 +71,7 @@ func (d *detail) build(w int) *detailLayout {
 
 	head := []string{stBold.Render(oneLine(is.ID)), sevTag(is.Severity)}
 	if is.CVSS > 0 {
-		head = append(head, fmt.Sprintf("CVSS %.1f", is.CVSS))
+		head = append(head, "CVSS "+is.CVSSText())
 	}
 	if is.KEV != nil {
 		head = append(head, stFlag.Render("KEV"))
@@ -95,6 +95,9 @@ func (d *detail) build(w int) *detailLayout {
 		meta += "  aliases " + oneLine(strings.Join(is.Aliases, ", "))
 	}
 	add(stMuted.Render(trunc(meta, w)))
+	if o := is.CVSSOrigin(); o != "" {
+		add(indentWrap("cvss: ", o, w)...)
+	}
 	if facts := exploitFacts(is); facts != "" {
 		add(indentWrap("exploitation: ", facts, w)...)
 	}

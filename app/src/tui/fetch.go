@@ -20,6 +20,15 @@ var fetchSpin = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧",
 // interface in the same phase; a new phase always gets through.
 var fetchThrottle = 250 * time.Millisecond
 
+// jobKind says what a background job does: fetch the feeds, or judge the
+// findings again and fetch only what that needs.
+type jobKind uint8
+
+const (
+	jobFetch jobKind = iota
+	jobBackfill
+)
+
 type (
 	tuiMsg           struct{ set config.TUI }
 	fetchDueMsg      struct{}
@@ -34,6 +43,8 @@ type (
 // fetchJob is one run in the background. report is called from the pipeline's
 // goroutines and never waits: it keeps the latest step and wakes wait.
 type fetchJob struct {
+	kind     jobKind
+	auto     bool // started by the program, not by a key
 	cancel   context.CancelFunc
 	sig      chan struct{} // holds at most one wake-up
 	finished chan struct{} // closed when Backend.Fetch has returned
@@ -107,6 +118,9 @@ func (s *fetchState) cell() string {
 		return ""
 	}
 	spin := fetchSpin[s.spin%len(fetchSpin)]
+	if s.job.kind == jobBackfill && s.prog.Phase == "" {
+		return "revalidating " + spin
+	}
 	switch s.prog.Phase {
 	case pipeline.PhaseProcess:
 		return "matching " + spin
@@ -117,8 +131,17 @@ func (s *fetchState) cell() string {
 	case pipeline.PhaseAlert:
 		return "alerting " + spin
 	}
-	if s.prog.Total > 0 {
+	switch {
+	case s.prog.Chunks > 0 && s.prog.Chunk > 0:
+		return fmt.Sprintf("back-fill %d/%d %s", s.prog.Chunk, s.prog.Chunks, spin)
+	case s.prog.Chunk > 0:
+		return fmt.Sprintf("back-fill %d %s", s.prog.Chunk, spin)
+	case s.prog.Total > 0 && s.job.kind == jobBackfill:
+		return fmt.Sprintf("back-fill %d/%d %s", s.prog.Done, s.prog.Total, spin)
+	case s.prog.Total > 0:
 		return fmt.Sprintf("fetch %d/%d %s", s.prog.Done, s.prog.Total, spin)
+	case s.job.kind == jobBackfill:
+		return "back-fill " + spin
 	}
 	return "fetch " + spin
 }
@@ -147,9 +170,17 @@ func (m *app) armFetch() tea.Cmd {
 // fetchBegin starts a fetch in the background unless one is running. The
 // interface keeps reading the ledger meanwhile; the run holds the store only
 // inside Backend.Fetch.
-func (m *app) fetchBegin(auto bool) tea.Cmd {
-	if m.fet.job != nil {
-		if !auto {
+func (m *app) fetchBegin(auto bool) tea.Cmd { return m.jobBegin(jobFetch, auto) }
+
+// jobBegin starts a fetch or a back-fill; there is one job at a time and the
+// header cell shows it.
+func (m *app) jobBegin(kind jobKind, auto bool) tea.Cmd {
+	if j := m.fet.job; j != nil {
+		switch {
+		case auto:
+		case j.kind == jobBackfill:
+			m.note("revalidating already; the header shows the progress")
+		default:
 			m.note("a fetch is already running")
 		}
 		return nil
@@ -159,11 +190,22 @@ func (m *app) fetchBegin(auto bool) tea.Cmd {
 	}
 	ctx, cancel := context.WithCancel(m.ctx)
 	j := newFetchJob(cancel)
-	m.fet.job, m.fet.prog, m.fet.spin, m.fet.failed = j, pipeline.Progress{Phase: pipeline.PhaseFetch}, 0, nil
+	j.kind, j.auto = kind, auto
+	first := pipeline.Progress{Phase: pipeline.PhaseFetch}
+	if kind == jobBackfill {
+		first = pipeline.Progress{} // judging again comes first and reports nothing
+	}
+	m.fet.job, m.fet.prog, m.fet.spin, m.fet.failed = j, first, 0, nil
 	b := m.b
 	run := func() tea.Msg {
 		defer close(j.finished)
-		res, err := b.Fetch(ctx, j.report)
+		var res pipeline.Result
+		var err error
+		if kind == jobBackfill {
+			res, err = b.Backfill(ctx, j.report)
+		} else {
+			res, err = b.Fetch(ctx, j.report)
+		}
 		cancel()
 		return fetchDoneMsg{job: j, res: res, err: err}
 	}
@@ -202,6 +244,10 @@ func (m *app) fetchDone(msg fetchDoneMsg) tea.Cmd {
 		return nil
 	}
 	m.fet.job, m.fet.prog = nil, pipeline.Progress{}
+	if msg.job.kind == jobBackfill {
+		return m.backfillDone(msg)
+	}
+	m.stl.invalidate() // the cycle judged the findings again first
 	switch {
 	case errors.Is(msg.err, ErrBusy):
 		if m.tui.Fetch > 0 {
@@ -224,6 +270,9 @@ func (m *app) fetchDone(msg fetchDoneMsg) tea.Cmd {
 	case n > 1:
 		note += fmt.Sprintf(", %d sources failed", n)
 	}
+	if rv := msg.res.Revalidation; rv != nil && rv.Applied {
+		note += "; revalidated " + m.revalWords(*rv, 0)
+	}
 	m.say(note)
 	return m.refresh(reList | reDetail)
 }
@@ -245,6 +294,9 @@ func (m *app) fetchClick(msg tea.MouseMsg) (tea.Cmd, bool) {
 func (m *app) fetchDetails() *notice {
 	if j := m.fet.job; j != nil {
 		_, failed := j.snapshot()
+		if j.kind == jobBackfill {
+			return &notice{title: "Revalidating", text: "The findings are being judged again against the projects, technologies and since dates, and the sources reach back for what that needs; the screens keep working. " + strings.TrimSpace(m.fet.cell()) + "."}
+		}
 		text := "The feeds are being fetched in the background; the screens keep working. " + strings.TrimSpace(m.fet.cell()) + "."
 		if len(failed) > 0 {
 			text += " Failed so far: " + strings.Join(failed, ", ") + "."

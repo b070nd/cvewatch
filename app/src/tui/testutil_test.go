@@ -16,6 +16,7 @@ import (
 
 	"github.com/b070nd/cvewatch/app/src/catalog"
 	"github.com/b070nd/cvewatch/app/src/config"
+	"github.com/b070nd/cvewatch/app/src/inventory"
 	"github.com/b070nd/cvewatch/app/src/ledger"
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/ops"
@@ -47,6 +48,9 @@ type fake struct {
 	disk     string       // when set, every session loads the configuration from this folder, like the real backend
 	fetches  int          // Fetch calls started
 	fetchFn  func(context.Context, func(ops.RefreshProgress)) (pipeline.Result, error)
+
+	backfills  int // Backfill calls started
+	backfillFn func(context.Context, func(ops.RefreshProgress)) (pipeline.Result, error)
 }
 
 func (f *fake) busy() bool { return f.active.Load() > 0 }
@@ -132,6 +136,37 @@ func (f *fake) Fetch(ctx context.Context, progress func(ops.RefreshProgress)) (p
 	return s.RefreshWith(ctx, progress)
 }
 
+// Backfill is Fetch for the quick run after a change: no sources, so no
+// network; a test may script the whole call through backfillFn.
+func (f *fake) Backfill(ctx context.Context, progress func(ops.RefreshProgress)) (pipeline.Result, error) {
+	f.active.Add(1)
+	defer f.active.Add(-1)
+	f.mu.Lock()
+	f.backfills++
+	fn := f.backfillFn
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, progress)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s, err := f.session(true)
+	if err != nil {
+		return pipeline.Result{}, err
+	}
+	defer s.Close()
+	cfg := *s.Cfg
+	cfg.Sources = nil
+	s.Cfg = &cfg
+	return s.Backfill(ctx, progress)
+}
+
+func (f *fake) backfilled() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.backfills
+}
+
 func (f *fake) TUISettings() config.TUI {
 	if f.disk != "" {
 		return config.LoadTUI(f.disk)
@@ -201,7 +236,23 @@ func newFake(t *testing.T, st store.Storage) *fake {
 	if st == nil {
 		st = seed(t, nil)
 	}
+	markJudged(t, cfg, st)
 	return &fake{cfg: cfg, st: st}
+}
+
+// markJudged records that the findings were judged against cfg, so a fresh
+// fake is not stale and nothing revalidates by itself.
+func markJudged(t *testing.T, cfg *config.Bundle, st store.Storage) {
+	t.Helper()
+	state, err := st.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := ledger.New(state)
+	l.SetJudged(inventory.Load(cfg).Within(cfg.Horizon, tNow).Judging(cfg, tNow))
+	if err := st.Save(l.State()); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // driver feeds messages to the model and runs the commands it returns by

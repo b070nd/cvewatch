@@ -196,7 +196,9 @@ func TestQuit(t *testing.T) {
 func TestHelpToggle(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
 	d.press("2", "?")
-	d.want("Keys on the findings screen", "open the selected issue", "Everywhere", "NO_COLOR")
+	d.want("Keys on the findings screen", "open the selected issue", "Everywhere")
+	d.press("end")
+	d.want("NO_COLOR")
 	d.press("?")
 	d.want("3 of 3 open issues")
 	d.press("?", "esc")
