@@ -2,8 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"maps"
-	"slices"
 	"strings"
 	"time"
 
@@ -96,25 +94,15 @@ func (m *app) overviewHead(w, h int) []string {
 	}
 	blocks = append(blocks, summaryBlock{3, []string{"  by severity  " + strings.Join(sev, "  ")}})
 
-	most = 0
-	for _, n := range c.ByEnv {
-		most = max(most, n)
-	}
-	var envs []string
-	inUse := maps.Clone(c.ByEnv) // the environments of the projects in scope, and any a finding names
+	var inScope []model.Env // the environments of the projects in scope; findings may name more
 	for _, p := range sn.Projects {
 		if m.scope == "" || p.Name == m.scope {
 			for _, e := range p.Envs {
-				if _, ok := inUse[model.Env(e)]; !ok {
-					inUse[model.Env(e)] = 0
-				}
+				inScope = append(inScope, model.Env(e))
 			}
 		}
 	}
-	for _, e := range slices.SortedFunc(maps.Keys(inUse), model.EnvCompare) {
-		envs = append(envs, fmt.Sprintf("%s %d %s", e, c.ByEnv[e], bar(c.ByEnv[e], most, barW)))
-	}
-	blocks = append(blocks, summaryBlock{4, []string{"  by environment  " + strings.Join(envs, "  ")}})
+	blocks = append(blocks, summaryBlock{4, []string{trunc("  by environment  "+envSummary(c.ByEnv, inScope, barW), w)}})
 
 	var warns []string
 	warns = append(warns, rep.Warnings...)
@@ -156,7 +144,7 @@ func overviewBody(m *app, w, h int) []string {
 		start, end := m.txt[scrOverview].window(room)
 		return append(head, m.page(scrOverview, w).view(start, end, m.pageSel[scrOverview].at())...)
 	}
-	return append(head, renderFindings(len(m.dataIssues()), &m.ovw.issueList, m.noneText(), w, room)...)
+	return append(head, renderFindings(len(m.dataIssues()), &m.ovw.issueList, m.noneText(), m.data.monitored(), w, room)...)
 }
 
 func overviewLayout(m *app, w, h int) {

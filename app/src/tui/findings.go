@@ -273,27 +273,7 @@ func (m *app) findingsBody(w, h int) []string {
 		}
 		return d.view(w, h)
 	}
-	return renderFindings(len(m.dataIssues()), &m.fnd.issueList, m.noneText(), w, h)
-}
-
-// projectEnvs summarises where an issue is open, e.g. "shop:dev,prod mw:prod".
-func projectEnvs(is query.Issue) string {
-	var order []string
-	envs := map[string][]string{}
-	for _, t := range is.Targets {
-		if t.Status != model.StatusOpen {
-			continue
-		}
-		if _, ok := envs[t.Project]; !ok {
-			order = append(order, t.Project)
-		}
-		envs[t.Project] = append(envs[t.Project], string(t.Env))
-	}
-	var parts []string
-	for _, p := range order {
-		parts = append(parts, oneLine(p)+":"+oneLine(strings.Join(envs[p], ",")))
-	}
-	return strings.Join(parts, " ")
+	return renderFindings(len(m.dataIssues()), &m.fnd.issueList, m.noneText(), m.data.monitored(), w, h)
 }
 
 func owners(is query.Issue) string {
@@ -314,7 +294,7 @@ func findingsRoom(h int) int { return max(h-2, 1) }
 
 // renderFindings draws the table: a count line, a header and the rows around
 // the cursor. total is the unfiltered count; none is what to say when nothing is open.
-func renderFindings(total int, st *issueList, none string, w, h int) []string {
+func renderFindings(total int, st *issueList, none string, mon map[string][]model.Env, w, h int) []string {
 	rows := st.vis
 	info := fmt.Sprintf("%d of %d open issues   min severity: %s", len(rows), total, minLabel(st.min))
 	if n := len(st.sel); n > 0 {
@@ -354,7 +334,7 @@ func renderFindings(total int, st *issueList, none string, w, h int) []string {
 	row := func(cells ...string) string { return strings.Join(cells, " ") }
 	head := []string{pad("SEVERITY", sevW), pad("ID", idW), pad("AGE", ageW)}
 	if showProj {
-		head = append(head, pad("PROJECTS:ENVS", projW))
+		head = append(head, pad("PROJECTS (ONLY IN)", projW))
 	}
 	if showOwn {
 		head = append(head, pad("OWNER", ownW))
@@ -376,7 +356,11 @@ func renderFindings(total int, st *issueList, none string, w, h int) []string {
 		cells := func(sev string) []string {
 			c := []string{sev, pad(oneLine(is.ID), idW), pad(age, ageW)}
 			if showProj {
-				c = append(c, pad(projectEnvs(is), projW))
+				cell := pad(whereOpen(is, mon, projW), projW)
+				if i != st.vp.at() {
+					cell = emphasiseProd(cell)
+				}
+				c = append(c, cell)
 			}
 			if showOwn {
 				c = append(c, pad(owners(is), ownW))

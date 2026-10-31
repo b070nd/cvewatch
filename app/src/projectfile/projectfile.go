@@ -170,7 +170,7 @@ func apply(root *yaml.Node, op Op) error {
 			return errors.New("tech name is empty")
 		}
 		return removeTech(root, tech)
-	case "set_env_tech", "remove_env_tech", "set_image":
+	case "set_env_tech", "remove_env_tech", "set_image", "exclude_env_tech", "include_env_tech":
 		if !op.Env.Valid() {
 			return fmt.Errorf("invalid env %q (lowercase letters, digits, - and _)", op.Env)
 		}
@@ -179,6 +179,14 @@ func apply(root *yaml.Node, op Op) error {
 			return setImage(root, op.Env, strings.TrimSpace(op.Image))
 		case "remove_env_tech":
 			return removeEnvTech(root, op.Env, tech)
+		case "exclude_env_tech", "include_env_tech":
+			if tech == "" {
+				return errors.New("tech name is empty")
+			}
+			if op.Kind == "include_env_tech" {
+				return includeEnvTech(root, op.Env, tech)
+			}
+			return excludeEnvTech(root, op.Env, tech)
 		}
 		if tech == "" {
 			return errors.New("tech name is empty")
@@ -187,6 +195,13 @@ func apply(root *yaml.Node, op Op) error {
 			return errors.New("a deployed version is required")
 		}
 		return setEnvTech(root, op.Env, tech, version)
+	case "set_tech_envs":
+		if tech == "" {
+			return errors.New("tech name is empty")
+		}
+		return setTechEnvs(root, tech, op.Envs)
+	case "migrate_envs":
+		return migrateEnvironments(root)
 	case "add_lockfile":
 		l := op.Lockfile
 		if l.Type == "" || l.Path == "" {
@@ -273,72 +288,6 @@ func removeTech(root *yaml.Node, name string) error {
 	for i := techIndex(techs, name); i >= 0; i = techIndex(techs, name) {
 		dropItem(techs, i)
 	}
-	return nil
-}
-
-func setEnvTech(root *yaml.Node, env model.Env, tech, version string) error {
-	environments, err := child(root, "environments", yaml.MappingNode, false)
-	if err != nil {
-		return err
-	}
-	e, err := child(environments, string(env), yaml.MappingNode, false)
-	if err != nil {
-		return fmt.Errorf("environments.%s: %w", env, err)
-	}
-	techs, err := child(e, "techs", yaml.MappingNode, true)
-	if err != nil {
-		return fmt.Errorf("environments.%s.techs: %w", env, err)
-	}
-	if i := keyIndexFold(techs, tech); i >= 0 {
-		setStr(techs, techs.Content[i].Value, version, yaml.DoubleQuotedStyle)
-		return nil
-	}
-	mapAppend(techs, tech, str(version, yaml.DoubleQuotedStyle))
-	return nil
-}
-
-func removeEnvTech(root *yaml.Node, env model.Env, tech string) error {
-	if tech == "" {
-		return errors.New("tech name is empty")
-	}
-	keys := []string{"environments", string(env), "techs"}
-	chain, err := dig(root, keys...)
-	if err != nil {
-		return err
-	}
-	if len(chain) <= len(keys) {
-		return fmt.Errorf("environments.%s.techs.%s is not set", env, tech)
-	}
-	techs := chain[len(chain)-1]
-	i := keyIndexFold(techs, tech)
-	if i < 0 {
-		return fmt.Errorf("environments.%s.techs.%s is not set", env, tech)
-	}
-	techs.Content = append(techs.Content[:i], techs.Content[i+2:]...)
-	prune(chain, keys)
-	return nil
-}
-
-func setImage(root *yaml.Node, env model.Env, image string) error {
-	if image == "" { // an empty image clears it
-		keys := []string{"environments", string(env)}
-		chain, err := dig(root, keys...)
-		if err != nil || len(chain) <= len(keys) {
-			return err
-		}
-		mapDel(chain[len(chain)-1], "image")
-		prune(chain, keys)
-		return nil
-	}
-	environments, err := child(root, "environments", yaml.MappingNode, false)
-	if err != nil {
-		return err
-	}
-	e, err := child(environments, string(env), yaml.MappingNode, false)
-	if err != nil {
-		return fmt.Errorf("environments.%s: %w", env, err)
-	}
-	setStr(e, "image", image, 0)
 	return nil
 }
 

@@ -68,9 +68,10 @@ techs:
   - {name: php, version: "8.2"}
 lockfiles:
   - {type: composer, path: composer.lock, env: prod}
-environments:
-  prod:
-    techs: {php: "8.3"}
+when@prod:
+  techs: {php: "8.3"}
+when@dev:
+  exclude: [varnish]
 `
 
 func TestOpTableExamplesApplyAndMatchTheirParams(t *testing.T) {

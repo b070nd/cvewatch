@@ -1,13 +1,11 @@
 // Package inventory answers "what runs in this project and environment". It
-// merges declared techs (with per-environment versions), lockfiles and SBOMs
+// merges declared techs (generic, with the differences of each environment), lockfiles and SBOMs
 // into one relevance.Target per project environment, and keeps the problems it
 // met so doctor can show them. Lockfiles are read once per load.
 package inventory
 
 import (
 	"fmt"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/b070nd/cvewatch/app/src/config"
@@ -71,7 +69,7 @@ func Load(cfg *config.Bundle) *Inventory {
 		}
 
 		for _, env := range p.EffectiveEnvs() {
-			tg := relevance.Target{Project: p.Name, Env: env, Techs: techsFor(p, env), Image: p.Environments[env].Image, Since: p.Since}
+			tg := relevance.Target{Project: p.Name, Env: env, Techs: p.TechsIn(env), Image: p.Environments[env].Image, Since: p.Since}
 			seen := map[string]bool{}
 			for _, f := range files {
 				if f.lf.Env != "" && f.lf.Env != env {
@@ -91,20 +89,6 @@ func Load(cfg *config.Bundle) *Inventory {
 		}
 	}
 	return inv
-}
-
-// techsFor applies the environment's deployed versions over the project's declared techs.
-func techsFor(p model.Project, env model.Env) []model.ProjectTech {
-	out := slices.Clone(p.Techs)
-	for name, ver := range p.Environments[env].Techs {
-		i := slices.IndexFunc(out, func(t model.ProjectTech) bool { return strings.EqualFold(t.Name, name) })
-		if i >= 0 {
-			out[i].Version = ver
-		} else {
-			out = append(out, model.ProjectTech{Name: name, Version: ver})
-		}
-	}
-	return out
 }
 
 // Targets lists every project environment.

@@ -3,6 +3,7 @@ package projectfile
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -43,7 +44,9 @@ func addEnv(root *yaml.Node, env model.Env) error {
 	return setEnvs(root, append(list, env))
 }
 
-// removeEnv drops the name from envs only; versions and lockfiles that name it stay, and the check warns about them.
+// removeEnv drops the name from envs and its when@ block of differences, which
+// would otherwise name an environment the project does not have. An old
+// environments: entry and lockfiles that name it stay, and the check warns about them.
 func removeEnv(root *yaml.Node, env model.Env) error {
 	if err := checkEnvName("env", env); err != nil {
 		return err
@@ -56,10 +59,12 @@ func removeEnv(root *yaml.Node, env model.Env) error {
 	case len(list) == 1:
 		return errors.New("a project needs at least one environment")
 	}
+	mapDel(root, whenKey(env))
 	return setEnvs(root, slices.Delete(list, i, i+1))
 }
 
-// renameEnv renames the name in envs, the environments key and the lockfile envs.
+// renameEnv renames the name in envs, its when@ block, the lockfile envs and
+// the envs of scoped techs. An old environments: entry is migrated first.
 func renameEnv(root *yaml.Node, from, to model.Env) error {
 	if err := checkEnvName("env", from); err != nil {
 		return err
@@ -74,26 +79,36 @@ func renameEnv(root *yaml.Node, from, to model.Env) error {
 	if slices.Contains(list, to) {
 		return fmt.Errorf("environment %q is already in envs", to)
 	}
-	environments := mapGet(root, "environments")
-	var block *yaml.Node
-	if environments != nil && environments.Kind == yaml.MappingNode {
-		if i := mapIndex(environments, string(from)); i >= 0 {
-			block = environments.Content[i]
-		}
-		if mapIndex(environments, string(to)) >= 0 {
-			return fmt.Errorf("environment %q already has its own versions; remove them first", to)
+	if old := legacyBlock(root); old != nil && (mapIndex(old, string(from)) >= 0 || mapIndex(old, string(to)) >= 0) {
+		if err := migrateEnvironments(root); err != nil {
+			return err
 		}
 	}
-	var locks []*yaml.Node
+	block := mapIndex(root, whenKey(from))
+	if mapIndex(root, whenKey(to)) >= 0 {
+		return fmt.Errorf("environment %q already has its own differences; remove them first", to)
+	}
+	var names []*yaml.Node // every scalar that names the environment outside envs
 	if seq := mapGet(root, "lockfiles"); seq != nil && seq.Kind == yaml.SequenceNode {
 		for _, it := range seq.Content {
 			if it.Kind == yaml.MappingNode && lockfileField(it, "env") == string(from) {
-				locks = append(locks, it)
+				names = append(names, mapGet(it, "env"))
+			}
+		}
+	}
+	if seq := mapGet(root, "techs"); seq != nil && seq.Kind == yaml.SequenceNode {
+		for _, it := range seq.Content {
+			if scope := mapGetIfMap(it, "envs"); scope != nil && scope.Kind == yaml.SequenceNode {
+				for _, n := range scope.Content {
+					if n.Value == string(from) {
+						names = append(names, n)
+					}
+				}
 			}
 		}
 	}
 	inList := slices.Contains(list, from)
-	if !inList && block == nil && len(locks) == 0 {
+	if !inList && block < 0 && len(names) == 0 {
 		return fmt.Errorf("environment %q is not used by the project", from)
 	}
 	if inList {
@@ -102,13 +117,20 @@ func renameEnv(root *yaml.Node, from, to model.Env) error {
 			return err
 		}
 	}
-	if block != nil {
-		block.Value = string(to)
+	if block >= 0 {
+		root.Content[block].Value = whenKey(to)
 	}
-	for _, it := range locks {
-		mapGet(it, "env").Value = string(to)
+	for _, n := range names {
+		n.Value = string(to)
 	}
 	return nil
+}
+
+func mapGetIfMap(n *yaml.Node, key string) *yaml.Node {
+	if n.Kind != yaml.MappingNode {
+		return nil
+	}
+	return mapGet(n, key)
 }
 
 // EnvHint is a note about the environments of a project. Level is info or warn.
@@ -123,6 +145,11 @@ type EnvHint struct {
 // that the file relies on the old default, or that nothing is called prod.
 func EnvHints(p model.Project) []EnvHint {
 	var out []EnvHint
+	if slices.ContainsFunc(slices.Collect(maps.Values(p.Environments)), func(c model.EnvConfig) bool { return c.Old }) {
+		out = append(out, EnvHint{Level: "info", Field: "environments",
+			Message: "environments: is the old spelling of the when@<env> blocks (same meaning); migrate_envs rewrites it and changes nothing else",
+			Fix:     []Op{{Kind: "migrate_envs"}}})
+	}
 	if len(p.Envs) == 0 {
 		out = append(out, EnvHint{Level: "warn", Field: "envs",
 			Message: "envs not set: using the old default " + joinEnvs(model.LegacyEnvs) + "; list your environments (names are free, local is a good start)",

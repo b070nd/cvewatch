@@ -51,6 +51,12 @@ func TestLoadRejectsMistakes(t *testing.T) {
 		"tui zero":    {"config/config.yaml", "tui:\n  refresh: 0s\n"},
 		"tui fetch":   {"config/config.yaml", "tui:\n  fetch: -1m\n"},
 		"bad since":   {"config/projects/a.yaml", "name: a\nsince: soon\n"},
+		"when key":    {"config/projects/a.yaml", "name: a\nenvs: [prod]\nwhen@Prod: {image: i}\n"},
+		"when env":    {"config/projects/a.yaml", "name: a\nenvs: [prod]\nwhen@qa: {image: i}\n"},
+		"when field":  {"config/projects/a.yaml", "name: a\nenvs: [prod]\nwhen@prod: {tech: {}}\n"},
+		"both":        {"config/projects/a.yaml", "name: a\nenvs: [prod]\nenvironments: {prod: {image: a}}\nwhen@prod: {image: b}\n"},
+		"tech envs":   {"config/projects/a.yaml", "name: a\ntechs: [{name: php, envs: [Prod]}]\n"},
+		"top key":     {"config/projects/a.yaml", "name: a\nwhens@prod: {}\n"},
 	}
 	for name, c := range cases {
 		root := t.TempDir()
@@ -336,5 +342,70 @@ func TestAnyEnvironmentNameLoads(t *testing.T) {
 	}
 	if got := b.Projects[1].EffectiveEnvs(); !slices.Equal(got, []model.Env{"dev", "int", "staging", "prod"}) {
 		t.Errorf("a file without envs keeps the old four: %v", got)
+	}
+}
+
+func TestProjectDifferencesInEitherSpellingMeanTheSame(t *testing.T) {
+	const generic = "name: a\nenvs: [local, prod]\ntechs:\n  - {name: php, version: \"8.2\"}\n  - {name: xdebug, envs: [local]}\n  - {name: mysql, version: \"8.0\"}\n"
+	spellings := map[string]string{
+		"when@":        generic + "when@prod:\n  techs: {php: \"8.3\", varnish: \"7.4\"}\n  exclude: [mysql]\n  image: shop:1\n",
+		"environments": generic + "environments:\n  prod:\n    techs: {php: \"8.3\", varnish: \"7.4\"}\n    exclude: [mysql]\n    image: shop:1\n",
+	}
+	for name, body := range spellings {
+		root := t.TempDir()
+		put(t, root, "config/techs.yaml", "techs: [{name: php}, {name: xdebug}, {name: mysql}, {name: varnish}]\n")
+		put(t, root, "config/projects/a.yaml", body)
+		b, err := Load(root)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		p := b.Projects[0]
+		show := func(env model.Env) string {
+			var out []string
+			for _, tt := range p.TechsIn(env) {
+				out = append(out, tt.Name+"="+tt.Version)
+			}
+			return strings.Join(out, " ")
+		}
+		if got := show("local"); got != "php=8.2 xdebug= mysql=8.0" {
+			t.Errorf("%s local: %q", name, got)
+		}
+		if got := show("prod"); got != "php=8.3 varnish=7.4" {
+			t.Errorf("%s prod: %q", name, got)
+		}
+		if p.Environments["prod"].Image != "shop:1" || p.Environments["prod"].Old != (name == "environments") {
+			t.Errorf("%s: %+v", name, p.Environments["prod"])
+		}
+		if len(b.Warnings) != 0 {
+			t.Errorf("%s: warnings %v", name, b.Warnings)
+		}
+	}
+}
+
+func TestStaleDifferencesBreakOnlyTheirProject(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, "config/projects/a.yaml", "name: a\nenvs: [prod]\nwhen@qa:\n  image: i\n")
+	put(t, root, "config/projects/b.yaml", "name: b\nenvs: [prod]\nenvironments:\n  qa: {image: i}\n")
+	b, err := LoadLenient(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Broken) != 1 || b.Broken[0].Name != "a" || !strings.Contains(b.Broken[0].Err, "when@qa") || len(b.Projects) != 1 || b.Projects[0].Name != "b" {
+		t.Fatalf("broken = %+v, projects = %d", b.Broken, len(b.Projects))
+	}
+}
+
+func TestWarningsNameTheSpellingOfTheFile(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, "config/techs.yaml", "techs: [{name: php}]\n")
+	put(t, root, "config/projects/a.yaml", "name: a\nenvs: [prod]\ntechs: [{name: php}]\nwhen@prod:\n  techs: {cobol: \"1\"}\n")
+	put(t, root, "config/projects/b.yaml", "name: b\nenvs: [prod]\ntechs: [{name: php}]\nenvironments:\n  prod:\n    techs: {cobol: \"1\"}\n")
+	b, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := strings.Join(b.Warnings, "\n")
+	if !strings.Contains(all, "project a: when@prod: tech \"cobol\"") || !strings.Contains(all, "project b: environments.prod: tech \"cobol\"") {
+		t.Errorf("warnings:\n%s", all)
 	}
 }

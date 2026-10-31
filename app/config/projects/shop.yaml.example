@@ -3,15 +3,17 @@
 name: shop
 envs: [dev, int, staging, prod]   # omit for all four
 # since: 2026-01-01              # vulnerabilities published before this day are not checked
-techs:                            # names must exist in techs.yaml
+techs:                            # generic: every environment runs these; names must exist in techs.yaml
   - {name: php, version: "8.2"}
   - {name: elasticsearch, version: "8.11"}
   - {name: magento, version: "2.4.7"}
+  # - {name: xdebug, envs: [dev]}   # present only in these environments
 lockfiles:                        # re-read every run
   - {type: composer, path: /path/to/shop/composer.lock}
   - {type: npm, path: /path/to/shop/package-lock.json}
   # - {type: cyclonedx, path: /path/to/shop-prod.cdx.json, env: prod}   # an SBOM for one environment
-environments:                     # what actually runs where
-  prod:
-    techs: {php: "8.2.30"}
-    image: registry.example/shop@sha256:...   # recorded only
+when@prod:                        # only what differs there from the lists above (like Symfony's when@prod)
+  techs: {php: "8.2.30"}          # a version that differs, or a tech that exists only there
+  image: registry.example/shop@sha256:...   # recorded only
+# when@dev:
+#   exclude: [elasticsearch]        # a generic tech that does not run there

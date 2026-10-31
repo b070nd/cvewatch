@@ -60,11 +60,23 @@ type ProjectView struct {
 	Techs     []TechPin   `json:"techs"`
 	Lockfiles []LockEntry `json:"lockfiles"`
 	Since     string      `json:"since,omitempty"` // YYYY-MM-DD
+
+	Differences []EnvDiff `json:"differences,omitempty"` // what differs from the generic techs, per environment
 }
 
 type TechPin struct {
-	Name    string `json:"name"`
-	Version string `json:"version,omitempty"`
+	Name    string   `json:"name"`
+	Version string   `json:"version,omitempty"`
+	Envs    []string `json:"envs,omitempty"` // present only in these environments; none means all
+}
+
+// EnvDiff is the when@<env> block of one environment.
+type EnvDiff struct {
+	Env     string            `json:"env"`
+	Techs   map[string]string `json:"techs,omitempty"`   // version there: overrides a generic tech or adds one
+	Exclude []string          `json:"exclude,omitempty"` // generic techs that do not run there
+	Image   string            `json:"image,omitempty"`
+	Old     bool              `json:"old_spelling,omitempty"` // written under the old environments: key
 }
 
 type LockEntry struct {
@@ -81,7 +93,15 @@ func ViewOf(p model.Project) ProjectView {
 		v.Envs = append(v.Envs, string(e))
 	}
 	for _, t := range p.Techs {
-		v.Techs = append(v.Techs, TechPin{t.Name, t.Version})
+		pin := TechPin{Name: t.Name, Version: t.Version}
+		for _, e := range t.Envs {
+			pin.Envs = append(pin.Envs, string(e))
+		}
+		v.Techs = append(v.Techs, pin)
+	}
+	for _, e := range slices.SortedFunc(maps.Keys(p.Environments), model.EnvCompare) {
+		c := p.Environments[e]
+		v.Differences = append(v.Differences, EnvDiff{Env: string(e), Techs: c.Techs, Exclude: c.Exclude, Image: c.Image, Old: c.Old})
 	}
 	for _, l := range p.Lockfiles {
 		v.Lockfiles = append(v.Lockfiles, LockEntry{l.Type, l.Path, string(l.Env), l.Dev})

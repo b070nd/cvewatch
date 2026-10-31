@@ -1,10 +1,13 @@
 # Copy to <name>.yaml (any *.yaml in this folder is loaded and stays untracked).
 name: shop
 envs: [local, prod]               # free names, e.g. local, dev, qa, prod; without envs: dev, int, staging, prod
-techs:                            # names must exist in techs.yaml
+techs:                            # generic: every environment runs these; names must exist in techs.yaml
   - {name: php, version: "8.2"}
   - {name: elasticsearch, version: "8.11"}
   - {name: magento, version: "2.4.7"}
 lockfiles:                        # re-read every run
   - {type: composer, path: /path/to/shop/composer.lock}
   - {type: npm, path: /path/to/shop/package-lock.json}
+when@prod:                        # only what differs there, like Symfony's when@prod; the old environments: key still works
+  techs: {php: "8.2.30"}          # a version that differs, or a tech that exists only there
+  # exclude: [elasticsearch]      # a generic tech that does not run there

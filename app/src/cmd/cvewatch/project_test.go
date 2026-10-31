@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -292,5 +293,33 @@ func TestProjectInAFileWithAnotherNameCanBeListedEditedAndDeleted(t *testing.T) 
 	}
 	if _, err := os.Stat(filepath.Join(dir, "magento2-shop.yaml")); err == nil {
 		t.Fatal("the file is still there")
+	}
+}
+
+func TestProjectDifferenceFlags(t *testing.T) {
+	e, err := parseProjectEdit([]string{"shop", "-tech-envs", "xdebug=", "-tech-envs", "php= local , dev", "-env-exclude", "prod:xdebug", "-env-include", "dev:xdebug", "-migrate-envs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := e.ops // the order across flags is not part of the contract: compare as a set
+	want := []projectfile.Op{
+		{Kind: "set_tech_envs", Tech: "xdebug"},
+		{Kind: "set_tech_envs", Tech: "php", Envs: []model.Env{"local", "dev"}},
+		{Kind: "exclude_env_tech", Env: "prod", Tech: "xdebug"},
+		{Kind: "include_env_tech", Env: "dev", Tech: "xdebug"},
+		{Kind: "migrate_envs"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("ops = %+v", got)
+	}
+	for _, w := range want {
+		if !slices.ContainsFunc(got, func(o projectfile.Op) bool { return reflect.DeepEqual(o, w) }) {
+			t.Errorf("missing %+v in %+v", w, got)
+		}
+	}
+	for _, bad := range [][]string{{"-tech-envs", "nope"}, {"-tech-envs", "=local"}, {"-env-exclude", "prod"}, {"-env-include", ":php"}} {
+		if _, err := parseProjectEdit(append([]string{"shop"}, bad...)); err == nil {
+			t.Errorf("%v should be rejected", bad)
+		}
 	}
 }

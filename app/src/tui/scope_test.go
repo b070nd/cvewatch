@@ -71,8 +71,8 @@ func TestScopeNarrowsOverviewFindingsAndCounts(t *testing.T) {
 	d.want("2 Findings (1)")
 
 	d.press("2")
-	d.want("1 of 1 open issues", "CVE-2026-1", "mw:prod")
-	d.wantNot("shop:prod", "CVE-2026-3", "CVE-2026-4")
+	d.want("1 of 1 open issues", "CVE-2026-1")
+	d.wantNot("shop", "CVE-2026-3", "CVE-2026-4") // mw runs in prod only, so the row names the project alone
 	if line := strings.Split(d.view(), "\n")[1]; !strings.Contains(line, "scope: mw") {
 		t.Fatalf("the chip is on the breadcrumb line of every screen: %q", line)
 	}
@@ -82,7 +82,7 @@ func TestScopeNarrowsOverviewFindingsAndCounts(t *testing.T) {
 	scopeTo(d, "shop")
 	d.press("2")
 	d.want("3 of 3 open issues", "shop:prod")
-	d.wantNot("mw:prod") // only the targets of the project are shown
+	d.wantNot("mw") // only the targets of the project are shown
 	d.press("1")
 	d.want("open issues 3", "open findings 3")
 }

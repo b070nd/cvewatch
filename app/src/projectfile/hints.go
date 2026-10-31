@@ -76,7 +76,7 @@ func HintsFor(p model.Project, issues []Issue, o HintOptions) []Hint {
 	for _, e := range sortedEnvs(p) {
 		for _, n := range sortedKeys(p.Environments[e].Techs) {
 			if !cat.Has(n) {
-				unknown("environments."+string(e)+".techs."+n, n)
+				unknown(envField(p, e)+".techs."+n, n)
 			}
 		}
 	}

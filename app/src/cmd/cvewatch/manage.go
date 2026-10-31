@@ -275,7 +275,7 @@ type projectEdit struct {
 // projectfile.OpTable lists; its parity test runs every row through here.
 func parseProjectEdit(args []string) (projectEdit, error) {
 	fs := flag.NewFlagSet("project", flag.ContinueOnError)
-	var set, remove, lock, unlock, lockDev, lockNoDev, envSet, envUnset, envAdd, envRemove, envRename, image listFlag
+	var set, remove, lock, unlock, lockDev, lockNoDev, envSet, envUnset, envAdd, envRemove, envRename, envExclude, envInclude, techEnvs, image listFlag
 	var since optFlag
 	fs.Var(&set, "set", "declare tech=version (version may be empty), repeatable")
 	fs.Var(&remove, "remove", "stop declaring a tech, repeatable")
@@ -288,9 +288,13 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 	fs.Var(&envAdd, "env-add", "add an environment to the project (any lowercase name), repeatable")
 	fs.Var(&envRemove, "env-remove", "remove an environment from the project's list, repeatable")
 	fs.Var(&envRename, "env-rename", "rename an environment as old=new, also in its versions and lockfiles, repeatable")
+	fs.Var(&envExclude, "env-exclude", "a generic tech does not run in one environment as env:tech, repeatable")
+	fs.Var(&envInclude, "env-include", "undo -env-exclude as env:tech, repeatable")
+	fs.Var(&techEnvs, "tech-envs", "limit a generic tech to some environments as tech=env,env (tech= lifts the limit), repeatable")
 	fs.Var(&image, "image", "set the image of an environment as env=tag (empty tag clears), repeatable")
 	fs.Var(&since, "since", "date advisories count from, YYYY-MM-DD (empty clears)")
 	envs := fs.String("envs", "", "comma-separated environments, any names (\"all\" means the old default dev,int,staging,prod)")
+	migrate := fs.Bool("migrate-envs", false, "rewrite the old environments: map as when@ENV blocks (same meaning)")
 	save := fs.Bool("save", false, "write the change; without it only show the diff")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "usage: cvewatch project NAME [flags]\n\nEdit flags (diff only without -save):\n%s\nOther: -save writes the change.\n", projectfile.FlagHelp("  "))
@@ -371,6 +375,31 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 		}
 		changes = append(changes, projectfile.Op{Kind: "rename_env", Env: model.Env(from), To: model.Env(to)})
 	}
+	for kind, list := range map[string]listFlag{"exclude_env_tech": envExclude, "include_env_tech": envInclude} {
+		for _, v := range list {
+			env, tech, ok := strings.Cut(v, ":")
+			if !ok || env == "" || tech == "" {
+				return projectEdit{}, fmt.Errorf("%q must look like env:tech, for example local:xdebug", v)
+			}
+			changes = append(changes, projectfile.Op{Kind: kind, Env: model.Env(env), Tech: tech})
+		}
+	}
+	for _, v := range techEnvs {
+		tech, list, ok := strings.Cut(v, "=")
+		if !ok || tech == "" {
+			return projectEdit{}, fmt.Errorf("%q must look like tech=env,env, for example xdebug=local,dev (tech= lifts the limit)", v)
+		}
+		op := projectfile.Op{Kind: "set_tech_envs", Tech: tech}
+		for _, e := range strings.Split(list, ",") {
+			if e = strings.TrimSpace(e); e != "" {
+				op.Envs = append(op.Envs, model.Env(e))
+			}
+		}
+		changes = append(changes, op)
+	}
+	if *migrate {
+		changes = append(changes, projectfile.Op{Kind: "migrate_envs"})
+	}
 	for _, v := range image {
 		env, img, ok := strings.Cut(v, "=")
 		if !ok || env == "" {
@@ -379,7 +408,7 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 		changes = append(changes, projectfile.Op{Kind: "set_image", Env: model.Env(env), Image: img})
 	}
 	if len(changes) == 0 {
-		return projectEdit{}, errors.New("nothing to change: use -set, -remove, -env-set, -env-unset, -image, -lock, -unlock, -lock-dev, -lock-nodev, -since, -envs, -env-add, -env-remove or -env-rename (cvewatch project NAME -h lists them)")
+		return projectEdit{}, errors.New("nothing to change: use -set, -remove, -env-set, -env-unset, -image, -lock, -unlock, -lock-dev, -lock-nodev, -since, -envs, -env-add, -env-remove, -env-rename, -env-exclude, -env-include, -tech-envs or -migrate-envs (cvewatch project NAME -h lists them)")
 	}
 	return projectEdit{name: name, ops: changes, save: *save}, nil
 }

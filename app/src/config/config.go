@@ -608,9 +608,23 @@ func projectErrors(p model.Project, seen map[string]bool) []fieldErr {
 			fail(at+".env", "project %s: lockfile env %q is not a valid environment name", p.Name, lf.Env)
 		}
 	}
-	for env := range p.Environments {
-		if !env.Valid() {
-			fail("environments."+string(env), "project %s: environments: %q is not a valid environment name", p.Name, env)
+	for _, env := range slices.SortedFunc(maps.Keys(p.Environments), model.EnvCompare) {
+		field, where := model.WhenPrefix+string(env), model.WhenPrefix+string(env)
+		if p.Environments[env].Old {
+			field, where = "environments."+string(env), "environments: "+string(env)
+		}
+		switch {
+		case !env.Valid():
+			fail(field, "project %s: %s is not a valid environment name", p.Name, where)
+		case !p.Environments[env].Old && !slices.Contains(p.EffectiveEnvs(), env):
+			fail(field, "project %s: %s describes an environment that is not in envs; add %s to envs or remove the block", p.Name, field, env)
+		}
+	}
+	for i, t := range p.Techs {
+		for _, e := range t.Envs {
+			if !e.Valid() {
+				fail("techs."+strconv.Itoa(i)+".envs", "project %s: tech %s: %q is not a valid environment name", p.Name, t.Name, e)
+			}
 		}
 	}
 	return errs
@@ -621,10 +635,14 @@ func projectWarnings(p model.Project, known map[string]bool) []string {
 	if !p.Since.IsZero() && p.Since.After(time.Now()) {
 		warns = append(warns, fmt.Sprintf("project %s: since %s is in the future, so every dated vulnerability is skipped for now", p.Name, p.Since.Format("2006-01-02")))
 	}
-	for env, ec := range p.Environments {
-		for tn := range ec.Techs {
+	for _, env := range slices.SortedFunc(maps.Keys(p.Environments), model.EnvCompare) {
+		where := model.WhenPrefix + string(env)
+		if p.Environments[env].Old {
+			where = "environments." + string(env)
+		}
+		for tn := range p.Environments[env].Techs {
 			if !known[strings.ToLower(tn)] {
-				warns = append(warns, fmt.Sprintf("project %s: environments.%s: tech %q is not in techs.yaml", p.Name, env, tn))
+				warns = append(warns, fmt.Sprintf("project %s: %s: tech %q is not in techs.yaml", p.Name, where, tn))
 			}
 		}
 	}

@@ -153,7 +153,7 @@ func TestProjectSchemaCoversTheOpTable(t *testing.T) {
 func TestEveryExampleOfTheOpTableIsAcceptedByTheTool(t *testing.T) {
 	root := fixture(t)
 	writeConf(t, root, "config/projects/shop.yaml",
-		"name: shop\nenvs: [dev, int, staging, prod]\ntechs: [{name: php, version: \"8.2\"}]\nlockfiles: [{type: composer, path: composer.lock, env: prod}]\nenvironments:\n  prod:\n    techs: {php: \"8.3\"}\n")
+		"name: shop\nenvs: [dev, int, staging, prod]\ntechs: [{name: php, version: \"8.2\"}]\nlockfiles: [{type: composer, path: composer.lock, env: prod}]\nwhen@prod:\n  techs: {php: \"8.3\"}\nwhen@dev:\n  exclude: [varnish]\n")
 	cs := connect(t, root, false)
 	for _, spec := range projectfile.OpTable {
 		raw, _ := json.Marshal(spec.Example) // the JSON a check_projects fix carries

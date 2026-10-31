@@ -15,12 +15,11 @@ techs:
 lockfiles:
   - {type: composer, path: composer.lock, env: prod}
   - {type: npm, path: package-lock.json}
-environments:
-  prod:
-    techs: {php: "8.3"}
-    image: shop:1
-  dev:
-    image: shop:dev
+when@prod:
+  techs: {php: "8.3"}
+  image: shop:1
+when@dev:
+  image: shop:dev
 `
 
 func envsOf(t *testing.T, src string) []model.Env {
@@ -55,8 +54,8 @@ func TestRemoveEnv(t *testing.T) {
 	if e := envsOf(t, got); !slices.Equal(e, []model.Env{"prod"}) {
 		t.Fatalf("envs = %v", e)
 	}
-	if !strings.Contains(got, "dev:") {
-		t.Errorf("the versions of the environment should stay:\n%s", got)
+	if strings.Contains(got, "when@dev:") || !strings.Contains(got, "when@prod:") {
+		t.Errorf("the differences of the removed environment go with it, the others stay:\n%s", got)
 	}
 	got = mustApply(t, "name: x\n", Op{Kind: "remove_env", Env: "int"})
 	if e := envsOf(t, got); !slices.Equal(e, []model.Env{"dev", "staging", "prod"}) {
@@ -90,7 +89,7 @@ func TestRenameEnv(t *testing.T) {
 	if _, ok := p.Environments["prod"]; ok || p.Environments["production"].Image != "shop:1" || p.Environments["production"].Techs["php"] != "8.3" {
 		t.Errorf("environments = %+v", p.Environments)
 	}
-	if strings.Index(got, "production:") < strings.Index(got, "environments:") || !strings.Contains(got, "# where it runs") {
+	if !strings.Contains(got, "when@production:") || !strings.Contains(got, "# where it runs") {
 		t.Errorf("layout lost:\n%s", got)
 	}
 	// without an envs key the old four are renamed and written out
@@ -120,7 +119,7 @@ func TestRenameEnv(t *testing.T) {
 	}
 	// the target already has its own versions
 	src := "name: x\nenvs: [dev]\nenvironments:\n  dev: {image: a}\n  qa: {image: b}\n"
-	if err := mustParse(t, src).Apply(Op{Kind: "rename_env", Env: "dev", To: "qa"}); err == nil || !strings.Contains(err.Error(), "own versions") {
+	if err := mustParse(t, src).Apply(Op{Kind: "rename_env", Env: "dev", To: "qa"}); err == nil || !strings.Contains(err.Error(), "own differences") {
 		t.Errorf("err = %v", err)
 	}
 }

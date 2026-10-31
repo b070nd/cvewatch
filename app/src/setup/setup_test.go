@@ -801,3 +801,58 @@ func TestNewProjectStartsWithLocalOnly(t *testing.T) {
 		t.Errorf("fix = %+v", hints[0].Fix)
 	}
 }
+
+func TestDifferencesOps(t *testing.T) {
+	ex := &model.Project{Name: "shop", Envs: []model.Env{"local", "prod"},
+		Techs:        []model.ProjectTech{{Name: "php", Version: "8.2"}, {Name: "redis", Envs: []model.Env{"local"}}},
+		Environments: map[model.Env]model.EnvConfig{"prod": {Exclude: []string{"nginx"}}}}
+	f := NewFlow(testCatalog(), ex)
+	f.draft.Techs[1].Envs = []model.Env{"local", "prod"}
+	f.draft.Techs = append(f.draft.Techs, model.ProjectTech{Name: "nginx", Envs: []model.Env{"prod"}})
+	f.draft.Environments["prod"] = model.EnvConfig{Exclude: []string{"php"}}
+	f.draft.Environments["local"] = model.EnvConfig{Exclude: []string{"php"}}
+	want := []projectfile.Op{
+		{Kind: "set_tech", Tech: "nginx"},
+		{Kind: "set_tech_envs", Tech: "redis", Envs: []model.Env{"local", "prod"}},
+		{Kind: "set_tech_envs", Tech: "nginx", Envs: []model.Env{"prod"}},
+		{Kind: "exclude_env_tech", Env: "local", Tech: "php"},
+		{Kind: "include_env_tech", Env: "prod", Tech: "nginx"},
+		{Kind: "exclude_env_tech", Env: "prod", Tech: "php"},
+	}
+	got := f.Ops()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ops = %+v", got)
+	}
+	if !reflect.DeepEqual(ex.Techs[1].Envs, []model.Env{"local"}) {
+		t.Error("the existing project was modified")
+	}
+
+	// applying the ops to the file gives the draft
+	file, err := projectfile.Parse([]byte("name: shop\nenvs: [local, prod]\ntechs:\n  - {name: php, version: \"8.2\"}\n  - {name: redis, envs: [local]}\nwhen@prod:\n  exclude: [nginx]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Apply(got...); err != nil {
+		t.Fatal(err)
+	}
+	p := file.Project()
+	if !reflect.DeepEqual(p.TechsIn("local"), []model.ProjectTech{{Name: "redis"}}) || !reflect.DeepEqual(p.TechsIn("prod"), []model.ProjectTech{{Name: "redis"}, {Name: "nginx"}}) {
+		t.Errorf("local %+v, prod %+v", p.TechsIn("local"), p.TechsIn("prod"))
+	}
+}
+
+func TestRemovingATechDropsItsExclusionsAndKeepsOthers(t *testing.T) {
+	ex := &model.Project{Name: "shop", Techs: []model.ProjectTech{{Name: "php", Version: "8"}, {Name: "redis"}},
+		Environments: map[model.Env]model.EnvConfig{"prod": {Exclude: []string{"redis"}}, "dev": {Exclude: []string{"php", "redis"}}}}
+	f := NewFlow(testCatalog(), ex)
+	f.dropEnvTech("redis")
+	if _, ok := f.draft.Environments["prod"]; ok {
+		t.Errorf("an environment left with nothing stays: %+v", f.draft.Environments)
+	}
+	if got := f.draft.Environments["dev"].Exclude; !reflect.DeepEqual(got, []string{"php"}) {
+		t.Errorf("dev exclude = %v", got)
+	}
+	if len(ex.Environments["dev"].Exclude) != 2 {
+		t.Error("the existing project was modified")
+	}
+}

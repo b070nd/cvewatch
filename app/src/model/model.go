@@ -5,11 +5,15 @@ package model
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	"maps"
 	"net/url"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Env is a deployment environment. The name is free: a lowercase slug.
@@ -218,28 +222,143 @@ func (t Tech) Terms() []string {
 	return []string{t.Name}
 }
 
-// Project is one monitored system (app/config/projects/*.yaml).
+// Project is one monitored system (app/config/projects/*.yaml). The top level
+// holds for every environment; a when@<env> block holds only what differs there.
 type Project struct {
 	Name      string        `yaml:"name"`
 	Envs      []Env         `yaml:"envs"` // none means LegacyEnvs
 	Techs     []ProjectTech `yaml:"techs"`
 	Lockfiles []Lockfile    `yaml:"lockfiles"`
 	Since     time.Time     `yaml:"since"` // vulnerabilities published before this day are not checked
-	// Environments holds what differs per environment: the runtime versions
-	// actually deployed and the image reference. Anything not listed falls
-	// back to the project-level techs.
+	// Environments holds the differences per environment from either spelling,
+	// when@<env> or the old environments: key (EnvConfig.Old says which).
 	Environments map[Env]EnvConfig `yaml:"environments"`
 }
 
-// EnvConfig is what one environment runs.
+// EnvConfig is what differs in one environment from the generic configuration.
 type EnvConfig struct {
-	Techs map[string]string `yaml:"techs"` // tech name -> deployed version, e.g. php: "8.2.30"
-	Image string            `yaml:"image"` // image tag or digest, recorded only; no registry is queried
+	Techs   map[string]string `yaml:"techs"`   // tech name -> version there: overrides a generic tech or adds one that exists only here
+	Exclude []string          `yaml:"exclude"` // generic techs that do not run here
+	Image   string            `yaml:"image"`   // image tag or digest, recorded only; no registry is queried
+	Old     bool              `yaml:"-"`       // written under the old environments: key
 }
 
 type ProjectTech struct {
 	Name    string `yaml:"name"`
 	Version string `yaml:"version"`
+	Envs    []Env  `yaml:"envs"` // present only in these environments; none means all
+}
+
+// WhenPrefix starts the key of a block of differences: when@prod.
+const WhenPrefix = "when@"
+
+// keyAt is a mapping key that remembers where it was written.
+type keyAt struct {
+	name string
+	line int
+}
+
+func (k *keyAt) UnmarshalYAML(n *yaml.Node) error {
+	k.name, k.line = n.Value, n.Line
+	return nil
+}
+
+var projectKeys = []string{"name", "envs", "techs", "lockfiles", "since", "environments"}
+
+// UnmarshalYAML gathers the when@<env> blocks into Environments next to the
+// old environments: map; any other unknown key stays an error.
+func (p *Project) UnmarshalYAML(unmarshal func(any) error) error {
+	type plain Project
+	var raw struct {
+		plain `yaml:",inline"`
+		Rest  map[string]yaml.Node `yaml:",inline"`
+	}
+	var errs []string
+	if err := unmarshal(&raw); err != nil {
+		te, ok := err.(*yaml.TypeError)
+		if !ok {
+			return err
+		}
+		errs = append(errs, te.Errors...)
+	}
+	var keyed map[keyAt]yaml.Node // the same mapping again, with the line of every key
+	if err := unmarshal(&keyed); err != nil {
+		return err
+	}
+	*p = Project(raw.plain)
+	for env, ec := range p.Environments {
+		ec.Old = true
+		p.Environments[env] = ec
+	}
+	keys := slices.SortedFunc(maps.Keys(keyed), func(a, b keyAt) int { return a.line - b.line })
+	for _, key := range keys {
+		val := keyed[key]
+		if slices.Contains(projectKeys, key.name) {
+			continue
+		}
+		name, ok := strings.CutPrefix(key.name, WhenPrefix)
+		if !ok {
+			errs = append(errs, fmt.Sprintf("line %d: field %s not found in type model.Project", key.line, key.name))
+			continue
+		}
+		env := Env(name)
+		if name == "" {
+			errs = append(errs, fmt.Sprintf("line %d: %s needs an environment name after the @", key.line, WhenPrefix))
+			continue
+		}
+		if _, dup := p.Environments[env]; dup {
+			errs = append(errs, fmt.Sprintf("line %d: environment %s has differences under both environments: and %s%s", key.line, name, WhenPrefix, name))
+			continue
+		}
+		var ec EnvConfig
+		for j := 0; val.Kind == yaml.MappingNode && j+1 < len(val.Content); j += 2 {
+			if k := val.Content[j]; k.Value != "techs" && k.Value != "exclude" && k.Value != "image" {
+				errs = append(errs, fmt.Sprintf("line %d: field %s not found in type model.EnvConfig", k.Line, k.Value))
+			}
+		}
+		if err := val.Decode(&ec); err != nil {
+			if te, ok := err.(*yaml.TypeError); ok {
+				errs = append(errs, te.Errors...)
+			} else {
+				return err
+			}
+		}
+		if p.Environments == nil {
+			p.Environments = map[Env]EnvConfig{}
+		}
+		p.Environments[env] = ec
+	}
+	if len(errs) > 0 {
+		return &yaml.TypeError{Errors: errs}
+	}
+	return nil
+}
+
+// TechsIn is what runs in env: the generic techs (one with envs only where it
+// names env), the env's own versions laid over them or added, then its exclusions dropped.
+func (p Project) TechsIn(env Env) []ProjectTech {
+	out := make([]ProjectTech, 0, len(p.Techs))
+	for _, t := range p.Techs {
+		if len(t.Envs) == 0 || slices.Contains(t.Envs, env) {
+			out = append(out, ProjectTech{Name: t.Name, Version: t.Version})
+		}
+	}
+	ec := p.Environments[env]
+	names := make([]string, 0, len(ec.Techs))
+	for n := range ec.Techs {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		if i := slices.IndexFunc(out, func(t ProjectTech) bool { return strings.EqualFold(t.Name, name) }); i >= 0 {
+			out[i].Version = ec.Techs[name]
+		} else {
+			out = append(out, ProjectTech{Name: name, Version: ec.Techs[name]})
+		}
+	}
+	return slices.DeleteFunc(out, func(t ProjectTech) bool {
+		return slices.ContainsFunc(ec.Exclude, func(x string) bool { return strings.EqualFold(x, t.Name) })
+	})
 }
 
 // Lockfile is read on every run, so the tech matrix follows the repository.

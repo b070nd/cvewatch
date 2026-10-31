@@ -116,7 +116,7 @@ func (f *Flow) ReplaceTech(old, with string) error {
 	} else {
 		f.draft.Techs[i].Name = t.Name
 	}
-	for _, cfg := range f.draft.Environments {
+	for e, cfg := range f.draft.Environments {
 		for n, v := range cfg.Techs {
 			if strings.EqualFold(n, from) {
 				delete(cfg.Techs, n)
@@ -125,6 +125,12 @@ func (f *Flow) ReplaceTech(old, with string) error {
 				}
 			}
 		}
+		for i, x := range cfg.Exclude {
+			if strings.EqualFold(x, from) {
+				cfg.Exclude[i] = t.Name
+			}
+		}
+		f.draft.Environments[e] = cfg
 	}
 	f.forgetCustom()
 	f.problem = ""

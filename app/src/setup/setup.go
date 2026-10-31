@@ -549,7 +549,9 @@ func (f *Flow) dropEnvTech(name string) {
 				delete(cfg.Techs, n)
 			}
 		}
-		if len(cfg.Techs) == 0 && cfg.Image == "" {
+		cfg.Exclude = slices.DeleteFunc(cfg.Exclude, func(x string) bool { return strings.EqualFold(x, name) })
+		f.draft.Environments[e] = cfg
+		if len(cfg.Techs) == 0 && len(cfg.Exclude) == 0 && cfg.Image == "" {
 			delete(f.draft.Environments, e)
 		}
 	}
@@ -895,8 +897,9 @@ func (f *Flow) summary() string {
 // ---- ops and review ----
 
 // Ops is the edit list that turns Existing (or an empty file) into the draft,
-// in a fixed order: envs, tech removals, tech sets, lockfile removals and
-// additions, then per environment the tech versions and the image.
+// in a fixed order: envs, tech removals, tech sets, the environments a tech is
+// limited to, lockfile removals and additions, then per environment the
+// differences: tech versions, excluded techs and the image.
 func (f *Flow) Ops() []projectfile.Op {
 	var base model.Project
 	if f.existing != nil {
@@ -910,12 +913,13 @@ func (f *Flow) Ops() []projectfile.Op {
 	}
 
 	// set_tech cannot clear a version, so a cleared one is removed and set again.
-	changed := map[string]bool{}
+	changed, reset := map[string]bool{}, map[string]bool{}
 	for _, b := range base.Techs {
 		i := techIndex(cur.Techs, b.Name)
 		switch {
 		case i < 0 || b.Version != "" && cur.Techs[i].Version == "":
 			ops = append(ops, projectfile.Op{Kind: "remove_tech", Tech: b.Name})
+			reset[strings.ToLower(b.Name)] = true // removing drops the limit to some environments with it
 		case b.Version != cur.Techs[i].Version:
 			changed[strings.ToLower(b.Name)] = true
 		}
@@ -924,6 +928,16 @@ func (f *Flow) Ops() []projectfile.Op {
 		i := techIndex(base.Techs, c.Name)
 		if i < 0 || changed[strings.ToLower(c.Name)] || base.Techs[i].Version != "" && c.Version == "" {
 			ops = append(ops, projectfile.Op{Kind: "set_tech", Tech: c.Name, Version: c.Version})
+		}
+	}
+
+	for _, c := range cur.Techs {
+		var was []model.Env
+		if i := techIndex(base.Techs, c.Name); i >= 0 {
+			was = base.Techs[i].Envs
+		}
+		if !sameEnvs(was, c.Envs) || reset[strings.ToLower(c.Name)] && len(c.Envs) > 0 {
+			ops = append(ops, projectfile.Op{Kind: "set_tech_envs", Tech: c.Name, Envs: slices.Clone(c.Envs)}) // none lifts the limit
 		}
 	}
 
@@ -958,6 +972,16 @@ func (f *Flow) Ops() []projectfile.Op {
 				ops = append(ops, projectfile.Op{Kind: "remove_env_tech", Env: e, Tech: n})
 			case cv != "" && cv != bv:
 				ops = append(ops, projectfile.Op{Kind: "set_env_tech", Env: e, Tech: n, Version: cv})
+			}
+		}
+		for _, x := range b.Exclude {
+			if !slices.ContainsFunc(c.Exclude, func(o string) bool { return strings.EqualFold(o, x) }) {
+				ops = append(ops, projectfile.Op{Kind: "include_env_tech", Env: e, Tech: x})
+			}
+		}
+		for _, x := range c.Exclude {
+			if !slices.ContainsFunc(b.Exclude, func(o string) bool { return strings.EqualFold(o, x) }) {
+				ops = append(ops, projectfile.Op{Kind: "exclude_env_tech", Env: e, Tech: x})
 			}
 		}
 		if b.Image != c.Image {
@@ -1145,6 +1169,9 @@ func techIndex(techs []model.ProjectTech, name string) int {
 func cloneProject(p model.Project) model.Project {
 	p.Envs = slices.Clone(p.Envs)
 	p.Techs = slices.Clone(p.Techs)
+	for i := range p.Techs {
+		p.Techs[i].Envs = slices.Clone(p.Techs[i].Envs)
+	}
 	p.Lockfiles = slices.Clone(p.Lockfiles)
 	if p.Environments != nil {
 		m := make(map[model.Env]model.EnvConfig, len(p.Environments))
@@ -1156,6 +1183,7 @@ func cloneProject(p model.Project) model.Project {
 				}
 				c.Techs = t
 			}
+			c.Exclude = slices.Clone(c.Exclude)
 			m[e] = c
 		}
 		p.Environments = m
