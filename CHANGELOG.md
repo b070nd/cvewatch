@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- `cvewatch update` and the daemon log each finished chunk or page of a long fetch, and say when a source fetches history. Stopping (Ctrl-C) or a failure part way keeps the NVD windows that finished and the next run goes on from where it broke off, instead of starting the back-fill again.
 - Folder box in the TUI for new projects: Tab completes, Shift+Tab goes up one folder, Up and Down pick a folder. Rows show the lockfiles and manifests in each folder and a `project` tag.
 - TUI Projects screen shows a problems column and the problems of the selected project. `f` previews and applies a fix, `o` opens the file in the editor (`tui.editor`, else `$VISUAL` or `$EDITOR`). A project file that cannot be read is shown as broken instead of stopping the TUI.
 - `check_projects` MCP tool: read-only report of problems in project files, with the fixes it knows.

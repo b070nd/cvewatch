@@ -55,7 +55,7 @@ func reload(ctx context.Context, root string, log *slog.Logger, files []string) 
 		return time.Time{}
 	}
 	defer s.Close()
-	res, err := s.Backfill(ctx, progressLog(log))
+	res, err := s.Backfill(ctx, ops.ProgressLog(log))
 	logResult(log, "reload done", res)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		log.Error("reload failed", "err", err)
@@ -74,15 +74,6 @@ func logResult(log *slog.Logger, msg string, res pipeline.Result) {
 		"failed_sources", len(res.Failed), "backfilled", strings.Join(res.Backfilled, ","))
 }
 
-// progressLog reports long fetches, such as a back-fill in chunks, once per chunk.
-func progressLog(log *slog.Logger) func(pipeline.Progress) {
-	return func(p pipeline.Progress) {
-		if p.Phase == pipeline.PhaseFetch && p.Chunk > 0 {
-			log.Info("fetching", "source", p.Source, "chunk", p.Chunk, "of", p.Chunks)
-		}
-	}
-}
-
 // cycle runs one refresh of the projects that are due and returns how long to
 // wait before the next one is.
 func cycle(ctx context.Context, root string, log *slog.Logger, started time.Time) time.Duration {
@@ -98,7 +89,7 @@ func cycle(ctx context.Context, root string, log *slog.Logger, started time.Time
 	defer s.Close()
 	interval = s.Cfg.Interval
 
-	res, err := s.RefreshScheduled(ctx, progressLog(log))
+	res, err := s.RefreshScheduled(ctx, ops.ProgressLog(log))
 	failed := err != nil && !errors.Is(err, context.Canceled)
 	switch {
 	case failed:

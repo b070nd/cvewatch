@@ -325,7 +325,7 @@ func failGate(issues []query.Issue, level model.Severity) error {
 }
 
 func refresh(ctx context.Context, s *ops.Session, o listOpts) error {
-	res, err := s.Refresh(ctx)
+	res, err := s.RefreshWith(ctx, ops.ProgressLog(s.Log))
 	s.Log.Info("cycle done", "items", res.Items, "new", res.New, "merged", res.Merged, "pruned", res.Pruned,
 		"findings", res.Findings, "reconciled", res.Reconciled, "enriched", res.Enriched,
 		"alerted", res.Alerted, "digests", res.Digests, "failed_sources", len(res.Failed), "backfilled", strings.Join(res.Backfilled, ","))

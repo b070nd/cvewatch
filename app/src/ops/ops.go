@@ -469,6 +469,20 @@ func (s *Session) Refresh(ctx context.Context) (pipeline.Result, error) {
 // RefreshProgress is one step of a running refresh; see pipeline.Progress.
 type RefreshProgress = pipeline.Progress
 
+// ProgressLog reports the pieces of a long fetch, such as a back-fill in
+// chunks, to log as they finish.
+func ProgressLog(log *slog.Logger) func(RefreshProgress) {
+	return func(p RefreshProgress) {
+		switch {
+		case p.Phase != pipeline.PhaseFetch || p.Chunk == 0:
+		case p.Chunks > 0:
+			log.Info("fetching", "source", p.Source, "chunk", p.Chunk, "of", p.Chunks)
+		default:
+			log.Info("fetching", "source", p.Source, "page", p.Chunk)
+		}
+	}
+}
+
 // RefreshWith is Refresh that reports its steps. progress may be nil and is
 // called from several goroutines, one at a time.
 func (s *Session) RefreshWith(ctx context.Context, progress func(RefreshProgress)) (pipeline.Result, error) {

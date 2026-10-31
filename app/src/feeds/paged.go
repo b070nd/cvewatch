@@ -24,7 +24,7 @@ const (
 // than the API allows are cut into chunks and every answer is paged through;
 // GitHub answers are followed along their Link header. A source that is not
 // paged takes one request.
-func fetchPages(ctx context.Context, g Getter, src model.Source, p parser, prev model.Validators, since, now time.Time, progress func(done, total int)) (items []model.Item, valids model.Validators, notModified bool, err error) {
+func fetchPages(ctx context.Context, g Getter, src model.Source, p parser, prev model.Validators, since, now time.Time, progress func(done, total int)) (items []model.Item, valids model.Validators, notModified bool, resume time.Time, err error) {
 	headers := mergeHeaders(p.accept, src.Headers)
 	note := func(done, total int) {
 		if progress != nil {
@@ -48,16 +48,24 @@ func fetchPages(ctx context.Context, g Getter, src model.Source, p parser, prev 
 			if len(wins) == 1 {
 				v = prev
 			}
+			mark := len(items)
+			// A window that fails keeps the ones before it: the next run resumes at its start.
+			partial := func(err error) ([]model.Item, model.Validators, bool, time.Time, error) {
+				if i == 0 {
+					return nil, prev, false, time.Time{}, err
+				}
+				return items[:mark], prev, false, w[0], err
+			}
 			for start, page := 0, 0; page < maxPages; page++ {
 				resp, err := g.Get(ctx, withStartIndex(u, start), v, headers)
 				if err != nil {
-					return nil, prev, false, err
+					return partial(err)
 				}
 				if resp.NotModified {
-					return nil, prev, true, nil
+					return nil, prev, true, time.Time{}, nil
 				}
 				if err := parse(resp.Body); err != nil {
-					return nil, prev, false, err
+					return partial(err)
 				}
 				if len(wins) == 1 && page == 0 {
 					valids = resp.Validators
@@ -72,20 +80,20 @@ func fetchPages(ctx context.Context, g Getter, src model.Source, p parser, prev 
 				note(i+1, len(wins))
 			}
 		}
-		return items, valids, false, nil
+		return items, valids, false, time.Time{}, nil
 
 	case "ghsa":
 		first := expand(src, since, now)
 		resp, err := g.Get(ctx, first, prev, headers)
 		if err != nil {
-			return nil, prev, false, err
+			return nil, prev, false, time.Time{}, err
 		}
 		if resp.NotModified {
-			return nil, prev, true, nil
+			return nil, prev, true, time.Time{}, nil
 		}
 		valids = resp.Validators
 		if err := parse(resp.Body); err != nil {
-			return nil, prev, false, err
+			return nil, prev, false, time.Time{}, err
 		}
 		for page := 1; page < maxPages; page++ {
 			next := nextLink(resp.Link)
@@ -93,27 +101,27 @@ func fetchPages(ctx context.Context, g Getter, src model.Source, p parser, prev 
 				break
 			}
 			if resp, err = g.Get(ctx, next, model.Validators{}, headers); err != nil {
-				return nil, prev, false, err
+				return nil, prev, false, time.Time{}, err
 			}
 			if err := parse(resp.Body); err != nil {
-				return nil, prev, false, err
+				return nil, prev, false, time.Time{}, err
 			}
 			note(page+1, 0)
 		}
-		return items, valids, false, nil
+		return items, valids, false, time.Time{}, nil
 	}
 
 	resp, err := g.Get(ctx, expand(src, since, now), prev, headers)
 	if err != nil {
-		return nil, prev, false, err
+		return nil, prev, false, time.Time{}, err
 	}
 	if resp.NotModified {
-		return nil, prev, true, nil
+		return nil, prev, true, time.Time{}, nil
 	}
 	if err := parse(resp.Body); err != nil {
-		return nil, prev, false, err
+		return nil, prev, false, time.Time{}, err
 	}
-	return items, resp.Validators, false, nil
+	return items, resp.Validators, false, time.Time{}, nil
 }
 
 // nvdWindows cuts from..to into spans NVD accepts. A span that is empty or

@@ -117,6 +117,9 @@ type fetched struct {
 	from  time.Time // start of the window asked for
 	back  bool
 	note  string
+	// resume is set with err when the windows before the failed one finished:
+	// items holds them and the next fetch starts here.
+	resume time.Time
 }
 
 // cycle carries what one run shares between its steps.
@@ -157,6 +160,9 @@ func (r *Runner) Run(ctx context.Context) (Result, error) {
 			c.res.Failed = append(c.res.Failed, src.ID+": "+f.err.Error())
 			r.Log.Warn("source failed", "source", src.ID, "err", f.err)
 			r.Ledger.SourceOutcome(src.ID, src.Type, c.now, 0, errors.New(query.Clip(f.err.Error(), 200)))
+			if !f.resume.IsZero() {
+				r.keepFinished(c, src, f)
+			}
 			continue
 		}
 		prior := r.Ledger.Feed(src.ID)
@@ -267,13 +273,16 @@ func (r *Runner) fetchAll(ctx context.Context, srcs []model.Source, now time.Tim
 		go func() {
 			defer wg.Done()
 			st := r.Ledger.Feed(src.ID) // read-only here; written after the join
+			if (src.Type == "nvd" || src.Type == "ghsa") && !st.Backfill.IsZero() && st.Backfill.Before(st.LastRun) {
+				r.Log.Info("fetching history", "source", src.ID, "from", st.Backfill.Format("2006-01-02"), "hint", "this can take minutes at the host's rate limit; stopping keeps what is fetched")
+			}
 			chunk := func(n, total int) {
 				mu.Lock()
 				defer mu.Unlock()
 				r.report(Progress{Phase: PhaseFetch, Done: done, Total: len(srcs), Source: src.ID, Chunk: n, Chunks: total})
 			}
 			o, err := feeds.FetchRange(ctx, r.Getter, src, st, now, r.Cfg.Lookback, chunk)
-			out[i] = fetched{items: o.Items, val: o.Validators, err: err, from: o.From, back: o.Backfilled, note: o.Note}
+			out[i] = fetched{items: o.Items, val: o.Validators, err: err, from: o.From, back: o.Backfilled, note: o.Note, resume: o.Resume}
 			mu.Lock()
 			defer mu.Unlock()
 			done++
@@ -348,6 +357,27 @@ func (c *cycle) process(it model.Item) {
 		return
 	}
 	v.Summary, v.Affected, v.Fixes = brief(v.Summary, v.Affected) // irrelevant: keep what a later revalidation needs
+}
+
+// keepFinished takes in the windows of a long fetch that finished before it
+// failed or was stopped and moves the source's cursor to where it broke off,
+// so the next run goes on from there instead of from the start.
+func (r *Runner) keepFinished(c *cycle, src model.Source, f fetched) {
+	st := r.Ledger.Feed(src.ID)
+	if !st.Backfill.IsZero() && f.resume.Before(st.LastRun) {
+		st.Backfill = f.resume
+	} else {
+		st.LastRun, st.Backfill = f.resume, time.Time{}
+	}
+	if st.Covered.IsZero() || f.from.Before(st.Covered) && !f.resume.Before(st.Covered) {
+		st.Covered = f.from
+	}
+	r.Ledger.SetFeed(src.ID, st)
+	r.Log.Info("kept what was fetched; the next run goes on from there", "source", src.ID, "items", len(f.items), "resume", f.resume.Format("2006-01-02"))
+	for _, it := range f.items {
+		c.res.Items++
+		c.process(it)
+	}
 }
 
 // reassess re-checks existing findings against affected data that arrived late.

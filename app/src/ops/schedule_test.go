@@ -1,10 +1,14 @@
 package ops
 
 import (
+	"bytes"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/b070nd/cvewatch/app/src/model"
+	"github.com/b070nd/cvewatch/app/src/pipeline"
 	"github.com/b070nd/cvewatch/app/src/status"
 )
 
@@ -139,5 +143,17 @@ func TestStatusListsTheScheduleOfTheVisibleProjects(t *testing.T) {
 	s.Cfg.Update.Auto = false
 	if rep, _ = s.Status(); rep.Scheduled {
 		t.Error("the main switch is off")
+	}
+}
+
+func TestProgressLogSaysWhichChunkOrPageFinished(t *testing.T) {
+	var buf bytes.Buffer
+	p := ProgressLog(slog.New(slog.NewTextHandler(&buf, nil)))
+	p(pipeline.Progress{Phase: pipeline.PhaseFetch, Source: "nvd", Chunk: 2, Chunks: 9})
+	p(pipeline.Progress{Phase: pipeline.PhaseFetch, Source: "ghsa", Chunk: 3})
+	p(pipeline.Progress{Phase: pipeline.PhaseFetch, Source: "kev", Done: 1, Total: 2})
+	got := buf.String()
+	if !strings.Contains(got, "source=nvd chunk=2 of=9") || !strings.Contains(got, "source=ghsa page=3") || strings.Contains(got, "kev") {
+		t.Fatalf("log = %q", got)
 	}
 }
