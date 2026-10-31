@@ -325,3 +325,32 @@ func TestSettingsReadableWhenConfigIsBroken(t *testing.T) {
 		t.Error("the broken configuration should still stop the tools that need it")
 	}
 }
+
+func TestListProjectsShowsDeclaredLockfilePathAndRemoveAcceptsResolved(t *testing.T) {
+	root := fixture(t)
+	writeConf(t, root, "config/projects/shop.yaml", "name: shop\nenvs: [dev, prod]\ntechs: [{name: php}]\nlockfiles: [{type: composer, path: sub/composer.lock}]\n")
+	cs := connect(t, root, true)
+	_, out := call(t, cs, "list_projects", map[string]any{})
+	var listed struct {
+		Projects []struct {
+			Lockfiles []struct {
+				Path         string
+				DeclaredPath string `json:"declared_path"`
+			} `json:"lockfiles"`
+		} `json:"projects"`
+	}
+	if err := json.Unmarshal([]byte(out), &listed); err != nil || len(listed.Projects) != 1 || len(listed.Projects[0].Lockfiles) != 1 {
+		t.Fatalf("%s %v", out, err)
+	}
+	lf := listed.Projects[0].Lockfiles[0]
+	if lf.DeclaredPath != "sub/composer.lock" || lf.Path == lf.DeclaredPath || !filepath.IsAbs(lf.Path) {
+		t.Fatalf("lockfile entry: %+v", lf)
+	}
+	change := map[string]any{"kind": "remove_lockfile", "lockfile_path": lf.Path}
+	if res, out := call(t, cs, "edit_project", map[string]any{"project": "shop", "changes": []any{change}}); res.IsError {
+		t.Fatalf("%s %s", out, res.Content[0].(*mcp.TextContent).Text)
+	}
+	if got := readConf(t, root, "config/projects/shop.yaml"); strings.Contains(got, "composer") {
+		t.Errorf("lockfile not removed:\n%s", got)
+	}
+}

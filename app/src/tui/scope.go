@@ -188,6 +188,64 @@ func (m *app) rescope() {
 	m.refitLists()
 }
 
+// setContext is the one place the context changes. Whatever was opened for
+// another context goes with it: the issue page and what it shows, a prompt
+// about a finding, and the way back to a place of the old context.
+func (m *app) setContext(t tenant, auto bool) {
+	m.tenant, m.tenantAuto = t, auto
+	m.dropForeign()
+}
+
+// dropForeign closes what is bound to a project outside the context.
+func (m *app) dropForeign() {
+	if d := m.fnd.det; d != nil {
+		held := false
+		if d.project != "" {
+			held = m.inContext(d.project)
+		} else {
+			held = d.filter.Vendor == m.tenant.vendor && d.filter.Project == m.tenant.project
+		}
+		if !held {
+			m.fnd.det = nil
+		}
+	}
+	if p := m.prm; p != nil && p.bound && p.ctx != m.tenant {
+		m.prm = nil
+	}
+	if r := m.ret; r != nil && !m.placeHeld(r.to, r.ctx) {
+		m.ret = nil
+	}
+	if m.jmp != nil {
+		m.jmp.refit(m)
+	}
+}
+
+// inContext is whether the project is one the context holds.
+func (m *app) inContext(project string) bool {
+	return m.tenant.all() || slices.Contains(m.tenantNames(), project)
+}
+
+// placeHeld is whether going to t, which was kept while the context was ctx,
+// still lands in the context: an issue belongs to the project it was read in.
+func (m *app) placeHeld(t target, ctx tenant) bool {
+	if t.kind != tgIssue {
+		return true
+	}
+	if t.project == "" {
+		return ctx == m.tenant
+	}
+	return m.inContext(t.project)
+}
+
+// foreign refuses a finding of a project outside the context, and says so.
+func (m *app) foreign(project string) bool {
+	if m.inContext(project) {
+		return false
+	}
+	m.fail("that issue belongs to " + oneLine(project) + "; choose its project with C")
+	return true
+}
+
 // setTenant moves the context. It says what it did unless quiet.
 func (m *app) setTenant(t tenant, quiet bool) {
 	switch {
@@ -204,7 +262,7 @@ func (m *app) setTenant(t tenant, quiet bool) {
 	if t == m.tenant {
 		return
 	}
-	m.tenant = t
+	m.setContext(t, false)
 	m.rescope()
 	if !quiet {
 		m.say("context: " + oneLine(m.tenantLabel()))
@@ -217,16 +275,16 @@ func (m *app) setTenant(t tenant, quiet bool) {
 func (m *app) checkScope() {
 	t := m.tenant
 	if (t.project != "" && !m.hasProject(t.project)) || (t.vendor != "" && len(m.namesIn(t)) == 0) {
-		m.tenant, m.tenantAuto = tenant{}, false
+		m.setContext(tenant{}, false)
 		if m.flash == "" {
 			m.say("context cleared: " + oneLine(m.tenantWord(t)) + " is gone")
 		}
 	}
 	switch act := m.active(); {
 	case m.tenant.all() && len(act) == 1:
-		m.tenant, m.tenantAuto = tenant{project: act[0].Name}, true
+		m.setContext(tenant{project: act[0].Name}, true)
 	case m.tenantAuto && len(act) != 1:
-		m.tenant, m.tenantAuto = tenant{}, false
+		m.setContext(tenant{}, false)
 	}
 	m.rescope()
 }

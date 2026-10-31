@@ -196,16 +196,29 @@ func checkSources(ctx context.Context, r *Report, cfg *config.Bundle, g feeds.Ge
 		case s.Disabled:
 			r.add(gSources, s.ID, Skip, "disabled")
 		case g == nil:
-			r.add(gSources, s.ID, OK, "type %s", s.Type)
+			r.add(gSources, s.ID, OK, "type %s%s", s.Type, tokenHint(s))
 		default:
 			items, _, err := feeds.Fetch(ctx, g, s, model.FeedState{}, time.Now(), cfg.Lookback)
 			if err != nil {
-				r.add(gSources, s.ID, Warn, "fetch failed: %s", err)
+				r.add(gSources, s.ID, Warn, "fetch failed: %s%s", err, tokenHint(s))
 				continue
 			}
-			r.add(gSources, s.ID, OK, "fetched, %d items in the last %s", len(items), cfg.Lookback)
+			r.add(gSources, s.ID, OK, "fetched, %d items in the last %s%s", len(items), cfg.Lookback, tokenHint(s))
 		}
 	}
+}
+
+// tokenHint says whether the variable named by auth_env is set, never its value.
+func tokenHint(s model.Source) string {
+	switch {
+	case s.AuthEnv == "":
+		return ""
+	case strings.TrimSpace(os.Getenv(s.AuthEnv)) != "":
+		return "; " + s.AuthEnv + " set"
+	case s.Type == "ghsa":
+		return "; " + s.AuthEnv + " not set: GitHub allows 60 requests an hour without a token, 5000 with one"
+	}
+	return "; " + s.AuthEnv + " not set"
 }
 
 func checkInventory(r *Report, cfg *config.Bundle) {
@@ -360,7 +373,7 @@ func checkUpdates(r *Report, cfg *config.Bundle) {
 		return
 	}
 	if !cfg.Update.Auto {
-		r.add(gConfig, "updates", Warn, "update.auto is off: nothing is refreshed by itself; run cvewatch update or press F in the TUI")
+		r.add(gConfig, "updates", Warn, "update.auto is off: nothing is refreshed by itself; run cvewatch update or press u in the TUI")
 		return
 	}
 	var paused []string
@@ -370,7 +383,7 @@ func checkUpdates(r *Report, cfg *config.Bundle) {
 		}
 	}
 	if len(paused) > 0 {
-		r.add(gConfig, "updates", Warn, "scheduled runs skip %s (update.auto: false in the project file); run cvewatch update or press F to refresh them", strings.Join(paused, ", "))
+		r.add(gConfig, "updates", Warn, "scheduled runs skip %s (update.auto: false in the project file); run cvewatch update or press u in the TUI to refresh them", strings.Join(paused, ", "))
 		return
 	}
 	r.add(gConfig, "updates", OK, "%d projects refreshed on their own schedule, by default every %s", len(cfg.Projects), model.Span(cfg.Interval))

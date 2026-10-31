@@ -506,3 +506,23 @@ func TestAPeriodUnderTheMinimumFailsAndOverThirtyDaysWarns(t *testing.T) {
 		t.Errorf("a long period is no failure: %+v", r.Checks)
 	}
 }
+
+func TestSourcesCheckSaysWhetherTheTokenVariableIsSetNeverItsValue(t *testing.T) {
+	root := newRoot(t, map[string]string{
+		"sources/s.yaml": "sources:\n  - {id: ghsa, type: ghsa, url: \"https://example.com/advisories\", auth_env: CVEWATCH_TEST_TOKEN}\n  - {id: other, type: kev, url: \"https://example.com/kev.json\", auth_env: CVEWATCH_TEST_TOKEN, disabled: true}\n",
+	})
+	t.Setenv("CVEWATCH_TEST_TOKEN", "")
+	c := want(t, Run(context.Background(), root, Options{}), "sources", "ghsa", OK)
+	if !strings.Contains(c.Detail, "CVEWATCH_TEST_TOKEN not set") {
+		t.Errorf("detail = %q", c.Detail)
+	}
+	t.Setenv("CVEWATCH_TEST_TOKEN", "s3cret-token")
+	r := Run(context.Background(), root, Options{})
+	c = want(t, r, "sources", "ghsa", OK)
+	if !strings.Contains(c.Detail, "CVEWATCH_TEST_TOKEN set") || strings.Contains(c.Detail, "s3cret") {
+		t.Errorf("detail = %q", c.Detail)
+	}
+	if c := want(t, r, "sources", "other", Skip); strings.Contains(c.Detail, "TOKEN") {
+		t.Errorf("a disabled source says nothing about its token: %q", c.Detail)
+	}
+}

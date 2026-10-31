@@ -62,6 +62,7 @@ type returnPoint struct {
 	dest   screen
 	level  string
 	filter string // the filter the jump set; it goes again with the way back
+	ctx    tenant // the context it was made in
 	depth  int    // tgSetting: the levels open on the landing, which is where back returns
 }
 
@@ -143,7 +144,7 @@ func (m *app) goTo(t target) tea.Cmd {
 	case tgIssue:
 		m.scr = scrFindings
 		m.fnd.filtering, m.fnd.det = false, nil
-		if t.project != "" && m.tenant.all() { // an issue of the portfolio opens in its project
+		if t.project != "" && (m.tenant.all() || !m.inContext(t.project)) { // an issue outside the context opens in its project
 			m.setTenant(tenant{project: t.project}, true)
 		}
 		i := m.visibleIssue(t.project, t.issue)
@@ -206,8 +207,8 @@ func (m *app) goTo(t target) tea.Cmd {
 		return nil
 	}
 	m.ret = nil
-	if hadFrom && from != t {
-		m.ret = &returnPoint{to: from, dest: m.scr, level: level, filter: t.filter, depth: len(m.set.nav)}
+	if hadFrom && from != t && m.placeHeld(from, m.tenant) {
+		m.ret = &returnPoint{to: from, dest: m.scr, level: level, filter: t.filter, depth: len(m.set.nav), ctx: m.tenant}
 	}
 	return cmd
 }

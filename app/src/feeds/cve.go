@@ -58,7 +58,7 @@ func fetchCVE(ctx context.Context, g Getter, src model.Source, st model.FeedStat
 	}
 	dir := cleanURL(base)
 	dir.Path = path.Dir(base.Path) + "/"
-	headers := mergeHeaders(acceptJSON, src.Headers)
+	headers := mergeHeaders(acceptJSON, src)
 
 	cursor := cveCursor(st.Validators.ETag)
 	deltas, err := cveDeltas(ctx, g, base, headers, cursor)

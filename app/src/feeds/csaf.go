@@ -93,7 +93,7 @@ func fetchCSAF(ctx context.Context, g Getter, src model.Source, st model.FeedSta
 	if err != nil || base.Host == "" || !strings.EqualFold(base.Scheme, "https") {
 		return nil, st.Validators, errors.New("csaf: url must be an https URL")
 	}
-	headers := mergeHeaders(acceptJSON, src.Headers)
+	headers := mergeHeaders(acceptJSON, src)
 
 	var dir, index *url.URL
 	switch {

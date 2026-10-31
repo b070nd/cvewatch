@@ -138,7 +138,7 @@ The interface always works in one context, and rows of two projects are never mi
 - **All projects.** This is a view of the portfolio. Overview shows one section for each project, with its counts and its top three issues, and Findings lists the issues grouped by project. An issue is never merged across projects. Enter on a row sets the context to that row's project first, then opens the issue.
 - **One vendor.** The same as all projects, for the projects of that vendor.
 - **Choosing.** `C` opens the choice from every screen: all projects, each vendor, and each project, with the cursor on the current context. Enter on a project on the Projects screen sets the context to it. Opening one of a project's security issues (`s`, then Enter) does too. With one project in the portfolio, that project is the context and is set by itself. If a project was in the context and is deleted or disabled, the context is cleared, and with one project left it is that project.
-- **Staying.** The context lasts for the session and survives a re-read. It is not stored between runs.
+- **Staying.** The context lasts for the session and survives a re-read. It is not stored between runs. When the context changes, an issue page, a prompt about a finding or a way back that belongs to a project outside the new context is closed, so an action never targets another project than the chip names.
 
 The issue page of a vendor or all-projects row holds only the rows of that project, so assign, status and evidence act on that project.
 
@@ -474,7 +474,7 @@ These keys act on a whole project. Each one shows its consequences first, and no
 A project is found by the `name:` its file declares, not by the file's name. A file `magento2-shop.yaml` that declares `name: shop` is the project `shop`, and rename, delete, disable, edit and the CLI commands work on it. Its problems carry a warning, `file magento2-shop.yaml declares shop`, so the mismatch is visible; making the file name and the `name:` match clears it. A new project's file is named after the project.
 
 - **New (`N`):** a name, then the environments, separated by commas. An empty answer means `local`. No folder is needed. Creating a project needs write access to every project.
-- **Rename (`R`):** a new name. The findings move to the new name, the access rules that name the project follow it, and the reports of its issues are rewritten. The old name stays in the audit log and in past evidence. The new name must be free, and the ledger must not already hold a finding under that name for the same issue and environment.
+- **Rename (`R`):** a new name. The findings move to the new name, the access rules that name the project follow it, and the reports of its issues are rewritten. The old name stays in the audit log, which is never rewritten, and the evidence pack and the issue history of the renamed project still include what was recorded under any of its former names (A renamed to B renamed to C), also for a reader whose access rule now names the new name. A project created later under an old name does not inherit that history. The new name must be free, and the ledger must not already hold a finding under that name for the same issue and environment.
 - **Duplicate (`D`):** a name, which starts as the name plus `-copy`. The copy has the same technologies and lockfiles, so it finds the same issues. It is in no access rule.
 - **Delete (`X`):** the project's file moves to `data/project-backups/`. Nothing else is erased, but the access rules that name the project drop it. The findings stay in the ledger unchanged. They are no longer checked again, but open ones still show in lists and digests. You type the project's name to confirm. On the consequences, `c` also marks the project's open findings ignored, with the note "project deleted".
 - **Disable (`Z`):** the file is renamed to `<name>.yaml.disabled`. A disabled project matches no new issues, and its findings are not checked again. The access rules that name it are removed, and enable does not restore them. A disabled project stays in the list, marked `disabled`, and `cvewatch project list` marks it too.
@@ -507,7 +507,7 @@ cvewatch project shop -set php=8.3 -save                # write it; a backup goe
 | `-migrate-envs` | rewrite the old `environments:` block as `when@ENV` blocks; nothing else changes |
 | `-image ENV=TAG` | the image of one environment; `ENV=` clears it |
 | `-lock TYPE:PATH[:ENV][:dev]` | add a lockfile. `ENV` limits it to one environment; `dev` counts its development-only packages in every environment |
-| `-unlock TYPE:PATH[:ENV]` | remove a lockfile entry |
+| `-unlock TYPE:PATH[:ENV]` | remove a lockfile entry; PATH is the path as the file declares it, or the resolved one the lists show |
 | `-lock-dev TYPE:PATH[:ENV]` | change an existing entry to count its development-only packages in every environment |
 | `-lock-nodev TYPE:PATH[:ENV]` | change an existing entry to stop counting them outside development-like environments |
 | `-since DATE` | advisories count from this day (`YYYY-MM-DD`); `-since ""` clears it |
@@ -741,6 +741,12 @@ How it works, in short:
 - The first run takes only the newest 100 records. Older ones come from NVD and the lookback. Changes older than about a week (a week-long outage) are not recovered from this source.
 - Requests go to `raw.githubusercontent.com` at up to 5 a second (`host_rates`). Switch it off with `sources: [{id: cve-records, disabled: true}]` in a file in `sources/`. An entry for a feed that already exists changes only the fields it gives (here `disabled`), so it needs no type or url.
 
+## GitHub advisories and the rate limit
+
+The `ghsa` source reads the reviewed advisories of api.github.com. Without a token GitHub allows 60 requests an hour per IP address, and a back-fill or a busy day pages through more than that, so the source then fails with an HTTP 403. The shipped source therefore has `auth_env: GITHUB_TOKEN`: if that environment variable has a value, it is sent as `Authorization: Bearer <value>` and the limit is 5000 requests an hour. The token needs no scopes for public advisories. An unset or empty variable sends nothing and is no error. The same field works on any source (`auth_env: MY_FEED_TOKEN`), and a header you give yourself under `headers` wins. Only the variable's name appears in the settings, in `cvewatch doctor` (which says whether it is set) and in logs; the value never does, and a value that is not a variable name is refused.
+
+A 403 or 429 answer with `X-RateLimit-Remaining: 0` or a `Retry-After` is read as a rate limit. When it ends within `http.cooldown_429` (2 minutes by default) the request waits and tries again. A later reset fails at once, without sleeping inside the cycle, with `rate limited by api.github.com until 14:05; set auth_env on the source for a higher limit`, and the other requests to that host in the cycle fail the same way without asking again. The feed shows as failing in `cvewatch status` until the next cycle succeeds. Other 403 answers keep their own message.
+
 ## Inventory
 
 | Source | `type:` | Notes |
@@ -834,7 +840,7 @@ Channels switch on when their secret is in the environment, so one config file i
 | `config/config.yaml` | interval, HTTP limits, Slack, notify, policy, enrich, storage, access, horizon, tui (refresh, fetch and editor) |
 | `config/techs.yaml` | your additions to the built-in technology catalog, including your own keywords (`cvewatch tech`) |
 | `config/projects/*.yaml` | one file per project |
-| `sources/*.yaml` | your additions to the built-in feeds (an entry with the id of an existing feed changes only the fields it gives, such as `disabled: true` to switch it off; a new id needs a `type` and a `url`) |
+| `sources/*.yaml` | your additions to the built-in feeds (an entry with the id of an existing feed changes only the fields it gives, such as `disabled: true` to switch it off; a new id needs a `type` and a `url`). Other fields: `headers`, `auth_env` (a token variable, see [GitHub advisories and the rate limit](#github-advisories-and-the-rate-limit)), `match_title_only`, `match_structured` |
 | `data/` | state (`state.json`, or `state.db` with the SQLite backend), `audit.log`, `project-backups/` |
 | `alerts/` | generated markdown reports and calendar pages |
 

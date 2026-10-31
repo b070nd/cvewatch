@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/b070nd/cvewatch/app/src/host"
@@ -30,6 +32,7 @@ type Event struct {
 	Action  string    `json:"action"` // detected | alerted | status | assign | evidence | inventory | unified | digest | project | settings | revalidate
 	Vuln    string    `json:"vuln,omitempty"`
 	Project string    `json:"project,omitempty"`
+	To      string    `json:"to,omitempty"` // the new name of a project rename; Project holds the old one
 	Env     string    `json:"env,omitempty"`
 	Status  string    `json:"status,omitempty"`
 	Note    string    `json:"note,omitempty"`
@@ -162,4 +165,62 @@ func (l *Log) Events() ([]Event, error) {
 		out = append(out, e)
 	}
 	return out, sc.Err()
+}
+
+// Rename is a project rename found in the log. At is the position of its
+// record: a record before it that names From belongs to the project now
+// called To.
+type Rename struct {
+	From, To string
+	At       int
+}
+
+// oldRenameNote reads the target name from the note of a rename recorded
+// before the To field existed.
+var oldRenameNote = regexp.MustCompile(`^renamed project to (.+): \d+ findings moved`)
+
+// Renames lists the project renames of a log, oldest first. A rename that was
+// recorded and then failed (a "project-failed" record with the same time and
+// project follows it) did not happen and is left out. The log is never
+// changed; renames are read from it.
+func Renames(events []Event) []Rename {
+	var out []Rename
+	for i, e := range events {
+		if e.Action != "project" || e.Project == "" {
+			continue
+		}
+		to := e.To
+		if to == "" {
+			if m := oldRenameNote.FindStringSubmatch(e.Note); m != nil {
+				to = m[1]
+			}
+		}
+		if to == "" || to == e.Project || strings.Contains(e.Project, ",") {
+			continue
+		}
+		failed := false
+		for _, f := range events[i+1:] {
+			if f.Action == "project-failed" && f.Project == e.Project && f.Time.Equal(e.Time) {
+				failed = true
+				break
+			}
+		}
+		if !failed {
+			out = append(out, Rename{From: e.Project, To: to, At: i})
+		}
+	}
+	return out
+}
+
+// CurrentName follows the renames after position at from a name used there to
+// the name the project has now (A to B to C). A project that was never renamed
+// after that point keeps its name, so a later project that reuses an old name
+// does not inherit the history of the renamed one.
+func CurrentName(renames []Rename, name string, at int) string {
+	for _, r := range renames {
+		if r.At > at && r.From == name {
+			name, at = r.To, r.At
+		}
+	}
+	return name
 }

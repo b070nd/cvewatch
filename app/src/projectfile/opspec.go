@@ -148,7 +148,7 @@ var OpTable = []OpSpec{
 		Kind: "remove_lockfile", Summary: "stop reading a lockfile",
 		Params: []Param{
 			{"lockfile.type", "string", false, "not used to find the entry; accepted so the lockfile object of add_lockfile works as it is"},
-			{"lockfile.path", "string", true, "path of the lockfile as declared"},
+			{"lockfile.path", "string", true, "path of the lockfile as declared in the project file (list_projects: declared_path), or the resolved one it shows as path"},
 			{"lockfile.env", "env", false, "only the entry for this environment; empty removes every entry with the path"},
 		},
 		Example: Op{Kind: "remove_lockfile", Lockfile: model.Lockfile{Type: "composer", Path: "composer.lock", Env: model.EnvProd}},
@@ -158,7 +158,7 @@ var OpTable = []OpSpec{
 		Kind: "set_lockfile_dev", Summary: "count a lockfile's development-only packages in every environment, or stop",
 		Params: []Param{
 			{"lockfile.type", "string", false, "not used to find the entry; accepted so the lockfile object of add_lockfile works as it is"},
-			{"lockfile.path", "string", true, "path of the lockfile as declared"},
+			{"lockfile.path", "string", true, "path of the lockfile as declared in the project file (list_projects: declared_path), or the resolved one it shows as path"},
 			{"lockfile.env", "env", false, "only the entry for this environment; empty changes every entry with the path"},
 			{"lockfile.dev", "bool", false, "the new value; false (the default) stops counting them outside development-like environments (local, dev, int)"},
 		},

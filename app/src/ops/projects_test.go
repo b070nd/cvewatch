@@ -3,6 +3,7 @@ package ops
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -139,5 +140,48 @@ func TestEditProjectWritesTheUpdateBlockAndTheViewShowsIt(t *testing.T) {
 	}
 	if ViewOf(model.Project{Name: "blog"}).Update != nil {
 		t.Error("no block, no view of one")
+	}
+}
+
+func TestLockfileOpsAcceptDeclaredOrResolvedPath(t *testing.T) {
+	s := editable(t, nil, "alice")
+	writeRoot(t, s, "config/projects/blog.yaml", "name: blog\nlockfiles:\n  - {type: composer, path: ../shop/composer.lock}\n  - {type: npm, path: web/package-lock.json, env: prod}\n  - {type: npm, path: web/../web/package-lock.json, env: dev}\n")
+	resolved := filepath.Join(s.Cfg.Root, "..", "shop", "composer.lock")
+	resolved = filepath.Clean(resolved)
+
+	// the resolved path, as listings show it, is enough
+	p, err := s.EditProject(ProjectChange{Project: "blog", Save: true, Ops: []projectfile.Op{
+		{Kind: "set_lockfile_dev", Lockfile: model.Lockfile{Path: resolved, Dev: true}}}})
+	if err != nil || !p.Saved || len(p.Result.Lockfiles) != 3 || !p.Result.Lockfiles[0].Dev || p.Result.Lockfiles[0].Path != "../shop/composer.lock" {
+		t.Fatalf("%+v %v", p.Result.Lockfiles, err)
+	}
+	p, err = s.EditProject(ProjectChange{Project: "blog", Save: true, Ops: []projectfile.Op{
+		{Kind: "remove_lockfile", Lockfile: model.Lockfile{Path: resolved}}}})
+	if err != nil || len(p.Result.Lockfiles) != 2 {
+		t.Fatalf("%+v %v", p.Result.Lockfiles, err)
+	}
+	if strings.Contains(readRoot(t, s, "config/projects/blog.yaml"), "composer") {
+		t.Fatal("lockfile still declared")
+	}
+
+	// the declared spelling still works, and wins over a resolved match
+	if p, err = s.EditProject(ProjectChange{Project: "blog", Ops: []projectfile.Op{
+		{Kind: "remove_lockfile", Lockfile: model.Lockfile{Path: "web/../web/package-lock.json"}}}}); err != nil || len(p.Result.Lockfiles) != 1 {
+		t.Fatalf("%+v %v", p.Result.Lockfiles, err)
+	}
+
+	// two spellings of the same file are ambiguous without an env, and named in the error
+	abs := filepath.Join(s.Cfg.Root, "web", "package-lock.json")
+	_, err = s.EditProject(ProjectChange{Project: "blog", Ops: []projectfile.Op{{Kind: "remove_lockfile", Lockfile: model.Lockfile{Path: abs}}}})
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") || !strings.Contains(err.Error(), "web/package-lock.json") || !strings.Contains(err.Error(), "web/../web/package-lock.json") {
+		t.Fatalf("err = %v", err)
+	}
+	// an env picks one
+	if p, err = s.EditProject(ProjectChange{Project: "blog", Ops: []projectfile.Op{{Kind: "remove_lockfile", Lockfile: model.Lockfile{Path: abs, Env: "dev"}}}}); err != nil || len(p.Result.Lockfiles) != 1 || p.Result.Lockfiles[0].Env != "prod" {
+		t.Fatalf("%+v %v", p.Result.Lockfiles, err)
+	}
+	// an unknown path keeps today's error
+	if _, err = s.EditProject(ProjectChange{Project: "blog", Ops: []projectfile.Op{{Kind: "remove_lockfile", Lockfile: model.Lockfile{Path: "nope.lock"}}}}); err == nil || !strings.Contains(err.Error(), "no lockfile with path") {
+		t.Fatalf("err = %v", err)
 	}
 }

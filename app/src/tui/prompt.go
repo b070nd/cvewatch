@@ -49,6 +49,9 @@ type prompt struct {
 	idx    int
 	box    *folderBox // pkPath, pkLock
 
+	bound bool   // about a finding of the context it was opened in; a change of the context cancels it
+	ctx   tenant // that context
+
 	submitting bool   // the write is in flight; the prompt stays open until it ends
 	problem    string // why the last submit was refused
 
@@ -143,6 +146,9 @@ func (m *app) startStatus(st model.Status) {
 		return
 	}
 	t := d.is.Targets[d.sel.at()]
+	if m.foreign(t.Project) {
+		return
+	}
 	c := ops.Change{ID: d.is.ID, Project: t.Project, Env: t.Env, Status: st}
 	label := "Note (optional)"
 	if st == model.StatusNotAffected {
@@ -151,7 +157,13 @@ func (m *app) startStatus(st model.Status) {
 	retitle := func(env model.Env) string {
 		return oneLine(c.ID + " " + changeWords[st] + ": " + where(c.Project, env))
 	}
-	m.prm = &prompt{kind: pkStatus, title: retitle(c.Env), change: c, selEnv: t.Env, retitle: retitle, fields: []field{{label: label}}, hint: noteHint(st) + wholeHint}
+	m.openBound(&prompt{kind: pkStatus, title: retitle(c.Env), change: c, selEnv: t.Env, retitle: retitle, fields: []field{{label: label}}, hint: noteHint(st) + wholeHint})
+}
+
+// openBound shows a prompt about a finding; it belongs to the context it is opened in.
+func (m *app) openBound(p *prompt) {
+	p.bound, p.ctx = true, m.tenant
+	m.prm = p
 }
 
 // wholeHint is what a prompt that can cover every environment says about it.
@@ -190,7 +202,7 @@ func noteHint(st model.Status) string {
 func (m *app) bulkChanges(st model.Status, note string) []ops.Change {
 	var out []ops.Change
 	for _, is := range m.dataIssues() {
-		if !m.fnd.sel[issueKey(is)] {
+		if !m.fnd.sel[issueKey(is)] || !m.inContext(rowProject(is)) {
 			continue
 		}
 		for _, t := range is.Targets {
@@ -216,7 +228,7 @@ func (m *app) startBulk(st model.Status) {
 		label = "Reason (required)"
 	}
 	title := fmt.Sprintf("%s, %s: %s", plural(n, "issue", "issues"), plural(len(cs), "finding", "findings"), changeWords[st])
-	m.prm = &prompt{kind: pkBulk, bulk: st, title: title, fields: []field{{label: label}}, hint: noteHint(st)}
+	m.openBound(&prompt{kind: pkBulk, bulk: st, title: title, fields: []field{{label: label}}, hint: noteHint(st)})
 }
 
 // startEvidence asks for a note and a link to attach to the selected
@@ -228,10 +240,13 @@ func (m *app) startEvidence() {
 		return
 	}
 	t := d.is.Targets[d.sel.at()]
+	if m.foreign(t.Project) {
+		return
+	}
 	a := ops.Attachment{ID: d.is.ID, Project: t.Project, Env: t.Env}
-	m.prm = &prompt{kind: pkEvidence, attach: a, title: oneLine("Add evidence to " + a.ID + " in " + where(a.Project, a.Env)),
+	m.openBound(&prompt{kind: pkEvidence, attach: a, title: oneLine("Add evidence to " + a.ID + " in " + where(a.Project, a.Env)),
 		hint:   "a note, a link or both; the link must be a plain http(s) address",
-		fields: []field{{label: "Note"}, {label: "Link"}}}
+		fields: []field{{label: "Note"}, {label: "Link"}}})
 }
 
 func (m *app) startAssign(whole bool) {
@@ -241,6 +256,9 @@ func (m *app) startAssign(whole bool) {
 		return
 	}
 	t := d.is.Targets[d.sel.at()]
+	if m.foreign(t.Project) {
+		return
+	}
 	a := ops.Assignment{ID: d.is.ID, Project: t.Project, Env: t.Env}
 	retitle := func(env model.Env) string {
 		return oneLine("Assign " + a.ID + " in " + where(a.Project, env))
@@ -257,7 +275,7 @@ func (m *app) startAssign(whole bool) {
 	if whole {
 		p.toggleWhole()
 	}
-	m.prm = p
+	m.openBound(p)
 }
 
 func (m *app) startPath() {
@@ -295,6 +313,10 @@ func (m *app) promptSubmit() tea.Cmd {
 	switch p.kind {
 	case pkStatus:
 		c := p.change
+		if m.foreign(c.Project) {
+			m.prm = nil
+			return nil
+		}
 		c.Note = val(0)
 		return m.start("saving...", "status "+c.ID+" "+where(c.Project, c.Env), reList|reDetail, p, resolveCmd(m.b, c))
 	case pkBulk:
@@ -306,10 +328,18 @@ func (m *app) promptSubmit() tea.Cmd {
 		return m.start("saving...", "bulk", reList|reDetail, p, bulkCmd(m.b, cs))
 	case pkEvidence:
 		a := p.attach
+		if m.foreign(a.Project) {
+			m.prm = nil
+			return nil
+		}
 		a.Note, a.URL = val(0), val(1)
 		return m.start("saving...", "evidence "+a.ID+" "+where(a.Project, a.Env), reDetail, p, attachCmd(m.b, a))
 	case pkAssign:
 		a := p.assign
+		if m.foreign(a.Project) {
+			m.prm = nil
+			return nil
+		}
 		a.Owner, a.Due, a.Ticket = val(0), val(1), val(2)
 		return m.start("saving...", "assign "+a.ID+" "+where(a.Project, a.Env), reList|reDetail, p, assignCmd(m.b, a))
 	case pkEdit:

@@ -146,7 +146,7 @@ func TestHintsAboutTheSchedule(t *testing.T) {
 	}
 
 	hs := hintsOf(t, base+"update: {auto: false}\n", HintOptions{})
-	h, ok := hintAt(hs, "update.auto", "scheduled runs skip this project; run cvewatch update or press F")
+	h, ok := hintAt(hs, "update.auto", "scheduled runs skip this project; run cvewatch update or press u in the TUI")
 	if !ok || h.Level != "info" || len(h.Fix) != 1 || h.Fix[0].Kind != "set_update" || h.Fix[0].Auto == nil || !*h.Fix[0].Auto {
 		t.Fatalf("hint = %+v (%+v)", h, hs)
 	}
