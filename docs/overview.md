@@ -185,7 +185,7 @@ Every other key is unchanged: `a` `A` assign, `c` fields, `E` editor, `V` revali
 
 The footer at the bottom shows the keys for where you are. Keys in brackets also work, but the footer and the help leave them out.
 
-Everywhere except in forms, the fix preview and text boxes: `:` jump, `C` choose the context, `r` reload, `u` update (fetch the feeds), `V` revalidate, `?` help, Tab and the screen letters switch screens.
+Everywhere except in forms, the fix preview and text boxes: `:` jump, `C` choose the context, `r` reload, `?` help, Tab and the screen letters switch screens. On the root of each screen and inside a project, `u` updates (fetches the feeds) and `V` revalidates.
 
 **Overview**
 
@@ -679,7 +679,7 @@ horizon:
 - A source's first run reaches back only as far as `lookback` (7 days by default). A window that reaches further back gives a warning in `cvewatch check`: the older items are not seen until you raise `lookback`. Keep `lookback` at least as long as the window.
 - A wider window, or a `since` date that moves earlier, makes the sources reach back for the older advisories (see [Back-fill](#back-fill)).
 - The Settings screen shows the windows with Google's names (Any time, Past hour, Past 24 hours, Past week, Past month, Past year, Custom range). The change is judged the next time the configuration is read (see [Changing the configuration](#changing-the-configuration)). On the command line: `cvewatch settings set horizon.window week -yes`.
-- Overview and Status show `alert horizon: past week (only vulnerabilities published then are judged and alerted)` when the window is not unlimited.
+- Overview and Health show `alert horizon: past week (only vulnerabilities published then are judged and alerted)` when the window is not unlimited.
 - Lists and search are not limited by it. To narrow what you look at, use the time filter (`t`) or `published:` (see [search.md](search.md)).
 
 ## Changing the configuration
@@ -825,6 +825,17 @@ policy:
 
 A finding's own due date is always checked.
 
+## Environment files
+
+Secrets such as `SLACK_WEBHOOK_URL`, `GITHUB_TOKEN` or a feed's `auth_env` variable can sit in an environment file instead of your shell. `cvewatch` and `cvewatch-tui` read `.env` and then `.env.local` from the current folder and from the `-root` folder when they start; a file that is not there is skipped, and a variable in the later file wins. Name files yourself with `-env-file FILE` (repeat it for several, later wins): then only those are read and a missing one is an error. A variable already set in the real environment is never overridden by a file.
+
+```bash
+cvewatch update -root ./app                                          # reads .env and .env.local
+cvewatch-tui -root ./app -env-file .env -env-file .env.local         # the same, named
+```
+
+A line is `NAME=value` or `export NAME=value`. Lines starting with `#` and blank lines are ignored. Single quotes keep the text as it is; double quotes understand `\n`, `\r`, `\t`, `\"`, `\\` and `\$`; an unquoted value ends at a space followed by `#`. Variables are not expanded. A malformed line is an error that names the file and line, never the value, and a file that other users can read gets a warning (use `chmod 600`). Keep the files out of version control: `.env` is git-ignored here, so add `.env.*` to your own `.gitignore` as well.
+
 ## Notifications
 
 Channels switch on when their secret is in the environment, so one config file is safe to share: Slack (`SLACK_WEBHOOK_URL`), a signed JSON webhook (`notify.webhook`, HMAC-SHA256 in `X-Cvewatch-Signature`; works for Teams, Jira or GitLab bridges) and email (`notify.email`, SMTP with STARTTLS). Delivery is tracked per channel, so one failing channel never repeats alerts on the others. A daily digest of what is still open (`notify.digest`, e.g. prod only) goes out in the first cycle after its time; `cvewatch digest -send` sends it now.
@@ -837,7 +848,7 @@ Channels switch on when their secret is in the environment, so one config file i
 
 | Path | Purpose |
 |---|---|
-| `config/config.yaml` | interval, HTTP limits, Slack, notify, policy, enrich, storage, access, horizon, tui (refresh, fetch and editor) |
+| `config/config.yaml` | interval, update, HTTP limits, Slack, notify, policy, enrich, storage, access, horizon, tui (refresh, auto, fetch and editor) |
 | `config/techs.yaml` | your additions to the built-in technology catalog, including your own keywords (`cvewatch tech`) |
 | `config/projects/*.yaml` | one file per project |
 | `sources/*.yaml` | your additions to the built-in feeds (an entry with the id of an existing feed changes only the fields it gives, such as `disabled: true` to switch it off; a new id needs a `type` and a `url`). Other fields: `headers`, `auth_env` (a token variable, see [GitHub advisories and the rate limit](#github-advisories-and-the-rate-limit)), `match_title_only`, `match_structured` |

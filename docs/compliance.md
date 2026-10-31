@@ -2,7 +2,7 @@
 
 This page explains how cvewatch can support an organisation's duties under NIS2 and the GDPR. It is not legal advice, and no tool makes an organisation compliant. Compliance depends on how you run the tool and on the rest of your programme. Have your security, privacy and legal people review your use of it.
 
-The operator (you) is the controller of any data the tool holds. The maintainers of this project process none of it: the tool has no telemetry and contacts only the feeds and the Slack webhook you configure.
+The operator (you) is the controller of any data the tool holds. The maintainers of this project process none of it: the tool has no telemetry and contacts only the feeds and channels you configure, plus NVD's public API for CVSS scores (see below).
 
 ## NIS2 (Directive (EU) 2022/2555)
 
@@ -11,7 +11,7 @@ Article 21(2) requires essential and important entities to take proportionate ri
 | Measure | How cvewatch helps | What it does not do |
 |---|---|---|
 | 21(2)(e) vulnerability handling in acquisition, development and maintenance | Watches public sources including CISA KEV (actively exploited flaws), matches them to your technologies and dependencies, creates a finding per project and environment, and tracks remediation from open to fixed or ignored | Does not scan systems, confirm that you are affected, or patch anything |
-| 21(2)(d) supply chain security | Reads `composer.lock` and `package-lock.json`, so advisories for your actual dependencies are matched by package name | Does not cover other ecosystems, transitive risk scoring or supplier assessments |
+| 21(2)(d) supply chain security | Reads lockfiles and SBOMs (composer, npm, Go, pip, poetry, Pipfile, Gradle, Maven, CycloneDX, SPDX), so advisories for your actual dependencies are matched by package name | Does not cover other ecosystems, transitive risk scoring or supplier assessments |
 | 21(2)(a) risk analysis | Gives severity, CVSS and known-exploited signals as input | Does not rate business impact; people decide priorities |
 | 21(2)(e) knowing what you run | The catalog, discovery and project files record which technologies, versions and lockfiles each project and environment declares, with evidence for each guess and an audited change history | Does not inventory hosts or images; people confirm what discovery proposes |
 | 21(2)(f) assessing effectiveness | Open findings by severity and the audit log show how quickly issues are detected and closed | Defines no targets; set your own deadlines |
@@ -81,7 +81,7 @@ There are no cookies, accounts, analytics or telemetry.
 
 ### Data transfers
 
-The tool itself transfers nothing outside the endpoints you configure. Feeds are fetched from the hosts in `sources/` (some are outside the EU), and Slack alerts go to Slack's servers. Check these against your transfer rules.
+The tool itself transfers nothing outside the endpoints you configure and NVD's public API. Feeds are fetched from the hosts in `sources/` (some are outside the EU), and Slack alerts go to Slack's servers. Check these against your transfer rules.
 
 ## What is not claimed
 

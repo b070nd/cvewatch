@@ -27,6 +27,15 @@ HIGH (1)
 
 *Illustrative output built from real feed data. Tracking is per environment, so the same CVE can be open in prod and fixed in staging.*
 
+> **What's new in 2.0**
+> - Each project has [its own update schedule](docs/overview.md#update-schedule-per-project), and the daemon refreshes only the projects that are due.
+> - Changes to a project, your technologies or the alert horizon are judged against the stored advisories at once, and older history is fetched as needed.
+> - Projects can belong to a [vendor](docs/overview.md#vendors-and-projects) and are never mixed in lists, searches, exports or access rules.
+> - CVSS is read from every version (2.0 to 4.0), and the monitor reports its own health as GREEN, YELLOW or RED.
+> - Environments are free names, you can add technologies the catalog lacks, and the TUI screens are switched by letters.
+>
+> Upgrading from 1.x: see [CHANGELOG.md](CHANGELOG.md#upgrading-from-1x), which also lists what integrations will see.
+
 ## At a glance
 
 | | |
@@ -125,12 +134,15 @@ flowchart TB
 
 *"I run a webshop, a middleware and an admin tool. I need to know what to patch this week without reading ten feeds."*
 
+### Install
+
+- **Release archive.** Download the archive for your system from the [releases page](https://github.com/b070nd/cvewatch/releases): Linux and macOS (`.tar.gz`) and Windows (`.zip`), each for amd64 and arm64, with `checksums.txt`. It holds `cvewatch`, `cvewatch-tui` (the full-screen interface, started by `cvewatch tui`), the docs and the agent skills. Put both binaries in one folder on your `PATH`.
+- **Container image.** `ghcr.io/b070nd/cvewatch:v2.0.0` runs `cvewatch daemon` as an unprivileged user. Mount your project files, `/data` and `/alerts`; [compose.yaml](compose.yaml) is an example.
+- **From source.** `go install github.com/b070nd/cvewatch/app/src/cmd/cvewatch@latest` (and `.../cvewatch-tui@latest`) builds the default branch, not a release, and `cvewatch version` then says `dev`.
+
 ### Five minutes to a useful list
 
 ```bash
-go install github.com/b070nd/cvewatch/app/src/cmd/cvewatch@latest   # or a release archive, or Docker (see compose.yaml)
-go install github.com/b070nd/cvewatch/app/src/cmd/cvewatch-tui@latest   # optional: the full-screen interface
-
 mkdir cvewatch-home && cd cvewatch-home
 cvewatch init                          # writes a starter config
 cvewatch setup ~/code/shop             # guided: finds technologies, versions and lockfiles, shows the evidence, asks you to confirm
@@ -139,6 +151,8 @@ cvewatch update                        # fetch the feeds now, then show what is 
 cvewatch tui                           # or browse and triage in a full-screen interface
 ```
 
+Tokens such as `GITHUB_TOKEN` (a higher GitHub advisory limit) or `SLACK_WEBHOOK_URL` can go in a `.env` or `.env.local` file next to the config; both programs read them at start, or name files with `-env-file` ([details](docs/overview.md#environment-files)).
+
 `setup` looks at lockfiles, `.tool-versions`, `go.mod`, `package.json`, Dockerfiles, compose files, Kubernetes manifests and Terraform, also in monorepos, and says why it believes each thing ("nginx 1.25.3: image in `docker-compose.yml`"). Guesses it is unsure about are asked, not declared. Paths that `.gitignore` ignores are skipped, so build output and vendored code do not turn into projects; `-all` reads them too. `cvewatch init -repo ~/code/shop` does the same without questions.
 
 The technology catalog and the feeds are built in, so one binary is enough. `setup` writes a project file per repository. `cvewatch setup FILE` does the same for one Dockerfile, compose file or Kubernetes manifest, and lists its base images and services as infrastructure. Check the versions it could not guess: a repository says what is *declared*, not what *runs in prod*.
@@ -146,12 +160,12 @@ The technology catalog and the feeds are built in, so one binary is enough. `set
 ### What it does for you
 
 - **Cuts the noise.** An advisory only matches when it is about a product you run, so "a Moodle plugin written in PHP" does not raise your PHP alarm. Versions are checked per environment: *affected*, *not affected* or *unchecked*, using each ecosystem's own rules (PEP 440, Maven, semver).
-- **Puts the urgent things first.** Order: actively exploited (CISA KEV), then severity, open in prod, exploit probability (EPSS, optional), age. Every issue says why it ranks where it does.
+- **Puts the urgent things first.** Order: actively exploited (CISA KEV), then severity, open in prod, exploit probability (EPSS, optional), age. Every issue says why it ranks where it does. [CVSS](docs/overview.md#cvss-scores) is read from every version the sources carry (2.0 to 4.0), with its vector and who scored it.
 - **Merges the duplicates.** The NVD entry, the GitHub advisory, the CISA listing and two news stories become one record with all links, the articles in order, and the known fix.
 - **Tells you where you already look.** Slack, a signed webhook or email, plus a daily "still open in prod" digest.
-- **Refreshes each project on its own schedule.** A project file can hold `update: {every: 1h}` to be refreshed more or less often than the `interval`, or `auto: false` to be left out of scheduled runs. The daemon wakes when the first project is due and judges and alerts only the projects that are due. `cvewatch update` and `u` in the TUI always cover every project.
+- **Refreshes each project on its own [schedule](docs/overview.md#update-schedule-per-project).** A project file can hold `update: {every: 1h}` to be refreshed more or less often than the `interval`, or `auto: false` to be left out of scheduled runs. The daemon wakes when the first project is due and judges and alerts only the projects that are due. `cvewatch update` and `u` in the TUI always cover every project.
 - **Starts each project when you say.** A `since` date skips advisories published before it, for that project only, and closes the open findings from before it as not affected. Moving the date earlier reopens them. Other projects are not affected.
-- **Keeps projects apart.** A project can name its vendor, and the full-screen interface always works in one context, such as `acme ▸ shop`: its lists, counts and actions hold that project only and never mix rows of two projects. `C` chooses the context, and the screens are switched by the highlighted letters in the tab bar (`O` `F` `P` `H` `S`). When the monitor is YELLOW or RED, its problems are listed first on the Overview, until they are fixed.
+- **Keeps projects apart.** A project can name its [vendor](docs/overview.md#vendors-and-projects), and the full-screen interface always works in one context, such as `acme ▸ shop`: its lists, counts and actions hold that project only and never mix rows of two projects. `C` chooses the context, and the screens are switched by the highlighted letters in the tab bar (`O` `F` `P` `H` `S`). When the monitor is YELLOW or RED, its problems are listed first on the Overview, until they are fixed.
 - **Searches what you track.** `cvewatch search` finds issues by ID, part of an ID, words or fields such as `severity:high+` and `project:shop`, in every status.
 - **Looks back only as far as you say.** `horizon` in `config.yaml` limits what is judged, alerted and digested to the past hour, day, week, month or year, or to a custom range. It is unlimited by default, and findings that already exist stay.
 - **Names its environments.** `local`, `dev`, `prod` or any name you choose. A new project starts with `local`, and what differs in one environment is written once, in a `when@prod:` block.
@@ -306,7 +320,7 @@ Read-only by default. The agent can call:
 
 | Tool | Answers |
 |---|---|
-| `list_findings` | what is open, most urgent first, filtered by severity, project, environment |
+| `list_findings`, `search_findings` | what is open, most urgent first, filtered by severity, vendor, project, environment; or issues matching a [search query](docs/search.md) |
 | `get_vulnerability`, `explain` | details with articles in order and fix evidence; why it matched |
 | `get_evidence` | the full timeline and per-environment matrix for one issue |
 | `policy_violations` | which deadlines are broken right now |
@@ -385,7 +399,7 @@ Outbound requests go only to the feeds and channels you configure, plus NVD's CV
 
 ## Documentation
 
-- [docs/overview.md](docs/overview.md): how it works, inventory, matching, tracking, policy, channels, storage
+- [docs/overview.md](docs/overview.md): how it works, the terminal UI and its keys, projects and environments, inventory, matching, tracking, policy, channels, storage
 - [docs/search.md](docs/search.md): look up one issue, search syntax and fields
 - [docs/architecture.md](docs/architecture.md): modules and seams
 - [docs/agents.md](docs/agents.md): MCP tools, JSON contract, a `CLAUDE.md` snippet

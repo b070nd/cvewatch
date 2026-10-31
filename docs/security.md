@@ -33,6 +33,7 @@ What the tool defends against, how, and how to deploy it.
 - **Storage**
   - The SQLite file and its sidecar files are created owner-only; writes carry a revision, so a stale writer is refused instead of overwriting newer data.
 - **Secrets**
+  - A feed token is read from the environment variable named by `auth_env` and sent as a bearer token with that feed's requests; like other custom headers it is dropped on a redirect to another host. Only the variable's name is shown or logged, never the value.
   - The Slack webhook is read from an environment variable, must be https, and is stripped from error messages. Query strings and credentials are removed from logged feed URLs.
   - Nothing secret is written to state, reports or the audit log.
 - **Untrusted text**
@@ -65,7 +66,7 @@ What the tool defends against, how, and how to deploy it.
 
 - Run as an unprivileged user, never as root. The container image runs as UID 65532 and works with `--read-only` and `--cap-drop ALL`; only `/data` and `/alerts` need to be writable.
 - Restrict outbound traffic to the feed hosts and your Slack workspace if you can. The list is the `url` hosts in `sources/`.
-- Keep the webhook in a secret store or an `.env` file outside the repository (it is git-ignored). Rotate it if it leaks.
+- Keep the webhook and tokens in a secret store or in an [environment file](overview.md#environment-files) (`.env`, `.env.local` or `-env-file`) that stays out of version control. Both programs warn when such a file can be read by other users; use `chmod 600`. Rotate a secret if it leaks.
 - Mount lockfiles read-only. The tool never writes to them.
 - Keep `data/` and `alerts/` out of version control and back them up like other operational records. Both are git-ignored.
 - Set `CVEWATCH_ACTOR` to a team name if you do not want personal user names in the audit log.
