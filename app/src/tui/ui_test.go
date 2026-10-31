@@ -33,13 +33,13 @@ func TestOverviewShowsCounts(t *testing.T) {
 			t.Errorf("overview lacks %q:\n%s", re, v)
 		}
 	}
-	d.want("cvewatch", "[1 Overview]", "2 Findings (3)", "3 Projects", "4 Status", "GREEN", "updated")
+	d.want("cvewatch", "▸[O]verview", "[F]indings (3)", "[P]rojects", "[H]ealth", "GREEN", "updated")
 }
 
 func TestFindingsListAndSeverityFilter(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	d.press("2")
-	d.want("[2 Findings (3)]", "3 of 3 open issues", "SEVERITY", "CVE-2026-3", "critical", "Critical nginx bug", "CVE-2026-1", "high", "Tracked PHP bug",
+	d.screen("findings")
+	d.want("▸[F]indings (3)", "3 of 3 open issues", "SEVERITY", "CVE-2026-3", "critical", "Critical nginx bug", "CVE-2026-1", "high", "Tracked PHP bug",
 		"mw shop:prod", "CVE-2026-4", "low", "> critical")
 	if v := d.view(); strings.Index(v, "CVE-2026-3") > strings.Index(v, "CVE-2026-1") {
 		t.Errorf("the critical issue must come first:\n%s", v)
@@ -75,7 +75,8 @@ func TestFindingsListAndSeverityFilter(t *testing.T) {
 
 func TestFilterInputDoesNotTriggerKeys(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	d.press("2", "/")
+	d.screen("findings")
+	d.press("/")
 	d.typ("q?r3")
 	if d.quit {
 		t.Fatal("q typed into the filter quit the program")
@@ -87,7 +88,8 @@ func TestFilterInputDoesNotTriggerKeys(t *testing.T) {
 
 func TestFindingsFilterAcceptsFieldQueries(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	d.press("2", "/")
+	d.screen("findings")
+	d.press("/")
 	d.typ("severity:critical")
 	d.want("1 of 3 open issues", "CVE-2026-3")
 	d.wantNot("CVE-2026-1", "CVE-2026-4")
@@ -105,7 +107,8 @@ func TestFindingsFilterFallsBackToWordsOnBadQuery(t *testing.T) {
 
 func TestDetailView(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	d.press("2", "down", "enter")
+	d.screen("findings")
+	d.press("down", "enter")
 	d.want("CVE-2026-1", "high", "Tracked PHP bug", "Summary of CVE-2026-1",
 		"Environments", "mw", "shop", "prod", "open", "unknown",
 		"Fix evidence", "version 8.2.9 (official) via hn",
@@ -121,7 +124,8 @@ func TestDetailView(t *testing.T) {
 func TestMarkFixedPersistsThroughWrite(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("2", "down", "enter", "down", "f")
+	d.screen("findings")
+	d.press("down", "enter", "down", "f")
 	d.want("fixed: shop/prod")
 	d.typ("MR 42")
 	d.press("enter")
@@ -163,7 +167,8 @@ func TestMarkFixedPersistsThroughWrite(t *testing.T) {
 func TestNotAffectedNeedsAReason(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("2", "down", "enter", "n")
+	d.screen("findings")
+	d.press("down", "enter", "n")
 	d.want("Reason (required)")
 	d.press("enter") // no reason typed
 	d.want("error: a not-affected statement needs a reason")
@@ -187,7 +192,14 @@ func TestNotAffectedNeedsAReason(t *testing.T) {
 func TestIgnoreReopenAndWholeProject(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("2", "down", "enter", "I", "enter")
+	d.screen("findings")
+	d.press("down", "enter", "i")
+	d.want("ignored: mw/prod")
+	d.press("ctrl+p")
+	d.want("ignored: mw (all environments)")
+	d.press("ctrl+p")
+	d.want("ignored: mw/prod")
+	d.press("ctrl+p", "enter")
 	d.want("ok: CVE-2026-1 ignored in mw (all environments)")
 	d.press("o", "enter")
 	d.want("ok: CVE-2026-1 reopened in mw/prod")
@@ -196,7 +208,8 @@ func TestIgnoreReopenAndWholeProject(t *testing.T) {
 func TestAssignAsksOwnerDueTicket(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("2", "down", "enter", "down", "a")
+	d.screen("findings")
+	d.press("down", "enter", "down", "a")
 	d.want("Assign CVE-2026-1 in shop/prod", "Owner", "Due", "Ticket")
 	d.typ("bob")
 	d.press("enter")
@@ -218,7 +231,8 @@ func TestAssignAsksOwnerDueTicket(t *testing.T) {
 func TestPromptEscapeCancelsWithoutWriting(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("2", "enter", "f")
+	d.screen("findings")
+	d.press("enter", "f")
 	d.typ("abc")
 	d.press("esc")
 	if b.writes != 0 {
@@ -232,12 +246,12 @@ func TestAccessRulesComeFromOps(t *testing.T) {
 	b := newFake(t, nil)
 	b.cfg.Access = map[string]config.Grant{"carol": {Projects: []string{"shop"}}} // may read shop, may not write
 	d := start(t, b, Options{})
-	d.press("2")
+	d.screen("findings")
 	d.want("CVE-2026-1", "shop:prod")
 	d.wantNot("mw") // scoped by ops, not by the TUI
 	d.press("down", "enter", "f", "enter")
 	d.want("error: access denied: tui:carol may not change anything")
 	d.press("esc")
-	d.press("3")
+	d.screen("projects")
 	d.wantNot("mw ")
 }

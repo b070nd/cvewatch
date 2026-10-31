@@ -426,19 +426,38 @@ func (m *app) screenBody(w, h int) []string {
 func (m *app) tabs() (tabs []string, spans [numScreens][2]int) {
 	x := width("cvewatch") + 2
 	for i := screen(0); i < numScreens; i++ {
-		label := screens[i].key + " " + screens[i].name
+		badge := ""
 		if screens[i].badge != nil {
-			label += screens[i].badge(m)
+			badge = screens[i].badge(m)
 		}
-		if i == m.scr {
-			tabs = append(tabs, stTabOn.Render("["+label+"]"))
-		} else {
-			tabs = append(tabs, stTab.Render(" "+label+" "))
-		}
+		tabs = append(tabs, tabLabel(screens[i], badge, i == m.scr))
 		spans[i] = [2]int{x, x + width(tabs[i])}
 		x += width(tabs[i]) + 1
 	}
 	return tabs, spans
+}
+
+// tabLabel draws a tab with the letter of its key highlighted, such as the O of
+// Overview. Without styles (NO_COLOR) the letter is bracketed, [O]verview, and
+// the tab of the screen shown is marked with an arrow.
+func tabLabel(sc screenDef, badge string, on bool) string {
+	i := strings.Index(strings.ToUpper(sc.name), sc.key)
+	if i < 0 {
+		return " " + sc.name + badge + " "
+	}
+	head, letter, tail := sc.name[:i], sc.name[i:i+len(sc.key)], sc.name[i+len(sc.key):]+badge
+	if !stylesOn() {
+		mark := " "
+		if on {
+			mark = "▸"
+		}
+		return mark + head + "[" + letter + "]" + tail + " "
+	}
+	body, key := stTab, stKey
+	if on {
+		body, key = stTabOn, stKeyOn
+	}
+	return body.Render(" "+head) + key.Render(letter) + body.Render(tail+" ")
 }
 
 func (m *app) header(w int) string {

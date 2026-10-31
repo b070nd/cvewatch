@@ -32,7 +32,7 @@ func TestProjectsShowProblemBadgeAndIssueList(t *testing.T) {
 	b := newFake(t, nil)
 	writeProjectFile(t, b.cfg.Root, "shop", shopWithProblems)
 	d := start(t, b, Options{})
-	d.press("3")
+	d.screen("projects")
 	d.want("PROBLEMS", "1 err 1 warn", "problems (enter to select them, x to fix)",
 		"> error", "lockfiles[0].path: lockfile gone/composer.lock does not exist", "fix: remove lockfile gone/composer.lock",
 		"warning", "techs[0]")
@@ -51,7 +51,8 @@ func TestProblemFixShowsTheChangeAndAppliesIt(t *testing.T) {
 	b := newFake(t, nil)
 	path := writeProjectFile(t, b.cfg.Root, "shop", shopWithProblems)
 	d := start(t, b, Options{})
-	d.press("3", "f")
+	d.screen("projects")
+	d.press("f")
 	d.want("Fix project: shop", "remove lockfile gone/composer.lock", "-", "composer.lock", "Apply this fix?")
 	d.press("esc")
 	d.want("cancelled", "1 err 1 warn")
@@ -85,7 +86,7 @@ func TestProblemWithoutFixPointsToTheEditor(t *testing.T) {
 	b := newFake(t, nil)
 	writeProjectFile(t, b.cfg.Root, "shop", "name: shop\ntechs:\n  - {name: php, version: latest}\n")
 	d := start(t, b, Options{})
-	d.press("3")
+	d.screen("projects")
 	d.want("1 warn", "does not look like a version number")
 	d.wantNot("fix:")
 	d.press("f")
@@ -105,9 +106,9 @@ func TestBrokenProjectFileDoesNotBlockTheTUI(t *testing.T) {
 	}
 	noEditor(t)
 	d := start(t, NewBackend(root, nil), Options{})
-	d.want("1 Overview")
+	d.want("[O]verview")
 	d.wantNot("refresh failed")
-	d.press("3")
+	d.screen("projects")
 	d.want("good", "bad", "BROKEN")
 	d.press("down")
 	d.want("broken: yaml:", "file: ")
@@ -157,7 +158,8 @@ func (failing) TUISettings() config.TUI { return config.Defaults().TUI }
 func TestLoadFailureStillOffersRetryAndQuit(t *testing.T) {
 	d := start(t, failing{}, Options{})
 	d.want("error: no config here", "Press r to try again", "r try again  q quit")
-	d.press("3", "n", "d", "f", "o")
+	d.screen("projects")
+	d.press("n", "d", "f", "o")
 	d.want("Press r to try again")
 	if d.m.(*app).frm != nil || d.m.(*app).prm != nil {
 		t.Fatal("nothing can start without data")

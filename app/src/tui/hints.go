@@ -12,7 +12,7 @@ import (
 	"github.com/b070nd/cvewatch/app/src/projectfile"
 )
 
-// hints are advice, not errors; H works through them
+// hints are advice, not errors; w works through them
 
 func hintFields(hs []projectfile.Hint) map[string]bool {
 	out := map[string]bool{}
@@ -39,7 +39,7 @@ func hintRows(hs []projectfile.Hint, w int) []string {
 	if len(hs) == 0 {
 		return nil
 	}
-	out := []string{"", section("Hints") + stMuted.Render("  H works through them")}
+	out := []string{"", section("Hints") + stMuted.Render("  w works through them")}
 	for _, h := range hs {
 		out = append(out, hintLines(h, w)...)
 	}
@@ -52,7 +52,7 @@ func projectHintLines(p projectRow, w int) []string {
 		return nil
 	}
 	const shown = 4
-	out := []string{"", section("Hints") + stMuted.Render("  "+hintSummary(p.Hints)+"   H works through them")}
+	out := []string{"", section("Hints") + stMuted.Render("  "+hintSummary(p.Hints)+"   w works through them")}
 	for _, h := range p.Hints[:min(len(p.Hints), shown)] {
 		out = append(out, clip(hintLines(h, w), 2)...)
 	}
@@ -334,7 +334,7 @@ func (m *app) hintSection(h projectfile.Hint) tea.Cmd {
 	id := ""
 	switch {
 	case h.Field == "environments":
-		m.note("the old environments: block becomes when@<env> blocks when you change the differences here, or press H on the saved project and apply the fix")
+		m.note("the old environments: block becomes when@<env> blocks when you change the differences here, or press w on the saved project and apply the fix")
 		return nil
 	case strings.HasPrefix(h.Field, "envs"):
 		id = "envs"

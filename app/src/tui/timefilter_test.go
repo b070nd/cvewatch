@@ -47,12 +47,12 @@ func TestTimeFilterKeyCyclesThroughThePeriodsAndCountsFollow(t *testing.T) {
 func TestTimeFilterNarrowsBothListsTheBarsAndTheBadge(t *testing.T) {
 	d := start(t, agedSeed(t), Options{})
 	d.press("t", "t", "t") // past week
-	d.want("1 Overview", "2 Findings (2)", "CVE-2026-1", "CVE-2026-3")
+	d.want("[O]verview", "[F]indings (2)", "CVE-2026-1", "CVE-2026-3")
 	d.wantNot("CVE-2026-4")
-	d.press("2")
+	d.screen("findings")
 	d.want("2 of 2 open issues", "CVE-2026-1", "CVE-2026-3")
 	d.wantNot("CVE-2026-4")
-	d.press("3")
+	d.screen("projects")
 	d.want("published: past week") // the chip is on every screen
 }
 
@@ -100,7 +100,8 @@ func TestTimeChipIsClearedByAClick(t *testing.T) {
 
 func TestSearchPublishedTermShowsInTheChip(t *testing.T) {
 	d := start(t, agedSeed(t), Options{})
-	d.press("2", "/")
+	d.screen("findings")
+	d.press("/")
 	d.typ("published:2026-09-25..2026-10-01")
 	d.press("enter")
 	d.want("1 of 3 open issues", "CVE-2026-3", "published: 2026-09-25 to 2026-10-01")
@@ -124,7 +125,7 @@ func TestTimeFilterSaysWhenNothingIsInIt(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{}) // every issue is two days old
 	d.press("t")
 	d.want("Nothing open published past hour", "0 for any time")
-	d.press("2")
+	d.screen("findings")
 	d.want("Nothing open published past hour")
 	scopeTo(d, "mw")
 	d.want("Nothing open in project mw published past hour")
@@ -143,7 +144,7 @@ func TestJumpingToAnIssueOutsideTheTimeFilterShowsIt(t *testing.T) {
 
 func TestTimeKeyIsListedInTheHelpOfBothLists(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	for _, key := range []string{"1", "2"} {
+	for _, key := range []string{"O", "F"} {
 		d.press(key, "?")
 		d.want("cycle the time filter")
 		d.press("esc")
@@ -154,13 +155,13 @@ func TestHorizonIsShownOnOverviewAndStatusOnlyWhenLimited(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
 	d.wantNot("alert horizon")
-	d.press("4")
+	d.screen("health")
 	d.wantNot("alert horizon")
 
 	b.cfg.Horizon = config.Horizon{Window: config.WindowWeek}
 	d = start(t, b, Options{})
 	d.want("alert horizon: past week")
-	d.press("4")
+	d.screen("health")
 	d.want("alert horizon: past week")
 
 	b.cfg.Horizon = config.Horizon{Window: config.WindowCustom}

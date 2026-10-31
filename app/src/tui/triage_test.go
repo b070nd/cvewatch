@@ -13,7 +13,8 @@ import (
 func TestNextAndPreviousIssueKeepTheDetailOpen(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("2", "enter")
+	d.screen("findings")
+	d.press("enter")
 	d.want("CVE-2026-3", "Critical nginx bug", "] next", "[ prev")
 	d.press("[")
 	d.want("CVE-2026-3", "ok: this is the first issue of the list")
@@ -44,7 +45,8 @@ func TestNextAndPreviousIssueKeepTheDetailOpen(t *testing.T) {
 
 func TestSteppingFollowsTheFilteredListAndShowsLoading(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	d.press("2", "s", "s", "s") // high+: critical and high
+	d.screen("findings")
+	d.press("s", "s", "s") // high+: critical and high
 	d.press("enter")
 	d.want("CVE-2026-3")
 	d.press("]")
@@ -63,7 +65,8 @@ func TestSteppingFollowsTheFilteredListAndShowsLoading(t *testing.T) {
 func TestAfterAStatusChangeOneKeyGoesOn(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("2", "enter", "f", "enter") // CVE-2026-3 has one environment: closing it leaves the list
+	d.screen("findings")
+	d.press("enter", "f", "enter") // CVE-2026-3 has one environment: closing it leaves the list
 	d.want("ok: CVE-2026-3 marked fixed in shop/dev")
 	if a := d.m.(*app); len(a.fnd.vis) != 2 {
 		t.Fatalf("the list must lose the issue: %d", len(a.fnd.vis))
@@ -85,7 +88,8 @@ func TestAfterAStatusChangeOneKeyGoesOn(t *testing.T) {
 func TestStatusPromptSavesWithoutANote(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("2", "enter", "i")
+	d.screen("findings")
+	d.press("enter", "i")
 	d.want("Note (optional)", "enter saves now")
 	d.press("enter")
 	d.want("ok: CVE-2026-3 ignored in shop/dev")
@@ -96,7 +100,8 @@ func TestStatusPromptSavesWithoutANote(t *testing.T) {
 func TestSpaceSelectsAndStatusKeysApplyToTheSelection(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("2", " ", " ") // CVE-2026-3 and CVE-2026-1; the cursor moves on
+	d.screen("findings")
+	d.press(" ", " ") // CVE-2026-3 and CVE-2026-1; the cursor moves on
 	d.want("2 selected", "*  critical", "*  high", " > low", "f/i/n/o mark selected", "esc clear selection")
 	d.press("f")
 	d.want("2 issues, 3 findings: marked fixed", "Note (optional)")
@@ -132,7 +137,8 @@ func TestSpaceSelectsAndStatusKeysApplyToTheSelection(t *testing.T) {
 func TestBulkNotAffectedNeedsAReasonAndKeepsThePrompt(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("2", "ctrl+a")
+	d.screen("findings")
+	d.press("ctrl+a")
 	d.want("3 selected")
 	d.press("n", "enter")
 	d.want("Reason (required)", "problem: a not-affected statement needs a reason")
@@ -151,7 +157,8 @@ func TestBulkNotAffectedNeedsAReasonAndKeepsThePrompt(t *testing.T) {
 func TestBulkStopsAtTheFirstRefusalAndKeepsWhatLanded(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("2", "ctrl+a", "o")
+	d.screen("findings")
+	d.press("ctrl+a", "o")
 	d.want("nothing to change in the selected issues") // every target is open already
 	d.press("f")
 	a := d.m.(*app)
@@ -173,7 +180,8 @@ func TestBulkStopsAtTheFirstRefusalAndKeepsWhatLanded(t *testing.T) {
 func TestSelectionKeysAndFilterInteraction(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
 	a := d.m.(*app)
-	d.press("2", "ctrl+a")
+	d.screen("findings")
+	d.press("ctrl+a")
 	d.want("3 selected")
 	d.press("ctrl+a")
 	d.wantNot("selected")
@@ -199,7 +207,8 @@ func TestSelectionKeysAndFilterInteraction(t *testing.T) {
 func TestStatusKeysDoNothingWithoutASelectionOnTheList(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("2", "f", "i", "n", "o")
+	d.screen("findings")
+	d.press("f", "i", "n", "o")
 	if d.m.(*app).prm != nil || b.writes != 0 {
 		t.Fatal("f i n o need a selection or an open issue")
 	}

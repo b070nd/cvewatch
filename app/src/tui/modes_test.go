@@ -109,7 +109,7 @@ func TestFootersFitInEveryLiveState(t *testing.T) {
 		}
 	}
 	check("overview", "q quit")
-	d.press("2")
+	d.screen("findings")
 	check("findings", "enter open")
 	d.press("/")
 	check("filter", "esc clear")
@@ -117,7 +117,7 @@ func TestFootersFitInEveryLiveState(t *testing.T) {
 	check("detail", "back")
 	d.press("f")
 	check("prompt", "esc cancel")
-	d.press("esc", "esc", "3")
+	d.press("esc", "esc", "P")
 	check("projects", "enter open")
 	d.press("enter")
 	check("project", "enter fix")
@@ -143,13 +143,14 @@ func TestBreadcrumbAtEveryLevel(t *testing.T) {
 	b := newFake(t, nil)
 	writeProjectFile(t, b.cfg.Root, "shop", shopWithProblems)
 	d := start(t, b, Options{})
-	for key, want := range map[string]string{"1": "Overview", "2": "Findings", "3": "Projects", "4": "Status"} {
+	for key, want := range map[string]string{"O": "Overview", "F": "Findings", "P": "Projects", "H": "Health"} {
 		d.press(key)
 		if got := crumbOf(d); got != want {
 			t.Errorf("screen %s: breadcrumb %q", key, got)
 		}
 	}
-	d.press("2", "down", "enter")
+	d.screen("findings")
+	d.press("down", "enter")
 	if got := crumbOf(d); got != "Findings › CVE-2026-1 › mw:prod" {
 		t.Errorf("detail: %q", got)
 	}
@@ -157,7 +158,7 @@ func TestBreadcrumbAtEveryLevel(t *testing.T) {
 	if got := crumbOf(d); got != "Findings › CVE-2026-1 › shop:prod" {
 		t.Errorf("detail row: %q", got)
 	}
-	d.press("esc", "3")
+	d.press("esc", "P")
 	d.press("enter")
 	if got := crumbOf(d); got != "Projects › shop › problem: lockfile gone/composer.lock does not exist" {
 		t.Errorf("project: %q", got)
@@ -184,7 +185,8 @@ func TestBreadcrumbAtEveryLevel(t *testing.T) {
 
 func TestBreadcrumbIsTruncatedFromTheLeft(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	d.press("2", "down", "enter")
+	d.screen("findings")
+	d.press("down", "enter")
 	for _, w := range []int{30, 32, 40, 60} {
 		d.send(tea_window(w, 20))
 		line := strings.Split(d.view(), "\n")[1]
@@ -209,33 +211,36 @@ func TestBreadcrumbIsTruncatedFromTheLeft(t *testing.T) {
 func TestLeftAndRightSwitchScreensAtTheRoot(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
 	for _, c := range []struct{ key, want string }{
-		{"right", "[2 Findings"}, {"right", "[3 Projects]"}, {"l", "[4 Status]"}, {"right", "[5 Settings]"}, {"right", "[1 Overview]"},
-		{"left", "[5 Settings]"}, {"left", "[4 Status]"}, {"h", "[3 Projects]"}, {"tab", "[4 Status]"}, {"shift+tab", "[3 Projects]"}, {"1", "[1 Overview]"},
+		{"right", "▸[F]indings"}, {"right", "▸[P]rojects"}, {"l", "▸[H]ealth"}, {"right", "▸[S]ettings"}, {"right", "▸[O]verview"},
+		{"left", "▸[S]ettings"}, {"left", "▸[H]ealth"}, {"h", "▸[P]rojects"}, {"tab", "▸[H]ealth"}, {"shift+tab", "▸[P]rojects"}, {"O", "▸[O]verview"},
 	} {
 		d.press(c.key)
 		d.want(c.want)
 	}
-	d.press("2", "enter")
+	d.screen("findings")
+	d.press("enter")
 	d.press("right") // inside an issue right does not switch screens
-	d.want("[2 Findings", "Environments")
+	d.want("▸[F]indings", "Environments")
 }
 
 func TestBackKeysAndEsc(t *testing.T) {
 	for _, back := range []string{"esc", "left", "h", "backspace", "q"} {
 		d := start(t, newFake(t, nil), Options{})
-		d.press("2", "enter")
+		d.screen("findings")
+		d.press("enter")
 		d.want("Environments")
 		d.press(back)
 		d.wantNot("Environments")
-		d.want("3 of 3 open issues", "[2 Findings")
+		d.want("3 of 3 open issues", "▸[F]indings")
 		if d.quit {
 			t.Fatalf("%s quit the program", back)
 		}
 	}
 	// esc at the root of a screen with nothing to clear does nothing
 	d := start(t, newFake(t, nil), Options{})
-	d.press("2", "esc", "esc")
-	d.want("[2 Findings")
+	d.screen("findings")
+	d.press("esc", "esc")
+	d.want("▸[F]indings")
 	// esc clears the filter, and only then goes anywhere
 	d.press("/")
 	d.typ("nginx")
@@ -249,15 +254,15 @@ func TestQuitOnlyAtARootWithoutAPopup(t *testing.T) {
 	b := newFake(t, nil)
 	writeProjectFile(t, b.cfg.Root, "shop", shopWithProblems)
 	for name, keys := range map[string][]string{
-		"detail":      {"2", "enter"},
-		"prompt":      {"2", "enter", "f"},
+		"detail":      {"F", "enter"},
+		"prompt":      {"F", "enter", "f"},
 		"help":        {"?"},
-		"filter":      {"2", "/"},
-		"project":     {"3", "enter"},
-		"fix preview": {"3", "x"},
-		"folder box":  {"3", "d"},
-		"form text":   {"3", "a"},
-		"form list":   {"3", "e"},
+		"filter":      {"F", "/"},
+		"project":     {"P", "enter"},
+		"fix preview": {"P", "x"},
+		"folder box":  {"P", "d"},
+		"form text":   {"P", "a"},
+		"form list":   {"P", "e"},
 	} {
 		d := start(t, b, Options{})
 		d.press(keys...)
@@ -266,14 +271,14 @@ func TestQuitOnlyAtARootWithoutAPopup(t *testing.T) {
 			t.Errorf("%s: q quit the program", name)
 		}
 	}
-	for _, scr := range []string{"1", "2", "3", "4"} {
+	for _, scr := range []string{"O", "F", "P", "H"} {
 		d := start(t, b, Options{})
 		d.press(scr, "q")
 		if !d.quit {
 			t.Errorf("screen %s: q must quit at the root", scr)
 		}
 	}
-	for name, keys := range map[string][]string{"detail": {"2", "enter"}, "prompt": {"2", "enter", "f"}, "form": {"3", "a"}, "help": {"?"}, "fix": {"3", "x"}} {
+	for name, keys := range map[string][]string{"detail": {"F", "enter"}, "prompt": {"F", "enter", "f"}, "form": {"P", "a"}, "help": {"?"}, "fix": {"P", "x"}} {
 		d := start(t, b, Options{})
 		d.press(keys...)
 		d.press("ctrl+c")
@@ -287,7 +292,8 @@ func TestQInsideAPopupWorksLikeEsc(t *testing.T) {
 	b := newFake(t, nil)
 	writeProjectFile(t, b.cfg.Root, "shop", shopWithProblems)
 	d := start(t, b, Options{})
-	d.press("3", "x")
+	d.screen("projects")
+	d.press("x")
 	d.want("Apply this fix?")
 	d.press("q")
 	d.wantNot("Apply this fix?")
@@ -305,9 +311,11 @@ func TestProjectProblemsHaveRealNavigation(t *testing.T) {
 	b := newFake(t, nil)
 	path := writeProjectFile(t, b.cfg.Root, "shop", shopWithProblems)
 	d := start(t, b, Options{})
-	d.press("3", "right") // right switches screens at the root
-	d.want("[4 Status]")
-	d.press("3", "enter")
+	d.screen("projects")
+	d.press("right") // right switches screens at the root
+	d.want("▸[H]ealth")
+	d.screen("projects")
+	d.press("enter")
 	d.want("problems (up/down move, enter or x fix)", "> error")
 	d.wantNot("PROJECT") // the project has the whole body
 	d.press("down")
@@ -336,9 +344,10 @@ func TestProjectKeyAliasesStillWork(t *testing.T) {
 	writeProjectFile(t, b.cfg.Root, "shop", shopWithProblems)
 	noEditor(t)
 	d := start(t, b, Options{})
-	d.press("3", "p")
+	d.screen("projects")
+	d.press("p")
 	d.want("> warning")
-	d.press("P")
+	d.press("[")
 	d.want("> error")
 	d.press("f")
 	d.want("Apply this fix?")
@@ -355,7 +364,8 @@ func TestHelpIsPerModeAndScrolls(t *testing.T) {
 	writeProjectFile(t, b.cfg.Root, "shop", shopWithProblems)
 	d := start(t, b, Options{})
 	d.send(tea_window(80, 12))
-	d.press("3", "?")
+	d.screen("projects")
+	d.press("?")
 	d.want("Keys on the projects screen", "open the project")
 	d.press("end")
 	d.want("NO_COLOR")
@@ -377,7 +387,8 @@ func TestHelpIsPerModeAndScrolls(t *testing.T) {
 func TestDiscardAsksOnlyWhenSomethingWasEntered(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "a", "esc")
+	d.screen("projects")
+	d.press("a", "esc")
 	d.wantNot("Discard")
 	d.want("cancelled")
 	d.press("a")
@@ -399,7 +410,7 @@ func TestDiscardAsksOnlyWhenSomethingWasEntered(t *testing.T) {
 	d.click(2, 1)
 	d.want("Discard what you entered?")
 	d.press("y")
-	d.want("[3 Projects]", "PROJECT")
+	d.want("▸[P]rojects", "PROJECT")
 	if b.writes != 0 {
 		t.Fatal("discarding wrote something")
 	}
@@ -407,7 +418,8 @@ func TestDiscardAsksOnlyWhenSomethingWasEntered(t *testing.T) {
 
 func TestTopModeAloneDecidesTheKeys(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	d.press("2", "down", "enter", "f")
+	d.screen("findings")
+	d.press("down", "enter", "f")
 	d.want("Note (optional)")
 	d.press("f", "1", "?", "q", "a")
 	if d.quit {
@@ -422,7 +434,7 @@ func TestMouseWheelScrollsTheFocusedList(t *testing.T) {
 	b := newFake(t, nil)
 	addProjects(b, 40)
 	d := start(t, b, Options{})
-	d.press("3")
+	d.screen("projects")
 	d.wheel(false, 10, 6)
 	if got := selectedName(t, d); got != "app01" { // shop, mw, app00, app01
 		t.Fatalf("the wheel moved to %q", got)
@@ -431,7 +443,7 @@ func TestMouseWheelScrollsTheFocusedList(t *testing.T) {
 	if got := selectedName(t, d); got != "shop" {
 		t.Fatalf("wheel up: %q", got)
 	}
-	d.press("4")
+	d.screen("health")
 	d.send(tea_window(80, 10))
 	a := d.m.(*app)
 	d.wheel(false, 10, 6)
@@ -440,7 +452,8 @@ func TestMouseWheelScrollsTheFocusedList(t *testing.T) {
 	}
 	// the wheel scrolls the page of an issue, not its environment row
 	d.send(tea_window(100, 12))
-	d.press("2", "enter")
+	d.screen("findings")
+	d.press("enter")
 	sel := a.fnd.det.sel.at()
 	d.wheel(false, 10, 6)
 	if a.fnd.det.body.at() == 0 || a.fnd.det.sel.at() != sel {
@@ -450,7 +463,7 @@ func TestMouseWheelScrollsTheFocusedList(t *testing.T) {
 
 func TestMouseClickSelectsThenOpens(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	d.press("2")
+	d.screen("findings")
 	a := d.m.(*app)
 	// rows start on screen line 4: header, breadcrumb, count, column heads
 	d.click(5, 5)
@@ -480,9 +493,9 @@ func TestMouseClickSelectsThenOpens(t *testing.T) {
 	// a click on a tab switches screen
 	_, spans := a.tabs()
 	d.click(spans[scrStatus][0]+2, 0)
-	d.want("[4 Status]")
+	d.want("▸[H]ealth")
 	d.click(spans[scrProjects][0]+2, 0)
-	d.want("[3 Projects]")
+	d.want("▸[P]rojects")
 	// outside the list nothing happens
 	d.click(5, 30)
 	d.click(500, 500)
@@ -492,7 +505,7 @@ func TestMouseOnProjectsFormsAndPopups(t *testing.T) {
 	b := newFake(t, nil)
 	writeProjectFile(t, b.cfg.Root, "shop", shopWithProblems)
 	d := start(t, b, Options{})
-	d.press("3")
+	d.screen("projects")
 	d.click(5, 4) // second row: mw
 	if got := selectedName(t, d); got != "mw" {
 		t.Fatalf("selected %q", got)
@@ -526,12 +539,12 @@ func TestMouseOnProjectsFormsAndPopups(t *testing.T) {
 	spans := func() [numScreens][2]int { _, s := d.m.(*app).tabs(); return s }()
 	d.click(spans[scrStatus][0]+2, 0)
 	d.want("Scan a folder")
-	d.wantNot("[4 Status]")
+	d.wantNot("▸[H]ealth")
 }
 
 func TestMouseMotionIsIgnored(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	d.press("2")
+	d.screen("findings")
 	d.send(tea.MouseMsg{X: 5, Y: 5, Action: tea.MouseActionMotion, Button: tea.MouseButtonNone})
 	d.send(tea.MouseMsg{X: 5, Y: 5, Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft})
 	if d.m.(*app).fnd.vp.at() != 0 {

@@ -77,7 +77,8 @@ func TestPendingCountsAndRefusesTheSameKey(t *testing.T) {
 func TestPromptKeepsItsValuesWhenOpsRefuses(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("2", "down", "enter", "down", "a")
+	d.screen("findings")
+	d.press("down", "enter", "down", "a")
 	d.typ("bob")
 	d.press("tab")
 	d.typ("tomorrow")
@@ -111,7 +112,8 @@ func TestPromptKeepsItsValuesWhenOpsRefuses(t *testing.T) {
 func TestSubmittingPromptIgnoresInputAndDoubleSubmit(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("2", "down", "enter", "i")
+	d.screen("findings")
+	d.press("down", "enter", "i")
 	d.typ("MR 1")
 	cmd := d.hold(key("enter"))
 	if cmd == nil || !d.app().prm.submitting {
@@ -140,7 +142,8 @@ func TestSubmittingPromptIgnoresInputAndDoubleSubmit(t *testing.T) {
 func TestResultAfterTheSubmittingPromptWasClosedIsDropped(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("2", "down", "enter", "n") // not affected, and no reason
+	d.screen("findings")
+	d.press("down", "enter", "n") // not affected, and no reason
 	cmd := d.hold(key("enter"))
 	d.press("esc")
 	if d.app().prm != nil {
@@ -159,7 +162,8 @@ func TestResultAfterTheSubmittingPromptWasClosedIsDropped(t *testing.T) {
 func TestBusyCountsOverlappingWritesAndEachEndsAlone(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("2", "enter", "i") // CVE-2026-3
+	d.screen("findings")
+	d.press("enter", "i") // CVE-2026-3
 	first := d.hold(key("enter"))
 	d.press("esc", "esc", "down", "enter", "i") // CVE-2026-1
 	second := d.hold(key("enter"))
@@ -187,7 +191,8 @@ func TestBusyCountsOverlappingWritesAndEachEndsAlone(t *testing.T) {
 func TestTickAndRefreshReloadTheOpenIssue(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("2", "down", "enter", "down") // CVE-2026-1, shop selected
+	d.screen("findings")
+	d.press("down", "enter", "down") // CVE-2026-1, shop selected
 	d.want("> shop")
 	resolve := func(project string, st model.Status) {
 		t.Helper()
@@ -211,7 +216,8 @@ func TestTickAndRefreshReloadTheOpenIssue(t *testing.T) {
 func TestIssueThatLeavesTheListStaysOpenInDetail(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("2", "/")
+	d.screen("findings")
+	d.press("/")
 	d.typ("nginx")
 	d.press("enter", "enter", "f") // CVE-2026-3 is the only match
 	d.typ("MR 9")
@@ -226,9 +232,10 @@ func TestIssueThatLeavesTheListStaysOpenInDetail(t *testing.T) {
 
 func TestErrorIsStickyThroughMovementButNotAnAction(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	d.press("3", "x")
+	d.screen("projects")
+	d.press("x")
 	d.want("error: no problems to fix here")
-	d.press("down", "up", "pgdown", "home", "end", "g", "G", "2", "tab", "shift+tab", "3", "?")
+	d.press("down", "up", "pgdown", "home", "end", "g", "G", "F", "tab", "shift+tab", "P", "?")
 	d.press("?") // closes the help again
 	d.want("error: no problems to fix here")
 	d.press("esc")
@@ -242,7 +249,8 @@ func TestErrorIsStickyThroughMovementButNotAnAction(t *testing.T) {
 
 func TestSuccessNoteExpiresByItsTimer(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	d.press("2", "s")
+	d.screen("findings")
+	d.press("s")
 	d.want("ok: minimum severity: low+")
 	if len(d.timers) != 1 {
 		t.Fatalf("one timer for the note, got %v", d.timers)
@@ -260,9 +268,11 @@ func TestSuccessNoteExpiresByItsTimer(t *testing.T) {
 
 func TestErrorIsNotClearedByATimer(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	d.press("2", "s")
+	d.screen("findings")
+	d.press("s")
 	timer := d.timers[0]
-	d.press("3", "x")
+	d.screen("projects")
+	d.press("x")
 	d.want("error: no problems to fix here")
 	d.send(timer)
 	d.send(flashExpiredMsg{seq: d.app().flashSeq})

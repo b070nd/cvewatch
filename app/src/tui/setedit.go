@@ -351,7 +351,7 @@ func (m *app) setToggle(r setRow) tea.Cmd {
 
 // setPickEnum offers the values a setting may have.
 func (m *app) setPickEnum(r setRow) {
-	pk := &picker{title: "Choose " + oneLine(r.f.Label), hint: "enter chooses; u on the setting restores the default" + enumHint(r.f.Path), crumb: lastSeg(r.segs)}
+	pk := &picker{title: "Choose " + oneLine(r.f.Label), hint: "enter chooses; d on the setting restores the default" + enumHint(r.f.Path), crumb: lastSeg(r.segs)}
 	for _, v := range r.f.Enum {
 		it := pickItem{value: v, label: enumLabel(r.f.Path, v)}
 		switch {

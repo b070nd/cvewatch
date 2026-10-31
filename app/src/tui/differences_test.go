@@ -16,7 +16,7 @@ const diffSvc = "name: svc\nenvs: [local, dev, prod]\ntechs:\n  - {name: php, ve
 
 // selectProject moves the cursor of the Projects screen onto a project.
 func selectProject(d *driver, name string) {
-	d.press("3")
+	d.screen("projects")
 	for i := 0; i < 6 && !strings.Contains(d.view(), "> "+name); i++ {
 		d.press("down")
 	}
@@ -75,7 +75,7 @@ func TestOldSpellingIsSaidInThePreviewAndCanBeMigratedByKeyOrHint(t *testing.T) 
 	b, root := diskFake(t, nil)
 	d := start(t, b, Options{})
 	selectProject(d, "shop")
-	d.press("H")
+	d.press("w")
 	d.want("Hints", "environments: is the old spelling of the when@<env> blocks")
 	d.pickTo("environments")
 	d.press("enter")
@@ -85,7 +85,7 @@ func TestOldSpellingIsSaidInThePreviewAndCanBeMigratedByKeyOrHint(t *testing.T) 
 	if got := fileAt(t, root, "config/projects/shop.yaml"); strings.Contains(got, "environments:") || !strings.Contains(got, "when@prod:") {
 		t.Fatalf("file:\n%s", got)
 	}
-	d.press("H")
+	d.press("w")
 	d.wantNot("old spelling")
 
 	// any change to the differences says the same before it migrates
@@ -107,7 +107,7 @@ func TestUnknownTechnologyInAnEnvironmentBlockIsReplacedThere(t *testing.T) {
 	b, root := diskFake(t, map[string]string{"config/projects/svc.yaml": "name: svc\nenvs: [local, prod]\ntechs:\n  - {name: php, version: \"8.2\"}\nwhen@prod:\n  techs: {rediss: \"7\"}\n"})
 	d := start(t, b, Options{})
 	selectProject(d, "svc")
-	d.press("H")
+	d.press("w")
 	d.want("Hints", `when@prod.techs.rediss: "rediss" is not in the catalog`)
 	d.pickTo("when@prod.techs.rediss")
 	d.press("enter")
@@ -125,7 +125,8 @@ func TestUnknownTechnologyInAnEnvironmentBlockIsReplacedThere(t *testing.T) {
 func TestNewProjectFormAsksOnceAboutDifferencesAndShowsThemCompactly(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "n", "ctrl+u")
+	d.screen("projects")
+	d.press("n", "ctrl+u")
 	d.typ("blog")
 	d.press("enter", "enter") // techs (none), then add-techs
 	d.typ("php")
@@ -162,7 +163,7 @@ func TestADifferenceHintInTheReviewGoesToTheStepThatSettlesIt(t *testing.T) {
 	selectProject(d, "svc")
 	d.press("e", "end", "enter")
 	d.want("Save this project?", "Differences per environment", "prod: +rediss 7", "when@prod.techs.rediss")
-	d.press("H")
+	d.press("w")
 	d.pickTo("when@prod.techs.rediss")
 	d.press("enter")
 	d.want("Instead of rediss")

@@ -159,7 +159,7 @@ func TestIssueListsDoNotRepeatTheEnvironmentsOfAProject(t *testing.T) {
 			t.Errorf("the row names the project alone: %q", l)
 		}
 	}
-	d.press("2")
+	d.screen("findings")
 	d.want("PROJECTS (ONLY IN)", "CVE-2026-100")
 	d.wantNot("shop:", "…")
 }

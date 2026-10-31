@@ -70,22 +70,22 @@ func TestScopeNarrowsOverviewFindingsAndCounts(t *testing.T) {
 	if regexp.MustCompile(`staging \d`).MatchString(v) {
 		t.Errorf("the bars list an environment the scoped project does not run in:\n%s", v)
 	}
-	d.want("2 Findings (1)")
+	d.want("[F]indings (1)")
 
-	d.press("2")
+	d.screen("findings")
 	d.want("1 of 1 open issues", "CVE-2026-1")
 	d.wantNot("shop", "CVE-2026-3", "CVE-2026-4") // mw runs in prod only, so the row names the project alone
 	if line := strings.Split(d.view(), "\n")[1]; !strings.Contains(line, "scope: mw") {
 		t.Fatalf("the chip is on the breadcrumb line of every screen: %q", line)
 	}
-	d.press("3")
+	d.screen("projects")
 	d.want("scope: mw")
 
 	scopeTo(d, "shop")
-	d.press("2")
+	d.screen("findings")
 	d.want("3 of 3 open issues", "shop:prod")
 	d.wantNot("mw") // only the targets of the project are shown
-	d.press("1")
+	d.screen("overview")
 	d.want("open issues 3", "open findings 3")
 }
 
@@ -112,7 +112,8 @@ func TestSearchAndSeverityWorkWithinTheScope(t *testing.T) {
 	d.press("enter")
 	d.want("0 of 3 open issues", "No issue matches the filter")
 	d.press("esc")
-	d.press("2", "s")
+	d.screen("findings")
+	d.press("s")
 	d.want("min severity: low+", "3 of 3 open issues")
 	d.press("s", "s", "s")
 	d.want("min severity: critical+", "1 of 3 open issues")
@@ -176,7 +177,7 @@ func TestScopeIsDroppedWhenItsProjectIsGone(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
 	scopeTo(d, "mw")
-	d.press("2")
+	d.screen("findings")
 	d.want("1 of 1 open issues")
 
 	b.backfillFn = func(context.Context, func(ops.RefreshProgress)) (pipeline.Result, error) {
@@ -190,7 +191,7 @@ func TestScopeIsDroppedWhenItsProjectIsGone(t *testing.T) {
 	}
 	d.want("scope cleared: project mw is gone", "3 of 3 open issues")
 	d.wantNot("scope: mw")
-	d.press("1")
+	d.screen("overview")
 	d.want("open issues 3")
 }
 
@@ -210,7 +211,8 @@ func TestSetScopeRefusesAnUnknownProject(t *testing.T) {
 
 func TestScopeKeepsTheCursorOnItsIssueAndPrunesTheSelection(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	d.press("2", "down", "down") // CVE-2026-4
+	d.screen("findings")
+	d.press("down", "down") // CVE-2026-4
 	d.press(" ")
 	a := d.m.(*app)
 	if !a.fnd.sel["CVE-2026-4"] {
@@ -221,7 +223,7 @@ func TestScopeKeepsTheCursorOnItsIssueAndPrunesTheSelection(t *testing.T) {
 		t.Fatalf("a selected issue left the list: %v", a.fnd.sel)
 	}
 	scopeTo(d, "shop")
-	d.press("2")
+	d.screen("findings")
 	d.want("3 of 3 open issues")
 }
 
@@ -238,7 +240,7 @@ func TestScopedIssuePageStartsOnTheScopedProject(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
 	scopeTo(d, "shop")
 	d.press("down", "enter")
-	d.want("Overview", "CVE-2026-1", "shop:prod")
+	d.want("Environments", "CVE-2026-1", "shop:prod")
 	d.wantNot("mw:prod")
 	if a, b := strings.Index(d.view(), "shop "), strings.Index(d.view(), "other projects"); a < 0 || b < a {
 		t.Fatalf("the scoped project comes first, then the separator:\n%s", d.view())
@@ -272,7 +274,8 @@ func TestScopedIssuePagePrefersAProdLikeEnvironment(t *testing.T) {
 func TestScopedIssueOpenedFromFindingsBehavesTheSame(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
 	scopeTo(d, "shop")
-	d.press("2", "down", "enter")
+	d.screen("findings")
+	d.press("down", "enter")
 	d.want("Findings", "CVE-2026-1", "shop:prod")
 	d.wantNot("mw:prod")
 	d.press("a")
@@ -281,7 +284,8 @@ func TestScopedIssueOpenedFromFindingsBehavesTheSame(t *testing.T) {
 
 func TestUnscopedIssuePageKeepsItsOrderAndPrompts(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	d.press("2", "down", "enter")
+	d.screen("findings")
+	d.press("down", "enter")
 	d.want("mw:prod")
 	d.wantNot("other projects")
 	d.press("a")

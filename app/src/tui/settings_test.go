@@ -21,7 +21,7 @@ func setStart(t *testing.T, files map[string]string) (*driver, string) {
 	}
 	b, root := diskFake(t, all)
 	d := start(t, b, Options{})
-	d.press("5")
+	d.screen("settings")
 	return d, root
 }
 
@@ -80,7 +80,7 @@ func (d *driver) edit(path, value string) {
 
 func TestSettingsScreenListsTheSections(t *testing.T) {
 	d, _ := setStart(t, nil)
-	d.want("[5 Settings]", "Configuration: config.yaml, techs.yaml and the files in sources/", "SECTION", "PROBLEMS")
+	d.want("▸[S]ettings", "Configuration: config.yaml, techs.yaml and the files in sources/", "SECTION", "PROBLEMS")
 	d.wantLine("Core", "1 set")
 	d.wantLine("HTTP", "2 set")
 	d.wantLine("Notify", "1 set")
@@ -254,14 +254,14 @@ func TestSettingsValidationErrorsKeepTheTypedText(t *testing.T) {
 func TestSettingsUnsetRestoresTheDefault(t *testing.T) {
 	d, root := setStart(t, nil)
 	d.toSetting("http.timeout")
-	d.press("u")
+	d.press("d")
 	d.want("Change settings: restore the default of Timeout (30s)", "-   timeout: 30s")
 	d.press("y")
 	if got := cfgOf(t, root); strings.Contains(got, "timeout") || !strings.Contains(got, "retries: 3") {
 		t.Fatalf("file:\n%s", got)
 	}
 	d.wantLine("Timeout", "30s")
-	d.press("u") // nothing set any more
+	d.press("d") // nothing set any more
 	d.wantNot("Change settings")
 	d.toSetting("http.retries")
 	d.press("enter", "ctrl+u", "enter") // empty text restores it too
@@ -353,15 +353,15 @@ func lastLine(d *driver) string {
 func TestSettingsOpensWithABrokenConfiguration(t *testing.T) {
 	noEditor(t)
 	d, root := setStart(t, map[string]string{"config/config.yaml": setBroken})
-	d.want("5 Settings (!)", "error config.yaml line 3: http.retries", "error config.yaml line 5: intervall")
+	d.want("[S]ettings (!)", "error config.yaml line 3: http.retries", "error config.yaml line 5: intervall")
 	d.wantLine("Core", "1 err")
 	d.wantLine("HTTP", "1 err")
 	// the other screens show the load error as before
-	d.press("1")
+	d.screen("overview")
 	d.want("Press r to try again, or q to quit.")
-	d.press("4")
+	d.screen("health")
 	d.want("Press r to try again, or q to quit.")
-	d.press("5")
+	d.screen("settings")
 	// a problem goes to its field, or to the section when it names no field
 	d.press("end", "enter")
 	d.want("Settings › Core", "config.yaml line 5: field intervall", "press E to edit the file")
@@ -399,7 +399,7 @@ func TestSettingsOpensWithABrokenConfiguration(t *testing.T) {
 
 func TestSettingsWithASyntaxErrorShowsItAndKeepsTheFileSafe(t *testing.T) {
 	d, root := setStart(t, map[string]string{"config/config.yaml": setSyntax})
-	d.want("5 Settings (!)", "error config.yaml line 1: did not find expected")
+	d.want("[S]ettings (!)", "error config.yaml line 1: did not find expected")
 	d.press("end", "enter")
 	d.want("Settings › Core", "error: config.yaml line 1:", "press E to edit the file")
 	d.press("enter")
@@ -417,9 +417,9 @@ func TestSettingsAreClosedToAnActorWhoMaySeeOnlyAFewProjects(t *testing.T) {
 	d.wantNot("SECTION", "(!)")
 	d.press("E")
 	d.want("error: the settings are not available to you")
-	d.press("enter", "a", "x", "u", " ")
+	d.press("enter", "a", "x", "d", " ")
 	d.wantNot("Change settings")
-	d.press("3")
+	d.screen("projects")
 	d.want("PROJECT")
 	if !sameTree(before, treeOf(t, root)) {
 		t.Fatal("nothing changed")
@@ -437,7 +437,7 @@ func TestSettingsAreReadOnlyForAnActorWithoutWriteAccess(t *testing.T) {
 	d.want("error: the settings cannot be changed: tui:carol may not change the settings")
 	d.wantNot("Change settings", "Change User agent")
 	d.toSetting("http.timeout")
-	d.press("u")
+	d.press("d")
 	d.want("error: the settings cannot be changed")
 	d.wantNot("Change settings")
 	d.press("E")
@@ -579,28 +579,29 @@ func TestSettingsMouse(t *testing.T) {
 	d.wantNot("Change settings")
 }
 
-func TestSettingsTabsCycleAndJumpByNumber(t *testing.T) {
+func TestSettingsTabsCycleAndJumpByLetter(t *testing.T) {
 	d, _ := setStart(t, nil)
-	d.want("[5 Settings]")
+	d.want("▸[S]ettings")
 	d.press("tab")
-	d.want("[1 Overview]")
+	d.want("▸[O]verview")
 	d.press("shift+tab")
-	d.want("[5 Settings]")
+	d.want("▸[S]ettings")
 	d.press("right")
-	d.want("[1 Overview]")
+	d.want("▸[O]verview")
 	d.press("left")
-	d.want("[5 Settings]")
-	for _, k := range []string{"1", "2", "3", "4", "5"} {
+	d.want("▸[S]ettings")
+	for _, k := range []string{"O", "F", "P", "H", "S"} {
 		d.press(k)
 	}
-	d.want("[5 Settings]")
-	d.press("down", "enter", "5")
-	d.want("[5 Settings]") // the level is kept
+	d.want("▸[S]ettings")
+	d.press("down", "enter", "S")
+	d.want("▸[S]ettings") // the level is kept
 	d.want("Settings › HTTP")
-	d.press("2", "5")
+	d.screen("findings")
+	d.screen("settings")
 	d.want("Settings › HTTP")
 	d.press("?")
-	d.want("1-5")
+	d.want("O F P H S")
 }
 
 func TestSettingsFilterAtTheRootAndInASection(t *testing.T) {
@@ -632,24 +633,24 @@ func TestSettingsFilterAtTheRootAndInASection(t *testing.T) {
 
 func TestSettingsJumpBoxReachesASetting(t *testing.T) {
 	d, _ := setStart(t, nil)
-	d.press("1")
+	d.screen("overview")
 	d.press(":")
 	d.want("Go to an issue or a project, or a setting")
 	d.typ("retry delay")
 	d.want("Retry delay", "setting HTTP")
 	d.press("enter")
-	d.want("[5 Settings]", "Settings › HTTP")
+	d.want("▸[S]ettings", "Settings › HTTP")
 	d.wantSel("Retry delay")
 	d.press("esc")
-	d.want("[1 Overview]")
+	d.want("▸[O]verview")
 	d.press("ctrl+g")
 	d.typ("http.max_body")
 	d.press("enter")
 	d.wantSel("Max body")
 	d.press("left")
-	d.want("[1 Overview]")
+	d.want("▸[O]verview")
 	// a jump from inside Settings comes back to the place it started at
-	d.press("5")
+	d.screen("settings")
 	d.press("esc", "ctrl+g")
 	d.typ("slack.min_severity")
 	d.press("enter")
@@ -705,7 +706,7 @@ func TestSettingsFootersFitAndEveryStateHasHelp(t *testing.T) {
 	d.press("down", "enter")
 	check("fields", "enter edit")
 	d.toSetting("http.timeout")
-	check("a set field", "u default")
+	check("a set field", "d default")
 	d.press("enter")
 	check("prompt", "enter confirm")
 	d.press("ctrl+u")
@@ -752,7 +753,10 @@ func TestScreenTableDrivesTheTabsAndKeys(t *testing.T) {
 			t.Errorf("%s lacks its behaviour", sc.name)
 		}
 		d.press(sc.key)
-		d.want("[" + sc.key + " " + sc.name)
+		if !strings.HasPrefix(strings.ToUpper(sc.name), sc.key) {
+			t.Errorf("%s: the key %s is not its first letter", sc.name, sc.key)
+		}
+		d.want("▸[" + sc.key + "]" + sc.name[1:])
 		if got := crumbOf(d); !strings.HasPrefix(got, sc.name) {
 			t.Errorf("%s: crumb %q", sc.name, got)
 		}

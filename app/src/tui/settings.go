@@ -306,7 +306,7 @@ func setTitle(s *settingsState, lv *setLevel) (title, hint string, heads [3]stri
 		hint = "enter changes or opens the item; a adds, x removes"
 		heads = [3]string{"ITEM", "VALUE", ""}
 	default:
-		hint = "enter changes or opens the field; space turns a switch; u restores the default"
+		hint = "enter changes or opens the field; space turns a switch; d restores the default"
 		heads = [3]string{"FIELD", "VALUE", "TYPE"}
 	}
 	if s.write != nil {
@@ -729,7 +729,7 @@ func init() {
 			{keys: ks("a"), help: "add an item to the list", short: "add", prio: 2, when: onSetAdd, do: plain((*app).setAddKey)},
 			{keys: ks("x", "delete"), disp: "x", help: "remove the selected item", short: "remove", prio: 2, when: onSetRow(rowItem), do: plain((*app).setRemoveKey)},
 			{keys: ks("e"), help: "technologies: change the keywords, category and CPE of the selected technology of your own", short: "edit tech", prio: 2, when: onTechItem, do: plain((*app).setTechEdit)},
-			{keys: ks("u"), help: "restore the default: the value is removed from the file", short: "default", prio: 3, when: onSetUnset, do: plain((*app).setUnsetKey)},
+			{keys: ks("d"), help: "restore the default: the value is removed from the file", short: "default", prio: 3, when: onSetUnset, do: plain((*app).setUnsetKey)},
 			{keys: ks("esc"), help: "clear the filter", short: "clear filter", prio: 2, when: setHasText, do: plain((*app).setClearFilter)},
 		}, findBinds()...), []binding{
 			bindBack("back one level", (*app).setBack),

@@ -146,7 +146,7 @@ func (d *detail) build(w int) *detailLayout {
 		add("")
 	}
 
-	add(section("Environments") + stMuted.Render("  up/down select; f i n o act on the selected row, F I N O on the whole project"))
+	add(section("Environments") + stMuted.Render("  up/down select; f i n o act on the selected row, ctrl+p in the note makes it the whole project"))
 	if len(is.Targets) == 0 {
 		add("  (no environment is tracked for this issue)")
 	}

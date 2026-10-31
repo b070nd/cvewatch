@@ -47,7 +47,7 @@ func (d *driver) toReview() {
 
 func TestPlusOffersWhereTheNewProjectComesFrom(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	d.press("3")
+	d.screen("projects")
 	d.want("+ add", "- remove")
 	d.press("+")
 	d.want("Add a project", "From a folder", "From a Dockerfile or compose file", "Empty project")
@@ -72,7 +72,8 @@ func TestPlusFromADockerfileProposesTheInfrastructureAndSaves(t *testing.T) {
 		"notes.txt":  "x",
 	})
 	d := start(t, b, Options{})
-	d.press("3", "+", "down", "enter")
+	d.screen("projects")
+	d.press("+", "down", "enter")
 	d.typ(app + pathSep + "Dock")
 	d.want("Dockerfile", "1 file in")
 	d.wantNot("notes.txt")
@@ -98,7 +99,8 @@ func TestTechnologiesStepGroupsInfrastructureApart(t *testing.T) {
 	site := filepath.Join(t.TempDir(), "site")
 	writeFiles(t, site, map[string]string{".php-version": "8.2.1\n", "Dockerfile": "FROM nginx:1.25\nFROM redis:7\n"})
 	d := start(t, b, Options{})
-	d.press("3", "+", "enter")
+	d.screen("projects")
+	d.press("+", "enter")
 	d.typ(site)
 	d.press("enter", "enter")
 	d.want("Technologies", "Infrastructure", "PHP", "Nginx", "Redis")
@@ -125,7 +127,8 @@ func TestTechnologiesStepGroupsInfrastructureApart(t *testing.T) {
 func TestMinusAsksAndOnlyThenDeletesTheProject(t *testing.T) {
 	b, root := diskFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "down") // shop
+	d.screen("projects")
+	d.press("down") // shop
 	before := treeOf(t, root)
 	d.press("-")
 	d.want("Delete project: shop", "Consequences", "Delete shop?")
@@ -158,7 +161,8 @@ func TestMinusAsksAndOnlyThenDeletesTheProject(t *testing.T) {
 func TestMinusInsideAProjectAndTheOldKeysStillWork(t *testing.T) {
 	b, root := diskFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "down", "enter", "-")
+	d.screen("projects")
+	d.press("down", "enter", "-")
 	d.want("Delete project: shop")
 	d.press("esc", "esc")
 	d.press("X")
@@ -185,7 +189,7 @@ func TestProjectWhoseFileStemIsNotItsNameCanBeEditedAndDeleted(t *testing.T) {
 		"config/projects/magento2-shop.yaml": magentoShop,
 	})
 	d := start(t, b, Options{})
-	d.press("3")
+	d.screen("projects")
 	d.want("> shop")
 	p, ok := d.m.(*app).selectedProject()
 	if !ok || !p.HasFile || filepath.Base(p.File) != "magento2-shop.yaml" {
@@ -227,7 +231,8 @@ func TestProjectWhoseFileStemIsNotItsNameCanBeEditedAndDeleted(t *testing.T) {
 func TestLockfileIsAddedByItsFileWithCompletionAndTypeFromTheName(t *testing.T) {
 	b, root := diskFake(t, map[string]string{"repos/other/custom-deps.json": `{}`})
 	d := start(t, b, Options{})
-	d.press("3", "down", "c")
+	d.screen("projects")
+	d.press("down", "c")
 	d.toField(2)
 	d.press("enter", "+")
 	d.want("Add a lockfile to shop", "Lockfile:")
@@ -282,7 +287,8 @@ func TestLockfileIsAddedByItsFileWithCompletionAndTypeFromTheName(t *testing.T) 
 func TestLockfileIsRemovedOnlyAfterTheAnswerYes(t *testing.T) {
 	b, root := diskFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "down", "c")
+	d.screen("projects")
+	d.press("down", "c")
 	d.toField(2)
 	d.press("enter", "-")
 	d.want("Remove lockfile repos/shop/composer.lock from shop?")
@@ -313,7 +319,8 @@ func TestNewProjectFlowAddsAndRemovesLockfiles(t *testing.T) {
 		"extra/custom-deps.unknownfile": `{}`,
 	})
 	d := start(t, b, Options{})
-	d.press("3", "d")
+	d.screen("projects")
+	d.press("d")
 	d.typ(filepath.Join(site, "web"))
 	d.press("enter", "enter", "enter", "enter") // name, techs, add-techs, versions
 	for i := 0; i < 4 && !strings.Contains(d.view(), "Inventory sources"); i++ {
@@ -356,7 +363,8 @@ func TestNewProjectFlowAddsAndRemovesLockfiles(t *testing.T) {
 
 func TestSelectingAProjectSetsTheScopeAndShowsItsSecurityIssues(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	d.press("3", "down") // mw
+	d.screen("projects")
+	d.press("down") // mw
 	d.wantNot("scope: mw")
 	d.press("enter")
 	d.want("scope: mw", "Security issues", "1 open security issue: 1 high", "CVE-2026-1", "Tracked PHP bug")
@@ -365,12 +373,12 @@ func TestSelectingAProjectSetsTheScopeAndShowsItsSecurityIssues(t *testing.T) {
 	if a.scope != "mw" {
 		t.Fatalf("scope %q", a.scope)
 	}
-	d.press("1")
+	d.screen("overview")
 	d.want("scope: mw")
-	d.press("2")
+	d.screen("findings")
 	d.want("1 of 1 open issues")
 	d.wantNot("CVE-2026-3")
-	d.press("3")
+	d.screen("projects")
 	d.want("Security issues")
 
 	d.press("s")
@@ -379,12 +387,12 @@ func TestSelectingAProjectSetsTheScopeAndShowsItsSecurityIssues(t *testing.T) {
 	}
 	d.want("Security issues of mw", "> high", "CVE-2026-1")
 	d.press("enter")
-	d.want("[2 Findings (1)]", "CVE-2026-1")
+	d.want("▸[F]indings (1)", "CVE-2026-1")
 	if got := crumbOf(d); !strings.HasPrefix(got, "Findings › CVE-2026-1") {
 		t.Fatalf("crumb %q", got)
 	}
 	d.press("esc") // back comes to the list of the project's issues
-	d.want("[3 Projects]", "Security issues of mw")
+	d.want("▸[P]rojects", "Security issues of mw")
 	if got := crumbOf(d); got != "Projects › mw › security issues" {
 		t.Fatalf("crumb %q", got)
 	}
@@ -401,10 +409,11 @@ func TestSelectingAProjectSetsTheScopeAndShowsItsSecurityIssues(t *testing.T) {
 
 func TestProjectWithoutProblemsOpensItsIssuesWithEnter(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	d.press("3", "down", "enter", "enter")
+	d.screen("projects")
+	d.press("down", "enter", "enter")
 	d.want("Security issues of mw", "> high")
 	d.press("i")
-	d.want("[2 Findings", "project:mw")
+	d.want("▸[F]indings", "project:mw")
 }
 
 func TestProjectsKeysAreTheSameInTheTablesAndTheHelp(t *testing.T) {

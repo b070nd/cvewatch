@@ -398,6 +398,8 @@ func key(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyCtrlU}
 	case "ctrl+o":
 		return tea.KeyMsg{Type: tea.KeyCtrlO}
+	case "ctrl+p":
+		return tea.KeyMsg{Type: tea.KeyCtrlP}
 	case "ctrl+c":
 		return tea.KeyMsg{Type: tea.KeyCtrlC}
 	case "backspace":
@@ -413,6 +415,21 @@ func (d *driver) press(keys ...string) {
 		d.send(key(k))
 	}
 }
+
+// screenKey is the key of a screen given by name.
+func screenKey(t *testing.T, name string) string {
+	t.Helper()
+	for _, sc := range screens {
+		if strings.EqualFold(sc.name, name) {
+			return sc.key
+		}
+	}
+	t.Fatalf("no screen named %q", name)
+	return ""
+}
+
+// screen switches to a screen by its name, with the capital letter of its key.
+func (d *driver) screen(name string) { d.t.Helper(); d.press(screenKey(d.t, name)) }
 
 func (d *driver) typ(s string) {
 	for _, r := range s {

@@ -59,11 +59,11 @@ func (m *app) refitProjects(before string) {
 	m.prj.prob.refit(len(probs), func(i int) string { return problemID(probs[i]) })
 }
 
-// stepProblem is the p/P alias: it steps the problem cursor from the project list.
+// stepProblem is the p and [ alias: it steps the problem cursor from the project list.
 func (m *app) stepProblem(k tea.KeyMsg) tea.Cmd {
 	if p, ok := m.selectedProject(); ok && len(p.Problems) > 0 {
 		d := 1
-		if k.String() == "P" {
+		if k.String() == "[" {
 			d = len(p.Problems) - 1
 		}
 		m.prj.prob.to((m.prj.prob.at() + d) % len(p.Problems))

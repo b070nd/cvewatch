@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"strings"
+
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/b070nd/cvewatch/app/src/model"
@@ -21,7 +23,6 @@ var mo struct {
 
 var statusKeys = map[string]model.Status{
 	"f": model.StatusFixed, "i": model.StatusIgnored, "n": model.StatusNotAffected, "o": model.StatusOpen,
-	"F": model.StatusFixed, "I": model.StatusIgnored, "N": model.StatusNotAffected, "O": model.StatusOpen,
 }
 
 // ---- shared bindings ----
@@ -42,7 +43,7 @@ func bindRefresh() binding {
 }
 
 func bindFetch() binding {
-	return binding{keys: ks("F"), help: "fetch the feeds now, in the background; the header shows the progress", short: "fetch", prio: 3,
+	return binding{keys: ks("u"), help: "update now: fetch the feeds in the background; the header shows the progress (cvewatch update)", short: "update", prio: 3,
 		do: plain(func(m *app) tea.Cmd { return m.fetchBegin(false) })}
 }
 
@@ -55,32 +56,42 @@ func bindBack(what string, f func(m *app) tea.Cmd) binding {
 	return binding{keys: ks("esc", "left", "h", "backspace", "q"), disp: "esc, left", help: what + " (backspace and q do the same)", short: "back", do: plain(f)}
 }
 
-// bindTabs switches the screen from a level inside one.
+// bindTabs switches the screen from a level inside one: tab and shift+tab
+// cycle, the capital letter of a screen jumps to it. The small letter jumps
+// too when the mode has no binding on it (see screenSwitch).
 func bindTabs() binding {
 	keys := ks("tab", "shift+tab")
+	var letters []string
 	for _, sc := range screens {
 		keys = append(keys, sc.key)
+		letters = append(letters, sc.key)
 	}
-	return binding{keys: keys, disp: "tab, " + screenKeys(),
-		help: "switch screen: tab and shift+tab cycle, " + screenKeys() + " jump", prio: 4, nav: true, do: func(m *app, k tea.KeyMsg) tea.Cmd {
+	all := strings.Join(letters, "/")
+	return binding{keys: keys, disp: "tab, " + all, tabs: true, short: "screen", foot: all + " screen",
+		help: "switch screen: tab and shift+tab cycle; " + screenKeys() + " jump to " + screenList() + " (the small letter too where it is not a key of the screen)",
+		prio: 4, nav: true, do: func(m *app, k tea.KeyMsg) tea.Cmd {
 			switch s := k.String(); s {
 			case "tab":
 				m.stepScreen(1)
 			case "shift+tab":
 				m.stepScreen(-1)
 			default:
-				for i, sc := range screens {
-					if sc.key == s {
-						m.scr = screen(i)
-					}
+				if scr, ok := screenByKey(s, true); ok {
+					m.scr = scr
 				}
 			}
 			return nil
 		}}
 }
 
-// screenKeys is the range of keys that jump to a screen, such as 1-5.
-func screenKeys() string { return screens[0].key + "-" + screens[numScreens-1].key }
+// screenKeys is the keys that jump to a screen, such as O F P H S.
+func screenKeys() string {
+	var keys []string
+	for _, sc := range screens {
+		keys = append(keys, sc.key)
+	}
+	return strings.Join(keys, " ")
+}
 
 // bindScreens is left and right on the first level of a screen.
 func bindScreens() binding {
@@ -124,7 +135,7 @@ func rowAt(vp *viewport, y int) int {
 	return -1
 }
 
-// pageScreen is Overview or Status: text with rows that can be selected.
+// pageScreen is the Health screen: text with rows that can be selected.
 func pageScreen(scr screen, name, title, enterShort, enterHelp, moveHelp string) *mode {
 	return &mode{name: name, title: title, level: true, move: (*app).pageMove, moveShort: "select", moveHelp: moveHelp,
 		wheel: func(m *app, up bool) { m.txt[scr].move(wheelStep(up)) },
@@ -142,7 +153,7 @@ func init() {
 			{keys: ks("r"), help: "try to load the state again", short: "try again", do: plain(func(m *app) tea.Cmd { return m.refresh(reList | reDetail) })},
 			bindQuit(), bindHelp(), bindScreens(), bindTabs(),
 		}}
-	mo.status = pageScreen(scrStatus, "status", "Keys on the status screen", "details",
+	mo.status = pageScreen(scrStatus, "health", "Keys on the health screen", "details",
 		"go to the project the selected error names, else show the error in full", "up/down select an error; pgup/pgdn, home/end scroll the page")
 
 	// ---- findings ----
@@ -177,11 +188,9 @@ func init() {
 		wheel: func(m *app, up bool) { m.fnd.det.body.move(wheelStep(up)) },
 		click: func(m *app, x, y int) tea.Cmd { return m.clickEnv(y) },
 		binds: []binding{
-			{keys: ks("f", "i", "n", "o"), disp: "f/i/n/o", help: "mark the selected environment fixed, ignored, not affected or reopened; not-affected needs a reason",
-				short: "status", prio: 1, do: m2(func(m *app, s string) { m.startStatus(statusKeys[s], false) })},
-			{keys: ks("F", "I", "N", "O"), disp: "F/I/N/O", help: "the same for every environment of the project",
-				short: "project", prio: 2, do: m2(func(m *app, s string) { m.startStatus(statusKeys[s], true) })},
-			{keys: ks("a", "A"), disp: "a/A", help: "assign owner, due date and ticket to the selected environment / to the project",
+			{keys: ks("f", "i", "n", "o"), disp: "f/i/n/o", help: "mark the selected environment fixed, ignored, not affected or reopened; not-affected needs a reason; in the note, ctrl+p makes it every environment of the project",
+				short: "status", prio: 1, do: m2(func(m *app, s string) { m.startStatus(statusKeys[s]) })},
+			{keys: ks("a", "A"), disp: "a/A", help: "assign owner, due date and ticket to the selected environment / to the project (ctrl+p in the prompt switches)",
 				short: "assign", prio: 2, do: m2(func(m *app, s string) { m.startAssign(s == "A") })},
 			{keys: ks("]", "J"), disp: "]", help: "open the next issue of the list (J does the same)", short: "next", prio: 1, do: func(m *app, k tea.KeyMsg) tea.Cmd { return m.stepIssue(1) }},
 			{keys: ks("[", "K"), disp: "[", help: "open the previous issue of the list (K does the same)", short: "prev", prio: 1, do: func(m *app, k tea.KeyMsg) tea.Cmd { return m.stepIssue(-1) }},
@@ -235,7 +244,7 @@ func init() {
 		binds: rootBinds(
 			binding{keys: ks("enter"), help: "open the project: its problems and its security issues; the overview and the findings show only this project until 0 clears it", short: "open", prio: 1, do: plain((*app).enterProject)},
 			binding{keys: ks("c"), help: "open the project's fields: environments, technologies, lockfiles, differences per environment, since", short: "fields", prio: 1, do: plain((*app).openFields)},
-			binding{keys: ks("H"), help: "work through the hints of the project: unknown technologies, missing versions or lockfiles, environments; each one can be acted on", short: "hints", prio: 2, when: hasHints, do: plain((*app).openHints)},
+			binding{keys: ks("w"), help: "work through the hints of the project: unknown technologies, missing versions or lockfiles, environments; each one can be acted on", short: "hints", prio: 2, when: hasHints, do: plain((*app).openHints)},
 			binding{keys: ks("e"), help: "edit the project step by step in a guided form (to change one field directly, press c)", short: "guided edit", prio: 3, do: plain((*app).editProject)},
 			binding{keys: ks("+"), help: "add a project: from a folder, from a Dockerfile or compose file, or an empty one", short: "add", prio: 1, do: plain((*app).addChooser)},
 			binding{keys: ks("a", "n"), disp: "a", help: "add a project with the guided form", short: "guided add", prio: 3, do: plain((*app).addProject)},
@@ -243,7 +252,7 @@ func init() {
 			binding{keys: ks("d"), help: "add a project from a folder or a Dockerfile: it is scanned and proposals are offered", short: "scan", prio: 3, do: plain((*app).scanFolder)},
 			binding{keys: ks("x", "f"), disp: "x", help: "fix the selected problem: shows the change to the file, enter or y applies it", short: "fix", prio: 2, do: plain((*app).startFix)},
 			binding{keys: ks("E", "o"), disp: "E", help: "open the project's file in your editor (also when it is broken), then reload", short: "editor", prio: 3, do: plain((*app).openEditor)},
-			binding{keys: ks("p", "P"), alias: true, help: "next or previous problem of the project", do: (*app).stepProblem},
+			binding{keys: ks("p", "["), alias: true, help: "next or previous problem of the project", do: (*app).stepProblem},
 			binding{keys: ks("i"), help: "the issues of this project: the findings screen filtered by it", short: "issues", prio: 2, do: plain((*app).goFindings)},
 			binding{keys: ks("R"), help: "rename the project: its findings and access rules follow the new name", short: "rename", prio: 4, do: lifeKey(ops.VerbRename)},
 			binding{keys: ks("D"), help: "duplicate the project under another name", short: "duplicate", prio: 5, do: lifeKey(ops.VerbDuplicate)},
@@ -263,7 +272,7 @@ func init() {
 			{keys: ks("+"), help: "add a project: from a folder, from a Dockerfile or compose file, or an empty one", short: "add", prio: 3, do: plain((*app).addChooser)},
 			{keys: ks("-"), help: "remove the project: shows what it affects, then asks for its name; the file moves to the project backups", short: "remove", prio: 3, do: lifeKey(ops.VerbDelete)},
 			{keys: ks("c"), help: "edit the project's fields directly: environments, technologies, lockfiles, differences per environment, since", short: "fields", prio: 1, do: plain((*app).openFields)},
-			{keys: ks("H"), help: "work through the hints of the project: unknown technologies, missing versions or lockfiles, environments; each one can be acted on", short: "hints", prio: 2, when: hasHints, do: plain((*app).openHints)},
+			{keys: ks("w"), help: "work through the hints of the project: unknown technologies, missing versions or lockfiles, environments; each one can be acted on", short: "hints", prio: 2, when: hasHints, do: plain((*app).openHints)},
 			{keys: ks("e"), help: "edit the project step by step in a guided form (to change one field directly, press c)", short: "guided edit", prio: 4, do: plain((*app).editProject)},
 			{keys: ks("E", "o"), disp: "E", help: "open the project's file in your editor (also when it is broken), then reload", short: "editor", prio: 3, do: plain((*app).openEditor)},
 			{keys: ks("R"), help: "rename the project: its findings and access rules follow the new name", short: "rename", prio: 4, do: lifeKey(ops.VerbRename)},
@@ -378,7 +387,7 @@ func init() {
 			{keys: ks("n", "N"), alias: true, help: "do not save: back to the step before the review", do: plain(func(m *app) tea.Cmd { return m.formAnswer("no") })},
 			{keys: ks("e"), help: "change one step: pick it from a list; the review comes back after it", short: "edit step", prio: 1, do: plain((*app).openPick)},
 			{keys: ks("+"), help: "add a lockfile: pick its file; the type is taken from its name", short: "add lockfile", prio: 2, when: onLockStepOrReview, do: plain((*app).formLockPrompt)},
-			{keys: ks("H"), help: "work through the hints: keep an unknown technology as your own keyword, replace a typo, go to the step that settles it", short: "hints", prio: 2, when: hasHints, do: plain((*app).openHints)},
+			{keys: ks("w"), help: "work through the hints: keep an unknown technology as your own keyword, replace a typo, go to the step that settles it", short: "hints", prio: 2, when: hasHints, do: plain((*app).openHints)},
 			formBack(false), formScan("d", "ctrl+d"), bindHelp(),
 		}}
 	mo.formPick = &mode{name: "form pick", title: "Keys in the list of steps", move: viewportOf(func(m *app) *viewport { return &m.frm.pick.vp }), moveShort: "pick",
@@ -399,6 +408,8 @@ func init() {
 				do: plain(func(m *app) tea.Cmd { m.prm.idx = min(m.prm.idx+1, len(m.prm.fields)-1); return nil })},
 			{keys: ks("shift+tab", "up"), disp: "shift+tab", help: "previous field", prio: 3, when: multiField,
 				do: plain(func(m *app) tea.Cmd { m.prm.idx = max(m.prm.idx-1, 0); return nil })},
+			{keys: ks("ctrl+p"), help: "status and assign: switch between the selected environment and every environment of the project", short: "all envs", prio: 3, when: canWhole,
+				do: plain(func(m *app) tea.Cmd { m.prm.toggleWhole(); return nil })},
 			{keys: ks("esc"), help: "cancel; nothing is written", short: "cancel", do: plain(func(m *app) tea.Cmd { m.prm = nil; return nil })},
 			bindHelpTyped(),
 		}}

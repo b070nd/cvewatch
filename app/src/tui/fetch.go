@@ -269,7 +269,7 @@ func (m *app) fetchDone(msg fetchDoneMsg) tea.Cmd {
 		} else if m.tui.Fetch > 0 {
 			m.note("the data is in use by another cvewatch; will retry in " + formatSpan(m.tui.Fetch))
 		} else {
-			m.note("the data is in use by another cvewatch; press F to try again")
+			m.note("the data is in use by another cvewatch; press u to try again")
 		}
 		return nil
 	case msg.err != nil && (m.ctx.Err() != nil || errors.Is(msg.err, context.Canceled)):

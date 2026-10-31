@@ -21,8 +21,8 @@ func projectFile(t *testing.T, b *fake, name string) string {
 
 func TestProjectsScreenListsDeclaredTechs(t *testing.T) {
 	d := start(t, newFake(t, nil), Options{})
-	d.press("3")
-	d.want("[3 Projects]", "PROJECT", "LOCKFILES", "TECHNOLOGIES", "> shop", "mw", "php 8.2, nginx", "prod", "technologies: php 8.2, nginx", "defined in the main config")
+	d.screen("projects")
+	d.want("▸[P]rojects", "PROJECT", "LOCKFILES", "TECHNOLOGIES", "> shop", "mw", "php 8.2, nginx", "prod", "technologies: php 8.2, nginx", "defined in the main config")
 	d.press("down")
 	d.want("> mw", "technologies: -")
 }
@@ -30,7 +30,8 @@ func TestProjectsScreenListsDeclaredTechs(t *testing.T) {
 func TestSetupFormCreatesProjectFromTypedNameAndTechs(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "n")
+	d.screen("projects")
+	d.press("n")
 	d.want("New project", "Project name", "> project") // the flow's own default
 
 	d.press("ctrl+u")
@@ -82,7 +83,8 @@ func TestSetupFormCreatesProjectFromTypedNameAndTechs(t *testing.T) {
 func TestSetupFormBackAndCancel(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "n", "ctrl+u")
+	d.screen("projects")
+	d.press("n", "ctrl+u")
 	d.typ("blog")
 	d.press("enter")
 	d.want("Technologies")
@@ -106,7 +108,8 @@ func TestSetupFormBackAndCancel(t *testing.T) {
 func TestSetupFormMultiChoiceAndConfirmKinds(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "n", "ctrl+u")
+	d.screen("projects")
+	d.press("n", "ctrl+u")
 	d.typ("blog")
 	d.press("enter", "enter") // techs (none), then add-techs
 	d.typ("php nginx")
@@ -136,7 +139,8 @@ func TestSetupFormMultiChoiceAndConfirmKinds(t *testing.T) {
 func TestEditProjectNeedsItsOwnFile(t *testing.T) {
 	b := newFake(t, nil)
 	d := start(t, b, Options{})
-	d.press("3", "e")
+	d.screen("projects")
+	d.press("e")
 	d.want("error: project \"shop\" has no file under config/projects")
 	if d.m.(*app).frm != nil {
 		t.Fatal("no form for a project without a file")
@@ -158,7 +162,8 @@ func TestEditProjectChangesVersionAndSaves(t *testing.T) {
 	os.MkdirAll(dir, 0o700)
 	os.WriteFile(filepath.Join(dir, "shop.yaml"), []byte("# the shop\nname: shop\ntechs:\n  - {name: php, version: \"8.2\"}\n  - {name: nginx}\n"), 0o600)
 	d := start(t, b, Options{})
-	d.press("3", "e")
+	d.screen("projects")
+	d.press("e")
 	d.want("Edit project: shop")
 	d.press("up", "up", "up", "enter") // Versions (the menu starts on Review and save)
 	d.want("Version of PHP")
@@ -186,7 +191,8 @@ func TestDiscoveryOnAFolderProposesAndSavesRelativePaths(t *testing.T) {
 	os.WriteFile(filepath.Join(site, "web", "package-lock.json"), []byte(`{"lockfileVersion":3,"packages":{"":{},"node_modules/express":{"version":"4.18.2"}}}`), 0o644)
 
 	d := start(t, b, Options{})
-	d.press("3", "d")
+	d.screen("projects")
+	d.press("d")
 	d.want("Scan a folder for a new project", "Folder")
 	d.press("enter") // nothing typed
 	d.want("error: no folder given", "problem: no folder given", "Scan a folder for a new project")
@@ -218,7 +224,8 @@ func TestDiscoveryInsideARunningFlow(t *testing.T) {
 	site := t.TempDir()
 	os.WriteFile(filepath.Join(site, ".php-version"), []byte("8.2.1\n"), 0o644)
 	d := start(t, b, Options{})
-	d.press("3", "n")
+	d.screen("projects")
+	d.press("n")
 	d.press("ctrl+d")
 	d.want("merge what it finds into this project")
 	d.typ(site)
@@ -242,7 +249,7 @@ func TestOptionsDirStartsTheSetupFlowOnTheFolder(t *testing.T) {
 	d.m = New(b, Options{Refresh: time.Hour, Dir: site})
 	d.send(tea_window(100, 30))
 	d.run(d.m.Init()) // loads, schedules the tick (dropped here) and starts the flow on the folder
-	d.want("[3 Projects]", "New project", "Project name", "ok: scanned")
+	d.want("▸[P]rojects", "New project", "Project name", "ok: scanned")
 }
 
 func TestEditProjectRemovesALockfileAndSaves(t *testing.T) {
@@ -251,7 +258,8 @@ func TestEditProjectRemovesALockfileAndSaves(t *testing.T) {
 	os.MkdirAll(dir, 0o700)
 	os.WriteFile(filepath.Join(dir, "shop.yaml"), []byte("name: shop\ntechs:\n  - {name: php, version: \"8.2\"}\n  - {name: nginx}\nlockfiles:\n  - {type: composer, path: repos/shop/composer.lock}\n"), 0o600)
 	d := start(t, b, Options{})
-	d.press("3", "e")
+	d.screen("projects")
+	d.press("e")
 	d.want("Edit project: shop")
 	d.press("up", "up", "up", "enter") // Inventory sources (the menu starts on Review and save)
 	d.want("Inventory sources", "composer")
@@ -281,7 +289,8 @@ func TestCreateFromFolderUnderLoadedConfigRoot(t *testing.T) {
 	os.WriteFile(filepath.Join(repo, "composer.lock"), []byte(`{"packages":[]}`), 0o644)
 
 	d := start(t, b, Options{})
-	d.press("3", "d")
+	d.screen("projects")
+	d.press("d")
 	d.typ(repo)
 	d.press("enter")
 	d.want("ok: scanned")

@@ -32,6 +32,8 @@ var (
 	stSel   = lipgloss.NewStyle().Bold(true).Reverse(true)
 	stTabOn = lipgloss.NewStyle().Bold(true).Reverse(true)
 	stTab   = lipgloss.NewStyle().Foreground(ac("242", "247"))
+	stKey   = lipgloss.NewStyle().Bold(true).Underline(true)
+	stKeyOn = lipgloss.NewStyle().Bold(true).Underline(true).Reverse(true)
 	stErr   = lipgloss.NewStyle().Bold(true).Foreground(ac("160", "217"))
 	stGood  = lipgloss.NewStyle().Bold(true).Foreground(ac("28", "120"))
 	stAdd   = lipgloss.NewStyle().Foreground(ac("28", "120"))
@@ -52,6 +54,10 @@ var (
 		status.Red:    stErr,
 	}
 )
+
+// stylesOn is whether the terminal shows styles at all; it is not with NO_COLOR
+// set or when the output is not a terminal.
+func stylesOn() bool { return lipgloss.NewStyle().Bold(true).Render("x") != "x" }
 
 // severities lists the severities from most to least urgent; unrated is last.
 var severities = []model.Severity{model.SevCritical, model.SevHigh, model.SevMedium, model.SevLow, model.SevUnknown}

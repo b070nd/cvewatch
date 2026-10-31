@@ -16,13 +16,13 @@ const (
 	numScreens
 )
 
-// screenDef is one screen: what the tab strip, the Left/Right cycle, the number
+// screenDef is one screen: what the tab strip, the Left/Right cycle, the letter
 // keys, the breadcrumb, the jump box and the help are all drawn from. The
 // behaviour of each screen is attached in init, because it reaches code that
 // reads this table again.
 type screenDef struct {
 	name string
-	key  string // the key that jumps to it
+	key  string // the capital letter that jumps to it; it is the first letter of the name
 	// standalone says the screen works without the snapshot of the other screens,
 	// so it still opens when that cannot be read.
 	standalone bool
@@ -35,11 +35,22 @@ type screenDef struct {
 }
 
 var screens = [numScreens]screenDef{
-	scrOverview: {name: "Overview", key: "1"},
-	scrFindings: {name: "Findings", key: "2"},
-	scrProjects: {name: "Projects", key: "3"},
-	scrStatus:   {name: "Status", key: "4"},
-	scrSettings: {name: "Settings", key: "5", standalone: true},
+	scrOverview: {name: "Overview", key: "O"},
+	scrFindings: {name: "Findings", key: "F"},
+	scrProjects: {name: "Projects", key: "P"},
+	scrStatus:   {name: "Health", key: "H"},
+	scrSettings: {name: "Settings", key: "S", standalone: true},
+}
+
+// screenByKey is the screen a capital letter jumps to; the small letter does
+// too when small is set.
+func screenByKey(key string, small bool) (screen, bool) {
+	for i, sc := range screens {
+		if sc.key == key || (small && strings.ToLower(sc.key) == key) {
+			return screen(i), true
+		}
+	}
+	return 0, false
 }
 
 // screenList is the names of the screens in tab order.

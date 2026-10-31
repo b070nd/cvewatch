@@ -40,7 +40,8 @@ func richDriver(t *testing.T) (*driver, *fakeDesktop, *fake) {
 	d := start(t, b, Options{})
 	d.send(tea_window(150, 70))
 	fd := d.app().sys.(*fakeDesktop)
-	d.press("2", "enter") // KEV puts it first
+	d.screen("findings")
+	d.press("enter") // KEV puts it first
 	return d, fd, b
 }
 
