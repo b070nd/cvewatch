@@ -160,7 +160,7 @@ func TestEditProjectChangesVersionAndSaves(t *testing.T) {
 	d := start(t, b, Options{})
 	d.press("3", "e")
 	d.want("Edit project: shop")
-	d.press("up", "up", "enter") // Versions (the menu starts on Review and save)
+	d.press("up", "up", "up", "enter") // Versions (the menu starts on Review and save)
 	d.want("Version of PHP")
 	d.press("ctrl+u")
 	d.typ("8.3")
@@ -253,7 +253,7 @@ func TestEditProjectRemovesALockfileAndSaves(t *testing.T) {
 	d := start(t, b, Options{})
 	d.press("3", "e")
 	d.want("Edit project: shop")
-	d.press("up", "up", "enter") // Inventory sources (the menu starts on Review and save)
+	d.press("up", "up", "up", "enter") // Inventory sources (the menu starts on Review and save)
 	d.want("Inventory sources", "composer")
 	d.press(" ") // untick the lockfile
 	d.press("enter")

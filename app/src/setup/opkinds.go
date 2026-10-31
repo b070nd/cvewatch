@@ -7,9 +7,9 @@ var OpKinds = []string{
 	"set_envs", "set_tech", "remove_tech", "set_env_tech", "remove_env_tech",
 	"set_image", "add_lockfile", "remove_lockfile", "set_since", "set_lockfile_dev",
 	"add_env", "remove_env", "rename_env",
-	"set_tech_envs", "exclude_env_tech", "include_env_tech",
+	"set_tech_envs", "exclude_env_tech", "include_env_tech", "migrate_envs",
 }
 
 // NotYet are kinds no guided front end emits yet. Whoever adds the editing
 // field moves the kind to OpKinds; the test fails if a kind is in both.
-var NotYet = []string{"migrate_envs"}
+var NotYet = []string{}

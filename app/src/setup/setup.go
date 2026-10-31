@@ -86,6 +86,7 @@ type Flow struct {
 	versionAll bool            // ask every tech, not only those without a version
 	revisit    string          // the section being changed from the review; the flow returns to the review after it
 	added      []string        // techs added by name, for the help text
+	differing  []model.Env     // the environments whose differences are being asked, in order
 
 	base   *catalog.Catalog // the catalog as given; cat adds the staged custom techs to it
 	custom []model.Tech     // techs of the person's own, staged until the project is saved
@@ -251,7 +252,11 @@ func (f *Flow) Sections() []Section {
 	if len(f.lockCands()) > 0 {
 		out = append(out, Section{"lockfiles", "Lockfiles"})
 	}
-	return append(out, Section{"envs", "Environments"})
+	out = append(out, Section{"envs", "Environments"})
+	if len(f.draft.EffectiveEnvs()) > 1 {
+		out = append(out, Section{"differ", "Differences per environment"})
+	}
+	return out
 }
 
 // Revisit goes from the review to one of its sections. Once that section is
@@ -283,6 +288,8 @@ func (f *Flow) inSection(id string) bool {
 		return base == "version"
 	case "envs":
 		return base == "envs-other"
+	case "differ":
+		return strings.HasPrefix(base, "differ") || strings.HasPrefix(base, "diff-")
 	}
 	return false
 }
@@ -335,7 +342,12 @@ var stepTable = []stepDef{
 	{"version", askVersion, applyVersion, nextVersion},
 	{"lockfiles", askLockfiles, applyLockfiles, nextLockfiles},
 	{"envs", askEnvs, applyEnvs, nextEnvs},
-	{"envs-other", askEnvsOther, applyEnvsOther, func(f *Flow, _, _ string) string { return f.afterSection("review") }},
+	{"envs-other", askEnvsOther, applyEnvsOther, func(f *Flow, _, _ string) string { return f.afterSection(f.differOrReview()) }},
+	{"differ", askDiffer, applyDiffer, nextDiffer},
+	{"differ-envs", askDifferEnvs, applyDifferEnvs, nextDifferEnvs},
+	{"diff-techs", askDiffTechs, applyDiffTechs, func(f *Flow, env, _ string) string { return f.afterDiffTechs(env) }},
+	{"diff-exclude", askDiffExclude, applyDiffExclude, func(_ *Flow, env, _ string) string { return "diff-image:" + env }},
+	{"diff-image", askDiffImage, applyDiffImage, func(f *Flow, env, _ string) string { return f.afterDiffEnv(env) }},
 	{"review", askReview, noApply, nextReview},
 }
 
@@ -371,7 +383,11 @@ func askMenu(f *Flow, _ string) Step {
 	if len(f.lockCands()) > 0 {
 		opts = append(opts, Option{Value: "lockfiles", Label: "Lockfiles"})
 	}
-	opts = append(opts, Option{Value: "envs", Label: "Environments"}, Option{Value: "review", Label: "Review and save"})
+	opts = append(opts, Option{Value: "envs", Label: "Environments"})
+	if len(f.draft.EffectiveEnvs()) > 1 {
+		opts = append(opts, Option{Value: "differ", Label: "Differences per environment"})
+	}
+	opts = append(opts, Option{Value: "review", Label: "Review and save"})
 	return Step{Title: "What do you want to change?", Help: "Pick a section. Each one returns here when answered.",
 		Kind: KindChoice, Options: opts, Default: "review"}
 }
@@ -825,7 +841,7 @@ func nextEnvs(f *Flow, _, v string) string {
 	if valueSet(v)[otherEnv] {
 		return "envs-other"
 	}
-	return f.afterSection("review")
+	return f.afterSection(f.differOrReview())
 }
 
 func askEnvsOther(f *Flow, _ string) Step {
@@ -866,6 +882,9 @@ func askReview(f *Flow, _ string) Step {
 		for _, is := range issues {
 			help += fmt.Sprintf("\n%s: %s: %s", is.Level, is.Field, plain(is.Message))
 		}
+		if lines := DifferenceLines(f.draft); len(lines) > 0 {
+			help += "\nDifferences per environment: " + plain(strings.Join(lines, "; "))
+		}
 	}
 	return Step{Title: "Save this project?", Help: help, Kind: KindConfirm, Default: "yes"}
 }
@@ -890,8 +909,12 @@ func (f *Flow) summary() string {
 	for _, e := range f.draft.EffectiveEnvs() {
 		envs = append(envs, string(e))
 	}
-	return fmt.Sprintf("Project %s: technologies: %s; lockfiles: %d; environments: %s.",
+	out := fmt.Sprintf("Project %s: technologies: %s; lockfiles: %d; environments: %s.",
 		f.draft.Name, strings.Join(techs, ", "), len(f.draft.Lockfiles), strings.Join(envs, ", "))
+	if lines := DifferenceLines(f.draft); len(lines) > 0 {
+		out += " Differences per environment: " + strings.Join(lines, "; ") + "."
+	}
+	return out
 }
 
 // ---- ops and review ----

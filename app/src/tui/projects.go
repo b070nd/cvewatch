@@ -234,7 +234,7 @@ func projectDetail(p projectRow, st *projectsState, w, room int, deep bool) []st
 		return out
 	}
 	if deep {
-		out = append(out, stMuted.Render("  c edits the fields (environments, technologies, lockfiles, versions, images, since)   + add   - remove"))
+		out = append(out, stMuted.Render("  c edits the fields (environments, technologies, lockfiles, differences per environment, since)   + add   - remove"))
 	} else {
 		out = append(out, stMuted.Render("  + add   - remove   c edit fields   R rename   D duplicate   Z disable"))
 	}

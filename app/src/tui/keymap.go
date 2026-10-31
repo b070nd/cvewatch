@@ -234,7 +234,7 @@ func init() {
 		click: func(m *app, x, y int) tea.Cmd { return m.clickProject(y - 1) },
 		binds: rootBinds(
 			binding{keys: ks("enter"), help: "open the project: its problems and its security issues; the overview and the findings show only this project until 0 clears it", short: "open", prio: 1, do: plain((*app).enterProject)},
-			binding{keys: ks("c"), help: "open the project's fields: environments, technologies, lockfiles, versions, images, since", short: "fields", prio: 1, do: plain((*app).openFields)},
+			binding{keys: ks("c"), help: "open the project's fields: environments, technologies, lockfiles, differences per environment, since", short: "fields", prio: 1, do: plain((*app).openFields)},
 			binding{keys: ks("H"), help: "work through the hints of the project: unknown technologies, missing versions or lockfiles, environments; each one can be acted on", short: "hints", prio: 2, when: hasHints, do: plain((*app).openHints)},
 			binding{keys: ks("e"), help: "edit the project step by step in a guided form (to change one field directly, press c)", short: "guided edit", prio: 3, do: plain((*app).editProject)},
 			binding{keys: ks("+"), help: "add a project: from a folder, from a Dockerfile or compose file, or an empty one", short: "add", prio: 1, do: plain((*app).addChooser)},
@@ -262,7 +262,7 @@ func init() {
 			{keys: ks("s"), help: "select among the security issues of the project: enter opens one", short: "security", prio: 2, when: hasSecurity, do: plain((*app).focusSecurity)},
 			{keys: ks("+"), help: "add a project: from a folder, from a Dockerfile or compose file, or an empty one", short: "add", prio: 3, do: plain((*app).addChooser)},
 			{keys: ks("-"), help: "remove the project: shows what it affects, then asks for its name; the file moves to the project backups", short: "remove", prio: 3, do: lifeKey(ops.VerbDelete)},
-			{keys: ks("c"), help: "edit the project's fields directly: environments, technologies, lockfiles, versions, images, since", short: "fields", prio: 1, do: plain((*app).openFields)},
+			{keys: ks("c"), help: "edit the project's fields directly: environments, technologies, lockfiles, differences per environment, since", short: "fields", prio: 1, do: plain((*app).openFields)},
 			{keys: ks("H"), help: "work through the hints of the project: unknown technologies, missing versions or lockfiles, environments; each one can be acted on", short: "hints", prio: 2, when: hasHints, do: plain((*app).openHints)},
 			{keys: ks("e"), help: "edit the project step by step in a guided form (to change one field directly, press c)", short: "guided edit", prio: 4, do: plain((*app).editProject)},
 			{keys: ks("E", "o"), disp: "E", help: "open the project's file in $EDITOR (also when it is broken), then reload", short: "editor", prio: 3, do: plain((*app).openEditor)},

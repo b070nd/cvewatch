@@ -103,18 +103,21 @@ func (f *Flow) AddCustom(t model.Tech) error {
 // draft, for a typo: the version, and the versions per environment, stay.
 func (f *Flow) ReplaceTech(old, with string) error {
 	i := techIndex(f.draft.Techs, old)
-	if i < 0 {
+	if i < 0 && !f.envNames(old) {
 		return fmt.Errorf("%s is not in the project", old)
 	}
 	t, ok := f.cat.Get(with)
 	if !ok {
 		return fmt.Errorf("%q is not in the catalog", with)
 	}
-	from := f.draft.Techs[i].Name
-	if j := techIndex(f.draft.Techs, t.Name); j >= 0 && j != i {
-		f.draft.Techs = slices.Delete(f.draft.Techs, i, i+1) // already listed: the typo just goes
-	} else {
-		f.draft.Techs[i].Name = t.Name
+	from := old
+	if i >= 0 { // a technology only an environment names has no generic entry
+		from = f.draft.Techs[i].Name
+		if j := techIndex(f.draft.Techs, t.Name); j >= 0 && j != i {
+			f.draft.Techs = slices.Delete(f.draft.Techs, i, i+1) // already listed: the typo just goes
+		} else {
+			f.draft.Techs[i].Name = t.Name
+		}
 	}
 	for e, cfg := range f.draft.Environments {
 		for n, v := range cfg.Techs {
@@ -135,6 +138,21 @@ func (f *Flow) ReplaceTech(old, with string) error {
 	f.forgetCustom()
 	f.problem = ""
 	return nil
+}
+
+// envNames is whether an environment has a version of the technology or leaves it out.
+func (f *Flow) envNames(name string) bool {
+	for _, c := range f.draft.Environments {
+		for n := range c.Techs {
+			if strings.EqualFold(n, name) {
+				return true
+			}
+		}
+		if slices.ContainsFunc(c.Exclude, func(x string) bool { return strings.EqualFold(x, name) }) {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *Flow) stage(c model.Tech) {

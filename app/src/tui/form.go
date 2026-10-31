@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/b070nd/cvewatch/app/src/discovery"
+	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/ops"
 	"github.com/b070nd/cvewatch/app/src/setup"
 )
@@ -461,6 +462,7 @@ func (f *form) reviewBody(w int) []string {
 	}
 	if f.prev != nil {
 		body = append(body, previewBody(f.prev, w, hintFields(f.prev.Hints))...)
+		body = append(body, differenceRows(f.prev, w)...)
 		body = append(body, hintRows(f.prev.Hints, w)...)
 	}
 	return body
@@ -479,10 +481,40 @@ func (f *form) reviewRows(w, room int) []string {
 
 func previewRows(p *ops.ProjectPreview, w int) []string { return previewBody(p, w, nil) }
 
+// migrates is whether a diff rewrites the old environments: block as when@ blocks.
+func migrates(diff string) bool {
+	old, now := false, false
+	for _, l := range strings.Split(diff, "\n") {
+		if l == "" {
+			continue
+		}
+		text := strings.TrimLeft(l[1:], " ")
+		old = old || l[0] == '-' && strings.HasPrefix(text, "environments:")
+		now = now || l[0] == '+' && strings.HasPrefix(text, model.WhenPrefix)
+	}
+	return old && now
+}
+
+// differenceRows is the differences of the project the preview makes, one line per environment.
+func differenceRows(p *ops.ProjectPreview, w int) []string {
+	lines := diffLinesOf(p.Result.Techs, p.Result.Differences)
+	if len(lines) == 0 {
+		return nil
+	}
+	out := []string{"", section("Differences per environment")}
+	for _, l := range lines {
+		out = append(out, trunc("  "+l, w))
+	}
+	return out
+}
+
 // previewBody is the preview as rows. A warning on a field that skip names is
 // left out: a hint under it says the same with what to do about it.
 func previewBody(p *ops.ProjectPreview, w int, skip map[string]bool) []string {
 	body := diffRows(p.Diff, w)
+	if migrates(p.Diff) {
+		body = append(body, stBold.Render(trunc("the whole old environments: block becomes when@<env> blocks (same meaning); nothing else changes", w)))
+	}
 	if p.TechsDiff != "" {
 		body = append(body, "", section("config/techs.yaml: your own technologies"))
 		body = append(body, diffRows(p.TechsDiff, w)...)

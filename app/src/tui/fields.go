@@ -3,7 +3,6 @@ package tui
 import (
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -15,6 +14,7 @@ import (
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/ops"
 	"github.com/b070nd/cvewatch/app/src/projectfile"
+	"github.com/b070nd/cvewatch/app/src/setup"
 )
 
 // OpKinds are the kinds of project file edit the TUI's field editor builds,
@@ -23,6 +23,7 @@ var OpKinds = []string{
 	"set_envs", "set_tech", "remove_tech", "set_env_tech", "remove_env_tech",
 	"set_image", "add_lockfile", "remove_lockfile", "set_lockfile_dev", "set_since",
 	"add_env", "remove_env", "rename_env",
+	"set_tech_envs", "exclude_env_tech", "include_env_tech", "migrate_envs",
 }
 
 // landing is where the Projects screen settles once the snapshot that follows
@@ -57,35 +58,32 @@ func (fx *fixState) settle(m *app) tea.Cmd {
 
 // The fields of a project file the editor changes.
 const (
-	fldEnvs     = "envs"
-	fldTechs    = "techs"
-	fldLocks    = "locks"
-	fldVersions = "versions"
-	fldImages   = "images"
-	fldSince    = "since"
+	fldEnvs  = "envs"
+	fldTechs = "techs"
+	fldLocks = "locks"
+	fldDiff  = "diff"
+	fldSince = "since"
 )
 
 var fieldLabels = map[string]string{
 	fldEnvs: "Environments", fldTechs: "Technologies", fldLocks: "Lockfiles",
-	fldVersions: "Versions per environment", fldImages: "Image per environment", fldSince: "Since",
+	fldDiff: "Differences per environment", fldSince: "Since",
 }
 
 var fieldHeads = map[string][]string{
-	"":          {"FIELD", "VALUE"},
-	fldEnvs:     {"ENVIRONMENT", "USED BY"},
-	fldTechs:    {"TECHNOLOGY", "VERSION"},
-	fldLocks:    {"TYPE", "PATH", "ENV", "DEV"},
-	fldVersions: {"ENV", "TECHNOLOGY", "DEPLOYED", "PROJECT"},
-	fldImages:   {"ENV", "IMAGE"},
+	"":       {"FIELD", "VALUE"},
+	fldEnvs:  {"ENVIRONMENT", "USED BY"},
+	fldTechs: {"TECHNOLOGY", "VERSION", "WHERE"},
+	fldLocks: {"TYPE", "PATH", "ENV", "DEV"},
+	fldDiff:  {"ENV", "DIFFERENCE", "NOTE"},
 }
 
 var fieldHints = map[string]string{
-	"":          "enter changes a field or opens its list; every change is previewed before it is saved",
-	fldEnvs:     "enter or r renames (its findings move along), + adds an environment, - or x removes it (after asking); the names are free",
-	fldTechs:    "enter changes the version, + adds a technology, - or x removes it (after asking)",
-	fldLocks:    "enter or d toggles dev (development packages count in every environment), + adds a lockfile by its file, - or x removes it (after asking)",
-	fldVersions: "enter sets the version deployed in that environment (empty removes it), - or x removes the override",
-	fldImages:   "enter sets the image tag or digest of the environment (empty clears it), - or x clears it",
+	"":       "enter changes a field or opens its list; every change is previewed before it is saved",
+	fldEnvs:  "enter or r renames (its findings move along), + adds an environment, - or x removes it (after asking); the names are free",
+	fldTechs: "the technologies every environment runs; enter changes the version, e limits one to some environments, + adds one, - or x removes it (after asking)",
+	fldLocks: "enter or d toggles dev (development packages count in every environment), + adds a lockfile by its file, - or x removes it (after asking)",
+	fldDiff:  "only what an environment does differently: + adds a difference, enter changes it, - or x removes it (after asking)",
 }
 
 // fieldRow is one row of the field list or of the list inside a field.
@@ -97,6 +95,7 @@ type fieldRow struct {
 	set   bool // there is a value to remove
 	tech  string
 	env   model.Env
+	kind  string // a difference: version, extra, exclude or image
 	lock  model.Lockfile
 }
 
@@ -115,26 +114,6 @@ func (ed *fieldEditor) cur() *viewport {
 		return &ed.top
 	}
 	return &ed.sub
-}
-
-// techNames are the technologies of the project, then those only an
-// environment pins a version for.
-func (p projectRow) techNames() []string {
-	var out, extra []string
-	for _, t := range p.Techs {
-		if !slices.Contains(out, t.Name) {
-			out = append(out, t.Name)
-		}
-	}
-	for _, ec := range p.Environments {
-		for name := range ec.Techs {
-			if !slices.Contains(out, name) && !slices.Contains(extra, name) {
-				extra = append(extra, name)
-			}
-		}
-	}
-	slices.Sort(extra)
-	return append(out, extra...)
 }
 
 func (p projectRow) techVersion(name string) string {
@@ -160,24 +139,13 @@ func (p projectRow) lockID(l ops.LockEntry) string {
 
 // topRows are the fields, each with what it holds.
 func topRows(p projectRow) []fieldRow {
-	versions, images := 0, []string{}
-	for _, env := range slices.SortedFunc(maps.Keys(p.Environments), model.EnvCompare) {
-		versions += len(p.Environments[env].Techs)
-		if img := p.Environments[env].Image; img != "" {
-			images = append(images, string(env)+": "+img)
-		}
-	}
 	locks := plural(len(p.lockfiles()), "lockfile", "lockfiles")
 	if len(p.lockfiles()) == 0 {
 		locks = "none"
 	}
-	vs := "none set"
-	if versions > 0 {
-		vs = plural(versions, "version", "versions") + " set"
-	}
-	img := "none set"
-	if len(images) > 0 {
-		img = strings.Join(images, ", ")
+	diffs := "none: every environment runs the technologies above"
+	if lines := diffLines(p); len(lines) > 0 {
+		diffs = strings.Join(lines, "; ")
 	}
 	since := "not set"
 	if p.Since != "" {
@@ -186,8 +154,63 @@ func topRows(p projectRow) []fieldRow {
 	row := func(id, value string) fieldRow { return fieldRow{id: id, cells: []string{fieldLabels[id], value}} }
 	return []fieldRow{
 		row(fldEnvs, envList(p)), row(fldTechs, techList(p)), row(fldLocks, locks),
-		row(fldVersions, vs), row(fldImages, img), row(fldSince, since),
+		row(fldDiff, diffs), row(fldSince, since),
 	}
+}
+
+// genericTechs are the technologies of the project as the model has them, for the differences.
+func (p projectRow) genericTechs() []model.ProjectTech {
+	out := make([]model.ProjectTech, len(p.Techs))
+	for i, t := range p.Techs {
+		out[i] = model.ProjectTech{Name: t.Name, Version: t.Version}
+	}
+	return out
+}
+
+// envConfig is a difference of the view as the model has it.
+func envConfig(d ops.EnvDiff) model.EnvConfig {
+	return model.EnvConfig{Techs: d.Techs, Exclude: d.Exclude, Image: d.Image, Old: d.Old}
+}
+
+// diffLines is one line per environment that differs: prod: php 8.3, +varnish 7.4, -xdebug.
+func diffLines(p projectRow) []string { return diffLinesOf(p.Techs, p.Differences) }
+
+func diffLinesOf(techs []ops.TechPin, diffs []ops.EnvDiff) []string {
+	generic := make([]model.ProjectTech, len(techs))
+	for i, t := range techs {
+		generic[i] = model.ProjectTech{Name: t.Name, Version: t.Version}
+	}
+	var out []string
+	for _, d := range diffs {
+		var parts []string
+		for _, x := range setup.Differences(generic, envConfig(d)) {
+			parts = append(parts, oneLine(x.String()))
+		}
+		if len(parts) > 0 {
+			out = append(out, oneLine(d.Env)+": "+strings.Join(parts, ", "))
+		}
+	}
+	return out
+}
+
+// oldSpelling is whether some differences are still under the old environments: key.
+func (p projectRow) oldSpelling() bool {
+	return slices.ContainsFunc(p.Differences, func(d ops.EnvDiff) bool { return d.Old })
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "no version"
+	}
+	return oneLine(s)
+}
+
+// scopeText says where a technology runs: everywhere, or only in the environments it names.
+func scopeText(envs []string) string {
+	if len(envs) == 0 {
+		return "everywhere"
+	}
+	return "only in " + oneLine(strings.Join(envs, ", "))
 }
 
 // envList is the environments as the field list shows them; a file without
@@ -203,11 +226,9 @@ func envList(p projectRow) string {
 // renaming it is no surprise.
 func envUse(p projectRow, env model.Env) string {
 	var parts []string
-	if n := len(p.Environments[env].Techs); n > 0 {
-		parts = append(parts, plural(n, "version", "versions"))
-	}
-	if p.Environments[env].Image != "" {
-		parts = append(parts, "image")
+	c := p.Environments[env]
+	if n := len(setup.Differences(p.genericTechs(), c)); n > 0 {
+		parts = append(parts, plural(n, "difference", "differences"))
 	}
 	n := 0
 	for _, l := range p.lockfiles() {
@@ -232,7 +253,7 @@ func subRows(p projectRow, field string) []fieldRow {
 		out = append(out, fieldRow{id: "+", name: "add an environment", cells: []string{"+ add an environment"}, add: true})
 	case fldTechs:
 		for _, t := range p.Techs {
-			out = append(out, fieldRow{id: "tech:" + t.Name, name: t.Name, cells: []string{oneLine(t.Name), orDash(oneLine(t.Version))}, tech: t.Name, set: true})
+			out = append(out, fieldRow{id: "tech:" + t.Name, name: t.Name, cells: []string{oneLine(t.Name), orDash(oneLine(t.Version)), scopeText(t.Envs)}, tech: t.Name, set: true})
 		}
 		out = append(out, fieldRow{id: "+", name: "add a technology", cells: []string{"+ add a technology"}, add: true})
 	case fldLocks:
@@ -245,21 +266,28 @@ func subRows(p projectRow, field string) []fieldRow {
 				lock: model.Lockfile{Type: l.Type, Path: l.Path, Env: model.Env(l.Env), Dev: l.Dev}})
 		}
 		out = append(out, fieldRow{id: "+", name: "add a lockfile", cells: []string{"+ add a lockfile"}, add: true})
-	case fldVersions:
-		for _, e := range p.Envs {
-			env := model.Env(e)
-			for _, name := range p.techNames() {
-				dep := p.Environments[env].Techs[name]
-				out = append(out, fieldRow{id: "ver:" + e + ":" + name, name: e + " " + name, cells: []string{e, oneLine(name), orDash(oneLine(dep)), orDash(oneLine(p.techVersion(name)))},
-					env: env, tech: name, set: dep != ""})
+	case fldDiff:
+		for _, d := range p.Differences {
+			env := model.Env(d.Env)
+			for n, x := range setup.Differences(p.genericTechs(), envConfig(d)) {
+				first := oneLine(d.Env)
+				if n > 0 {
+					first = ""
+				}
+				note := ""
+				switch x.Kind {
+				case "version":
+					note = "generic: " + orNone(x.Generic)
+				case "extra":
+					note = "runs only in " + oneLine(d.Env)
+				case "exclude":
+					note = "does not run in " + oneLine(d.Env)
+				}
+				out = append(out, fieldRow{id: "diff:" + d.Env + ":" + x.Kind + ":" + x.Tech, name: oneLine(d.Env + " " + x.String()), cells: []string{first, oneLine(x.String()), note},
+					env: env, tech: x.Tech, kind: x.Kind, set: true})
 			}
 		}
-	case fldImages:
-		for _, e := range p.Envs {
-			env := model.Env(e)
-			img := p.Environments[env].Image
-			out = append(out, fieldRow{id: "img:" + e, name: e, cells: []string{e, orDash(oneLine(img))}, env: env, set: img != ""})
-		}
+		out = append(out, fieldRow{id: "+", name: "add a difference", cells: []string{"+ add a difference"}, add: true})
 	}
 	return out
 }
@@ -354,6 +382,9 @@ func (ed *fieldEditor) title(p projectRow) string {
 func (ed *fieldEditor) hint(p projectRow) string {
 	if ed.open == fldEnvs && p.EnvsUnset {
 		return "envs is not set, so the old default counts; f writes it into the file or picks local; the other keys edit it (the first edit writes the list)"
+	}
+	if ed.open == fldDiff && p.oldSpelling() {
+		return "the file still has the old environments: block; m rewrites it as when@<env> blocks (same meaning), and so does any change here; " + fieldHints[fldDiff]
 	}
 	return fieldHints[ed.open]
 }
@@ -466,10 +497,17 @@ func (m *app) fieldOpen() tea.Cmd {
 		} else {
 			return m.fieldDev()
 		}
-	case fldVersions:
-		m.promptEnvVersion(p, row)
-	case fldImages:
-		m.promptImage(p, row)
+	case fldDiff:
+		switch {
+		case row.add:
+			m.promptAddDiff(p)
+		case row.kind == "image":
+			m.promptImage(p, row)
+		case row.kind == "exclude":
+			return m.fieldRemove()
+		default:
+			m.promptEnvVersion(p, row)
+		}
 	}
 	return nil
 }
@@ -486,8 +524,84 @@ func (m *app) fieldAdd() tea.Cmd {
 		m.promptAddTech(p)
 	case fldLocks:
 		m.startLockPath(p.Name)
+	case fldDiff:
+		m.promptAddDiff(p)
 	}
 	return nil
+}
+
+// fieldScope is e on a technology: where it runs.
+func (m *app) fieldScope() tea.Cmd {
+	p, ed, ok := m.fieldCtx()
+	if !ok || ed.open != fldTechs {
+		return nil
+	}
+	row, ok := ed.row(p)
+	if !ok || row.add {
+		return nil
+	}
+	var now []string
+	for _, t := range p.Techs {
+		if t.Name == row.tech {
+			now = t.Envs
+		}
+	}
+	pk := &picker{title: "Where does " + oneLine(row.tech) + " run?", hint: "enter chooses; esc leaves it as it is", crumb: "scope",
+		items: []pickItem{
+			{value: "all", label: "Everywhere", detail: "in every environment of the project"},
+			{value: "some", label: "Only in the environments I choose", detail: "the others do not have it, so it is not checked there"},
+		}}
+	pk.done = func(m *app, vals []string) tea.Cmd {
+		m.chs = nil
+		if vals[0] == "some" {
+			m.pickScopeEnvs(p, row.tech, now)
+			return nil
+		}
+		if len(now) == 0 {
+			m.note(oneLine(row.tech) + " already runs everywhere")
+			return nil
+		}
+		return m.previewEdit(p.Name, p.Problems, "run "+oneLine(row.tech)+" in every environment", []projectfile.Op{{Kind: "set_tech_envs", Tech: row.tech}}, "", nil)
+	}
+	m.choose(pk)
+	return nil
+}
+
+// pickScopeEnvs ticks the environments a technology runs in; all of them is the same as everywhere.
+func (m *app) pickScopeEnvs(p projectRow, tech string, now []string) {
+	pk := &picker{title: "Environments of " + oneLine(tech), hint: "space ticks, enter confirms", crumb: "scope", multi: true, sel: map[string]bool{}}
+	for _, e := range p.Envs {
+		pk.items = append(pk.items, pickItem{value: e, label: oneLine(e)})
+		pk.sel[e] = slices.Contains(now, e)
+	}
+	pk.done = func(m *app, vals []string) tea.Cmd {
+		m.chs = nil
+		var envs []model.Env
+		if len(vals) < len(p.Envs) {
+			for _, v := range vals {
+				envs = append(envs, model.Env(v))
+			}
+		}
+		label := "run " + oneLine(tech) + " in every environment"
+		if len(envs) > 0 {
+			label = "run " + oneLine(tech) + " only in " + strings.Join(vals, ", ")
+		}
+		return m.previewEdit(p.Name, p.Problems, label, []projectfile.Op{{Kind: "set_tech_envs", Tech: tech, Envs: envs}}, "", nil)
+	}
+	m.choose(pk)
+}
+
+// fieldMigrate is m in the differences: the old environments: block becomes when@ blocks.
+func (m *app) fieldMigrate() tea.Cmd {
+	p, ed, ok := m.fieldCtx()
+	if !ok || ed.open != fldDiff {
+		return nil
+	}
+	if !p.oldSpelling() {
+		m.note("nothing to migrate: the file has no environments: block")
+		return nil
+	}
+	return m.previewEdit(p.Name, p.Problems, "rewrite environments: as when@<env> blocks", []projectfile.Op{{Kind: "migrate_envs"}}, "", nil)
 }
 
 // fieldRename is r on an environment.
@@ -572,12 +686,21 @@ func (m *app) fieldRemove() tea.Cmd {
 	case fldLocks:
 		label, op = "remove lockfile "+oneLine(row.lock.Path), projectfile.Op{Kind: "remove_lockfile", Lockfile: row.lock}
 		ask = "Remove lockfile " + oneLine(row.lock.Path) + " from " + oneLine(p.Name) + "?"
-	case fldVersions:
-		label, op = fmt.Sprintf("remove the %s version of %s", row.env, oneLine(row.tech)), projectfile.Op{Kind: "remove_env_tech", Env: row.env, Tech: row.tech}
-		ask = fmt.Sprintf("Remove the %s version of %s from %s?", row.env, oneLine(row.tech), oneLine(p.Name))
-	case fldImages:
-		label, op = fmt.Sprintf("clear the %s image", row.env), projectfile.Op{Kind: "set_image", Env: row.env}
-		ask = fmt.Sprintf("Clear the %s image of %s?", row.env, oneLine(p.Name))
+	case fldDiff:
+		switch row.kind {
+		case "version":
+			label, op = fmt.Sprintf("remove the %s version of %s", row.env, oneLine(row.tech)), projectfile.Op{Kind: "remove_env_tech", Env: row.env, Tech: row.tech}
+			ask = fmt.Sprintf("Remove the %s version of %s? The generic one applies in %s again.", row.env, oneLine(row.tech), row.env)
+		case "extra":
+			label, op = fmt.Sprintf("remove %s from %s", oneLine(row.tech), row.env), projectfile.Op{Kind: "remove_env_tech", Env: row.env, Tech: row.tech}
+			ask = fmt.Sprintf("Remove %s from %s? It runs only there, so the project no longer has it.", oneLine(row.tech), row.env)
+		case "exclude":
+			label, op = fmt.Sprintf("run %s in %s again", oneLine(row.tech), row.env), projectfile.Op{Kind: "include_env_tech", Env: row.env, Tech: row.tech}
+			ask = fmt.Sprintf("Run %s in %s again?", oneLine(row.tech), row.env)
+		default:
+			label, op = fmt.Sprintf("clear the %s image", row.env), projectfile.Op{Kind: "set_image", Env: row.env}
+			ask = fmt.Sprintf("Clear the %s image of %s?", row.env, oneLine(p.Name))
+		}
 	default:
 		return nil
 	}
@@ -642,9 +765,9 @@ func (m *app) promptEnvVersion(p projectRow, row fieldRow) {
 	if row.tech == "" {
 		return
 	}
-	f := field{label: "Deployed"}
+	f := field{label: "Version"}
 	f.in.set(p.Environments[row.env].Techs[row.tech])
-	m.editPrompt(p, fmt.Sprintf("Deployed version of %s in %s", row.tech, row.env), "the version running in "+string(row.env)+", such as 8.2.30; empty removes the override", []field{f},
+	m.editPrompt(p, fmt.Sprintf("Version of %s in %s", row.tech, row.env), "the version running in "+string(row.env)+" when it is not the generic one (such as 8.3); empty removes the difference", []field{f},
 		func(v []string) (string, []projectfile.Op, error) {
 			if v[0] == "" {
 				if !row.set {
@@ -666,6 +789,87 @@ func (m *app) promptImage(p projectRow, row fieldRow) {
 				label = fmt.Sprintf("clear the %s image", row.env)
 			}
 			return label, []projectfile.Op{{Kind: "set_image", Env: row.env, Image: v[0]}}, nil
+		})
+}
+
+// promptAddDiff is + in the differences: the environment, then what differs there.
+func (m *app) promptAddDiff(p projectRow) {
+	if len(p.Envs) == 1 {
+		m.pickDiffWhat(p, model.Env(p.Envs[0]))
+		return
+	}
+	pk := &picker{title: "Which environment differs?", hint: "enter chooses, esc cancels; nothing is written before you have seen the change", crumb: "difference"}
+	for _, e := range p.Envs {
+		detail := ""
+		for _, l := range diffLines(p) {
+			if rest, ok := strings.CutPrefix(l, oneLine(e)+": "); ok {
+				detail = rest
+			}
+		}
+		pk.items = append(pk.items, pickItem{value: e, label: oneLine(e), detail: detail})
+	}
+	pk.done = func(m *app, vals []string) tea.Cmd {
+		m.chs = nil
+		m.pickDiffWhat(p, model.Env(vals[0]))
+		return nil
+	}
+	m.choose(pk)
+}
+
+// pickDiffWhat asks what differs in env: a generic technology, another technology, or the image.
+func (m *app) pickDiffWhat(p projectRow, env model.Env) {
+	pk := &picker{title: "What differs in " + oneLine(string(env)) + "?", hint: "enter chooses, esc cancels", crumb: "difference"}
+	for _, t := range p.Techs {
+		pk.items = append(pk.items, pickItem{value: "tech:" + t.Name, label: oneLine(t.Name), detail: "generic " + orNone(t.Version) + ": another version, or not there"})
+	}
+	pk.items = append(pk.items,
+		pickItem{value: "new", label: "another technology", detail: "one that runs only in " + oneLine(string(env))},
+		pickItem{value: "image", label: "the image", detail: "the tag or digest " + oneLine(string(env)) + " runs"})
+	pk.done = func(m *app, vals []string) tea.Cmd {
+		m.chs = nil
+		switch name, isTech := strings.CutPrefix(vals[0], "tech:"); {
+		case isTech:
+			m.pickDiffHow(p, env, name)
+		case vals[0] == "new":
+			m.promptNewEnvTech(p, env)
+		default:
+			m.promptImage(p, fieldRow{env: env})
+		}
+		return nil
+	}
+	m.choose(pk)
+}
+
+// pickDiffHow asks whether a generic technology has another version in env or is not there.
+func (m *app) pickDiffHow(p projectRow, env model.Env, tech string) {
+	pk := &picker{title: oneLine(tech) + " in " + oneLine(string(env)), hint: "enter chooses, esc cancels", crumb: "difference",
+		items: []pickItem{
+			{value: "version", label: "another version", detail: "asks for the version it runs in " + oneLine(string(env))},
+			{value: "exclude", label: "it does not run there", detail: "it is not checked in " + oneLine(string(env))},
+		}}
+	pk.done = func(m *app, vals []string) tea.Cmd {
+		m.chs = nil
+		if vals[0] == "exclude" {
+			return m.previewEdit(p.Name, p.Problems, fmt.Sprintf("%s does not run in %s", oneLine(tech), env),
+				[]projectfile.Op{{Kind: "exclude_env_tech", Env: env, Tech: tech}}, "", nil)
+		}
+		m.promptEnvVersion(p, fieldRow{env: env, tech: tech, kind: "version"})
+		return nil
+	}
+	m.choose(pk)
+}
+
+func (m *app) promptNewEnvTech(p projectRow, env model.Env) {
+	m.editPrompt(p, fmt.Sprintf("Add a technology to %s only", env), "a name from the technology catalog that "+string(env)+" runs and the other environments do not; the version is needed",
+		[]field{{label: "Name"}, {label: "Version"}},
+		func(v []string) (string, []projectfile.Op, error) {
+			switch {
+			case v[0] == "" || v[1] == "":
+				return "", nil, errors.New("give the name of the technology and its version")
+			case p.techNamed(v[0]) != "":
+				return "", nil, fmt.Errorf("%s is one of the technologies above: pick it from the list to give it another version in %s", v[0], env)
+			}
+			return fmt.Sprintf("add %s %s to %s only", v[0], v[1], env), []projectfile.Op{{Kind: "set_env_tech", Env: env, Tech: v[0], Version: v[1]}}, nil
 		})
 }
 

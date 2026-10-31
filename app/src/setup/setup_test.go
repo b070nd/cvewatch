@@ -107,6 +107,10 @@ func TestCreateFlowEndToEnd(t *testing.T) {
 		t.Errorf("the last option should be other...: %+v", last)
 	}
 	answer(t, f, "envs", "local,prod")
+	if st := f.Current(); st.ID != "differ" || st.Default != "no" || !strings.Contains(st.Title, "Does an environment differ from the rest?") {
+		t.Fatalf("differ step = %+v", st)
+	}
+	answer(t, f, "differ", "")
 
 	st = f.Current()
 	if st.ID != "review" || st.Kind != KindConfirm || !strings.Contains(st.Help, "postgresql") {
@@ -460,6 +464,7 @@ func TestReviewCreated(t *testing.T) {
 	answer(t, f, "add-techs", "")
 	answer(t, f, "lockfiles", "0")
 	answer(t, f, "envs", "dev,prod")
+	answer(t, f, "differ", "no")
 
 	diff, issues, err := f.Review(testCatalog())
 	if err != nil {
@@ -604,6 +609,7 @@ func TestRevisitChangesOneSectionAndReturnsToTheReview(t *testing.T) {
 		t.Fatal("only the review can go back to a section")
 	}
 	answer(t, f, "envs", "dev,prod")
+	answer(t, f, "differ", "no")
 	if f.Current().ID != "review" {
 		t.Fatalf("current = %q", f.Current().ID)
 	}
@@ -612,7 +618,7 @@ func TestRevisitChangesOneSectionAndReturnsToTheReview(t *testing.T) {
 	for _, s := range f.Sections() {
 		ids = append(ids, s.ID)
 	}
-	if got := strings.Join(ids, ","); got != "name,techs,add-techs,versions,lockfiles,envs" {
+	if got := strings.Join(ids, ","); got != "name,techs,add-techs,versions,lockfiles,envs,differ" {
 		t.Fatalf("sections = %s", got)
 	}
 	if err := f.Revisit("nope"); err == nil {

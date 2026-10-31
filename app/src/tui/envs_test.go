@@ -215,6 +215,9 @@ func TestNewProjectFormStartsWithLocalAndTakesFreeNames(t *testing.T) {
 	d.want("Other environments")
 	d.typ("QA, demo-eu")
 	d.press("enter")
+	d.want("Does an environment differ from the rest? (default: no)")
+	d.press("enter") // nothing answers yes or no: only y and n do
+	d.press("n")
 	d.want("Save this project?")
 	d.wantNot("problem:")
 	d.press("y")

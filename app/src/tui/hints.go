@@ -156,20 +156,30 @@ func (m *app) applyHint(h projectfile.Hint) tea.Cmd {
 	if !ok {
 		return nil
 	}
+	env, envTech, inEnv := envTechField(h.Field)
+	rename := func(m *app, old, name string) tea.Cmd {
+		if inEnv {
+			return m.renameEnvTech(p, env, old, name)
+		}
+		return m.renameTech(p, old, name)
+	}
 	switch {
 	case h.Keyword != "" && len(h.Suggest) > 0:
-		m.replaceOrKeep(h, func(m *app, name string) tea.Cmd { return m.renameTech(p, h.Keyword, name) }, func(m *app) { m.ownTechForProject(p, h.Keyword) })
+		m.replaceOrKeep(h, func(m *app, name string) tea.Cmd { return rename(m, h.Keyword, name) }, func(m *app) { m.ownTechForProject(p, h.Keyword) })
 	case h.Keyword != "":
 		m.ownTechForProject(p, h.Keyword)
 	case len(h.Fix) > 0:
 		return m.previewEdit(p.Name, p.Problems, trunc(oneLine("fix for "+h.Field+": "+h.Message), 70), h.Fix, "", nil)
 	case len(h.Suggest) > 0:
 		old := techOfField(h.Field, techNamesOf(p))
+		if inEnv {
+			old = envTech
+		}
 		if old == "" {
 			m.note(h.Message)
 			return nil
 		}
-		m.replaceOrKeep(h, func(m *app, name string) tea.Cmd { return m.renameTech(p, old, name) }, nil)
+		m.replaceOrKeep(h, func(m *app, name string) tea.Cmd { return rename(m, old, name) }, nil)
 	case h.Field == "since":
 		m.promptSince(p)
 	case strings.HasSuffix(h.Field, ".version"):
@@ -216,6 +226,33 @@ func (m *app) renameTech(p projectRow, old, to string) tea.Cmd {
 		label = fmt.Sprintf("remove technology %q, %q is already listed", old, to)
 	}
 	return m.previewEdit(p.Name, p.Problems, label, edits, "", nil)
+}
+
+// envTechField is the environment and the technology a field such as when@prod.techs.php (or
+// environments.prod.techs.php, the old spelling) points at.
+func envTechField(field string) (env model.Env, tech string, ok bool) {
+	rest, isNew := strings.CutPrefix(field, model.WhenPrefix)
+	if !isNew {
+		rest, ok = strings.CutPrefix(field, "environments.")
+		if !ok {
+			return "", "", false
+		}
+	}
+	name, tech, ok := strings.Cut(rest, ".techs.")
+	if !ok || name == "" || tech == "" {
+		return "", "", false
+	}
+	return model.Env(name), tech, true
+}
+
+// renameEnvTech previews the project using another catalog name for a technology that only an environment names.
+func (m *app) renameEnvTech(p projectRow, env model.Env, old, to string) tea.Cmd {
+	ver := p.Environments[env].Techs[old]
+	edits := []projectfile.Op{{Kind: "remove_env_tech", Env: env, Tech: old}}
+	if _, has := p.Environments[env].Techs[to]; !has {
+		edits = append(edits, projectfile.Op{Kind: "set_env_tech", Env: env, Tech: to, Version: ver})
+	}
+	return m.previewEdit(p.Name, p.Problems, fmt.Sprintf("use technology name %q instead of %q in %s", to, old, env), edits, "", nil)
 }
 
 // replaceOrKeep offers the close names of a hint instead of the word and, with keep, the word as an own keyword
@@ -278,6 +315,9 @@ func (m *app) applyHintForm(h projectfile.Hint) tea.Cmd {
 		m.ownTechForForm(h.Keyword)
 	case len(h.Suggest) > 0:
 		old := techOfField(h.Field, names())
+		if _, t, ok := envTechField(h.Field); ok {
+			old = t
+		}
 		if old == "" {
 			return m.hintSection(h)
 		}
@@ -293,11 +333,16 @@ func (m *app) hintSection(h projectfile.Hint) tea.Cmd {
 	f := m.frm
 	id := ""
 	switch {
-	case h.Field == "envs" || strings.HasPrefix(h.Field, "envs"):
+	case h.Field == "environments":
+		m.note("the old environments: block becomes when@<env> blocks when you change the differences here, or press H on the saved project and apply the fix")
+		return nil
+	case strings.HasPrefix(h.Field, "envs"):
 		id = "envs"
 	case strings.HasPrefix(h.Field, "lockfiles"):
 		return m.formLockPrompt() // the step lists lockfiles only when there are some
-	case strings.HasSuffix(h.Field, ".version") || strings.HasPrefix(h.Field, "environments"):
+	case strings.HasPrefix(h.Field, model.WhenPrefix) || strings.HasPrefix(h.Field, "environments"):
+		id = "differ"
+	case strings.HasSuffix(h.Field, ".version"):
 		id = "versions"
 	case strings.HasPrefix(h.Field, "techs"):
 		id = "techs"
