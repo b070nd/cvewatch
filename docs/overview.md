@@ -9,7 +9,7 @@ It is a companion to scanners (Trivy, Grype, OSV-Scanner) and SBOM platforms (De
 ```bash
 cvewatch init -repo /path/to/your/repo      # starter config; detects technologies, versions and lockfiles
 cvewatch setup /path/to/your/repo            # or: guided, with the evidence for every guess
-cvewatch tui                                 # full-screen overview, findings, projects and status (runs cvewatch-tui)
+cvewatch tui                                 # full-screen overview, findings, projects and health (runs cvewatch-tui)
 cvewatch doctor                              # checks config, lockfiles, state, channels (add -online for CPE names and feeds)
 cvewatch update                              # fetch now, then list
 ```
@@ -78,11 +78,11 @@ Hints are advice about a project that is not an error. They say what may not be 
 - a language, runtime or framework with no lockfile, so its packages are not checked;
 - no start date (`since`).
 
-Hints show in the setup review, in `cvewatch project NAME`, in the `hints` of `check_projects` and `preview_project_change`, and in the TUI: the Hints section of a project and of the review, and `H`, which works through them. Enter on a hint applies its fix through the usual preview. For an unknown technology it offers the keyword prompt or the closest names to replace it. The Projects screen counts the hints of each project.
+Hints show in the setup review, in `cvewatch project NAME`, in the `hints` of `check_projects` and `preview_project_change`, and in the TUI: the Hints section of a project and of the review, and `w`, which works through them. Enter on a hint applies its fix through the usual preview. For an unknown technology it offers the keyword prompt or the closest names to replace it. The Projects screen counts the hints of each project.
 
 ## Terminal UI
 
-`cvewatch tui` opens the full-screen interface. It has five screens, shown as tabs under the title: **1 Overview**, **2 Findings**, **3 Projects**, **4 Status** and **5 Settings**. Findings shows the number of open issues, and Settings shows `(!)` when a settings file has an error.
+`cvewatch tui` opens the full-screen interface. It has five screens, shown as tabs under the title: **O**verview, **F**indings, **P**rojects, **H**ealth and **S**ettings. The highlighted letter is the key that jumps to the screen (see [Screen keys](#screen-keys)). Findings shows the number of open issues, and Settings shows `(!)` when a settings file has an error.
 
 The header also shows what is going on. `refreshing...` means the data is being read. While a change is written, the header shows what runs, such as `saving...`, with `+1` when more run. Otherwise it shows the health and the time of the last read. Press `r` to reload now.
 
@@ -90,13 +90,13 @@ The header also shows what is going on. `refreshing...` means the data is being 
 
 The screens re-read the state every `refresh` (`tui.refresh` in `config.yaml`, 30 seconds by default, at least 1s). Reading never waits for the daemon.
 
-A re-read shows what is stored and fetches nothing, except that a change which needs older advisories fetches them (see [Changing the configuration](#changing-the-configuration)). The feeds are fetched when you press `F`, which covers every project.
+A re-read shows what is stored and fetches nothing, except that a change which needs older advisories fetches them (see [Changing the configuration](#changing-the-configuration)). The feeds are fetched when you press `u` (update, as `cvewatch update`), which covers every project.
 
 Without a running daemon the TUI also updates by itself, on the same schedule as the daemon (see [Update schedule per project](#update-schedule-per-project)): when a read shows a project due, it starts a background update of the due projects. This is the `tui.auto` setting, true by default. It does nothing when a daemon is alive, which means a heartbeat that is not overdue, because the daemon does that work, and it stops when `update.auto` in `config.yaml` is false. After a failed or busy attempt it waits a minute before it tries again. `tui.fetch` (`0s` by default) is the older way: a number above zero makes the TUI fetch everything once at start and then every so often, whatever the schedule and the daemon say. The values are on the Settings screen, under Core, and a change applies at the next re-read.
 
 A fetch runs in the background, one at a time, and the screens keep working. It needs write access to every project, like a daemon cycle. Its progress shows in the header as one small cell: `fetch 3/12` is three of twelve sources done, with a spinner. The matching, enriching, saving and alerting steps show their own word. When the run ends, a note says `fetched: 4 new, 2 findings`, and `, 1 source failed` when a source failed. An update on the schedule says `updated shop, blog: 4 new, 2 findings`, with the projects it covered. Click the cell at any time to see the sources that failed.
 
-If another cvewatch holds the data, such as a daemon cycle, the fetch waits for the next period, or for `F`, and the note says so. That is not an error.
+If another cvewatch holds the data, such as a daemon cycle, the fetch waits for the next period, or for `u`, and the note says so. That is not an error.
 
 When a project, `techs.yaml` or the alert horizon changed (in the TUI, in your editor or by hand), the findings no longer match what they were judged against. The TUI notices on its next read and runs a quiet job: the header cell says `revalidating`, then `back-fill 2/9` while a source reaches back for older advisories, and a note says `revalidated shop: 4 new, 11 closed by since 2024-01-01, 2 reopened`. `V` does the same on request: it first shows what would change, and `y` or enter applies it. Until then the Projects list marks a project whose changes are not judged yet with a `*`, and its page says so. What the revalidation does is described in [Changing the configuration](#changing-the-configuration).
 
@@ -104,7 +104,7 @@ When a project, `techs.yaml` or the alert horizon changed (in the TUI, in your e
 
 - **Levels.** Each screen has a root. Enter opens a level inside it: an issue, a project, a fix preview or a form. The breadcrumb line under the tabs shows the path, such as `Findings › CVE-2026-1234 › shop:prod`.
 - **Back.** Left, Esc or Backspace go back one level. `q` does the same inside a level or a popup.
-- **Screens.** On a root, Left and Right switch to the previous or next screen. Screens wrap around. Tab and Shift+Tab cycle through them, and 1 to 5 go to one. Tab and 1 to 5 also work inside an issue or a project.
+- **Screens.** On a root, Left and Right switch to the previous or next screen. Screens wrap around. Tab and Shift+Tab cycle through them, and the capital letter of a screen goes to it (see [Screen keys](#screen-keys)). Tab and the letters also work inside an issue or a project.
 - **Quit.** `q` quits only from a root. Ctrl+C quits from anywhere.
 - **Help.** `?` shows the keys for where you are, and the rules that apply everywhere. In a text box `?` is a letter, so use F1 there.
 - **Jump box.** `:` or Ctrl+G opens it from any screen or level, except forms, the fix preview and text boxes. Type part of an issue id (such as `CVE-2026-1234`) or a project name. Matches appear as you type, and names that start with your text come first. Up and Down pick a match, Tab fills in the text with it, and Enter goes there. If nothing matches but the text looks like an issue id, Enter tries it as one. That also finds an issue that is already closed. Esc cancels.
@@ -115,18 +115,18 @@ When a project, `techs.yaml` or the alert horizon changed (in the TUI, in your e
 Some keys take you to another place. Esc (or Backspace) brings you back to where you came from, on the level you land on.
 
 - Overview: Enter on an issue opens it. Enter on a policy violation (`v`) opens its issue.
-- Status: Enter on an error that names a project goes to that project. Other errors show in full.
+- Health: Enter on an error that names a project goes to that project. Other errors show in full.
 - Issue: `p` goes to the project of the selected environment.
 - Projects: `i` shows that project's issues on Findings, filtered to it. Enter opens the project and sets the scope (see [Project scope](#project-scope)).
 
-If you type a new filter after the jump, Esc clears the filter first. Changing screen ends the way back. This happens with Tab, a number key, or Left and Right on a root.
+If you type a new filter after the jump, Esc clears the filter first. Changing screen ends the way back. This happens with Tab, a screen letter, or Left and Right on a root.
 
 ### Mouse
 
 The mouse is optional. Every action works from the keys.
 
 - The wheel scrolls three lines, or moves a list cursor three rows.
-- A click selects a row. A second click on the selected row opens it on Findings, Projects, Overview and Status. In a form, a second click answers a choice, or ticks an option in a checklist.
+- A click selects a row. A second click on the selected row opens it on Findings, Projects, Overview and Health. In a form, a second click answers a choice, or ticks an option in a checklist.
 - In an issue, a click selects an environment row.
 - Click a screen tab to switch to it. Click a breadcrumb to go back to that level.
 
@@ -142,11 +142,34 @@ Lists name environments only where it matters. An issue that is open in every en
 
 `t` on Overview and Findings cycles the filter on the publication date: any time, past hour, past 24 hours, past week, past month and past year. The chip `published: past week ×` on the breadcrumb line shows it; `0`, or a click on the chip, clears it. Counts and bars follow it, as they follow the project scope. A custom range is typed into the search, such as `published:2026-01-01..2026-03-01`, and the chip shows that too. The search syntax is in [search.md](search.md).
 
+### Screen keys
+
+The tab bar shows each screen with its key highlighted: **O**verview, **F**indings, **P**rojects, **H**ealth and **S**ettings. Without colour (`NO_COLOR`) the letter is in brackets, `[O]verview`, and the screen shown is marked with an arrow, `▸[O]verview`. The number keys 1 to 5 no longer switch screens.
+
+- The capital letter (Shift+letter) goes to the screen from every root and every level that is not a text box. It never clashes with a lowercase action key.
+- The small letter goes there too, on a screen that has no key of its own on that letter. So `p` on Overview opens Projects, but `s` on Findings is still the severity filter and `f` on Findings still marks issues. Where a letter is taken, use the capital.
+- Where a text field is active (a filter, a note, a form), letters are typed text. Nothing switches the screen.
+- Tab and Shift+Tab, and Left and Right on a root, still cycle through the screens.
+- The footer and the help list these keys from the same table the keys are read from, so they show what works where you are.
+
+Keys that moved so that the screen letters are free:
+
+| Where | Old | New | What it does |
+|---|---|---|---|
+| everywhere | `1` to `5` | `O` `F` `P` `H` `S` | go to Overview, Findings, Projects, Health, Settings |
+| everywhere | `F` | `u` | update now: fetch the feeds (the same as `cvewatch update`); `r` still reloads |
+| issue | `F` `I` `N` `O` | Ctrl+P in the prompt of `f` `i` `n` `o` | the same status change for every environment of the project |
+| Projects, a project, the setup review | `H` | `w` | work through the hints |
+| Projects | `P` | `[` | previous problem (`p` is the next) |
+| Settings | `u` | `d` | restore the default of a setting |
+
+Every other key is unchanged: `a` `A` assign, `c` fields, `E` editor, `V` revalidate, `R` `D` `X` `Z` `N` on Projects, `/` filter, `s` severity, `t` time, `0` clear, `:` jump, `?` help, Esc, Enter and the arrows.
+
 ### Keys by screen
 
 The footer at the bottom shows the keys for where you are. Keys in brackets also work, but the footer and the help leave them out.
 
-Everywhere except in forms, the fix preview and text boxes: `:` jump, `r` reload, `F` fetch the feeds, `V` revalidate, `?` help, Tab and 1 to 5 switch screens.
+Everywhere except in forms, the fix preview and text boxes: `:` jump, `r` reload, `u` update (fetch the feeds), `V` revalidate, `?` help, Tab and the screen letters switch screens.
 
 **Overview**
 
@@ -162,7 +185,7 @@ Below the summary, the list holds every open issue. It is searched and sorted li
 | `t` | cycle the time filter on the publication date (see [Time filter](#time-filter)) |
 | `0` | clear the project scope when one is set, otherwise the time filter |
 
-**Status**
+**Health**
 
 | Key | What it does |
 |---|---|
@@ -192,8 +215,8 @@ Below the summary, the list holds every open issue. It is searched and sorted li
 | Up, Down | select an environment row |
 | PgUp, PgDn, Home, End, Space | scroll the page |
 | `f` `i` `n` `o` | set the selected environment fixed, ignored, not affected, or open again. Not affected asks for a reason |
-| `F` `I` `N` `O` | the same for every environment of the project |
-| `a`, `A` | owner, due date and ticket of the selected environment, or of the whole project with `A` |
+| Ctrl+P in the note prompt of `f` `i` `n` `o` | switch between the selected environment and every environment of the project (the prompt names which) |
+| `a`, `A` | owner, due date and ticket of the selected environment, or of the whole project with `A` (Ctrl+P in the prompt switches too) |
 | `]`, `[` | open the next or previous issue of the list (`J`, `K` too) |
 | `p` | go to the project of the selected environment |
 | `l`, `L` | select the next or previous link under References (the page scrolls to it) |
@@ -213,14 +236,14 @@ Below the summary, the list holds every open issue. It is searched and sorted li
 | `+` | add a project: from a folder, from a Dockerfile, compose or Kubernetes file, or an empty one (see [Adding a project](#adding-a-project-tui)) |
 | `-` | remove the selected project: it shows what it affects, asks for its name, and the file moves to the backups |
 | `c` | open the project's fields: environments, technologies, lockfiles, differences per environment, since, updates (see [Editing a project](#editing-a-project)) |
-| `H` | work through the project's hints (see [Hints](#hints)) |
+| `w` | work through the project's hints (see [Hints](#hints)) |
 | `e` | edit the project step by step in the guided form |
 | `a` | add a project in the guided form (`n` too) |
 | `N` | new empty project: a name and its environments, no folder needed |
 | `d` | add a project from a folder, or a Dockerfile, through the folder box (see below) |
 | `x` | preview the fix of the selected problem (`f` too) |
 | `E` | open the project file in your editor, then reload (`o` too) |
-| `p`, `P` | next or previous problem of the selected project |
+| `p`, `[` | next or previous problem of the selected project |
 | `i` | show this project's issues on Findings |
 | `R`, `D`, `X`, `Z` | rename, duplicate, delete, or disable a project (enable it when it is disabled). See [Creating, renaming, copying, disabling and deleting projects](#creating-renaming-copying-disabling-and-deleting-projects) |
 | Esc, Backspace | back to where a jump came from |
@@ -233,7 +256,7 @@ Below the summary, the list holds every open issue. It is searched and sorted li
 | Enter, Right, `x` | preview the fix of the selected problem |
 | `[`, `]` | choose another fix, when the problem has several |
 | `c` | open the project's fields and change them directly |
-| `H` | work through the project's hints (see [Hints](#hints)) |
+| `w` | work through the project's hints (see [Hints](#hints)) |
 | `e` | edit the project step by step in the guided form |
 | `E` | open the file in your editor at the problem's line (see below) |
 | `s` | select among the project's security issues; Enter opens the one selected, and back returns here |
@@ -243,7 +266,7 @@ Below the summary, the list holds every open issue. It is searched and sorted li
 | `R`, `D`, `X`, `Z` | rename, duplicate, delete, or disable (enable when disabled) the project |
 | Left, Esc, Backspace, `q` | back to the list of projects, or to where a jump came from |
 
-**Settings** (screen 5)
+**Settings** (`S`)
 
 The section list shows how many values each section of `config.yaml`, `techs.yaml` and `sources/*.yaml` sets, and the problems of the files with their line numbers. Enter opens a section, then a field. Changes are previewed as a change to the file and saved on a yes; comments in the files are kept. The daemon picks them up within about 15 seconds. It works even when a settings file is broken, and the other screens then show the load error as usual.
 
@@ -254,7 +277,7 @@ The section list shows how many values each section of `config.yaml`, `techs.yam
 | Space | turn an on/off setting over |
 | `a`, `x` | add an item to a list or map (a feed, a technology, a policy rule, an access rule), or remove the selected one |
 | `e` on one of your technologies | change its keywords, category and CPE (Tech catalog section) |
-| `u` | restore the default: the value is removed from the file |
+| `d` | restore the default: the value is removed from the file |
 | `/` | find a setting by label, path or value. On the section list it searches every section |
 | `E` | open the file in your editor at the line of the selected problem, then read it again |
 | Left, Esc, Backspace, `q` | back one level |
@@ -341,7 +364,7 @@ Only plain http and https addresses are listed as links. Long link titles are cu
 
 ### Settings
 
-The Settings screen (5) edits the configuration files: `config.yaml`, `techs.yaml` and the feeds in `sources/*.yaml`. The first level lists the sections: Core, HTTP, Notify, Policy, Sources, Tech catalog and Access. Each section shows how many values it sets, and the problems of the files with their file and line. Enter opens a section. Inside it, Enter opens a field or a list. Enter on a problem goes to the setting it names.
+The Settings screen edits the configuration files: `config.yaml`, `techs.yaml` and the feeds in `sources/*.yaml`. The first level lists the sections: Core, HTTP, Notify, Policy, Sources, Tech catalog and Access. Each section shows how many values it sets, and the problems of the files with their file and line. Enter opens a section. Inside it, Enter opens a field or a list. Enter on a problem goes to the setting it names.
 
 The field types are:
 
@@ -355,7 +378,7 @@ The field types are:
 Every change is shown as a diff of the file. Enter or `y` saves it. Esc cancels, and nothing is written. A change that would add an error is refused, and the prompt keeps what you typed and shows the reason. Comments and layout in the files are kept. Each file is copied to `config-backups/` before it is written. The audit log records the paths that changed, never the values.
 
 - **Secrets:** feed URLs and headers are never shown. A field says `(set)` or `(not set)`, the prompt does not show or prefill the current value, and the preview says `(set, changed)`.
-- **Restore the default:** `u` removes the value from the file, so the default applies.
+- **Restore the default:** `d` removes the value from the file, so the default applies.
 - **Broken files:** a file that is not valid YAML does not stop the screen. It shows its error, its values are not listed, and it can only be repaired in an editor. `E` opens the file at the line of the problem, then reads it again. The other screens show their load error as usual.
 - **When it applies:** the daemon uses the new settings within about 15 seconds, and judges the stored findings against them (see [Changing the configuration](#changing-the-configuration)).
 - **Who may edit:** the settings name every project and every actor. An actor that an access rule limits to some projects is refused the screen, with "Settings are not available to you". An actor with read access only sees the screen with a `read-only` note in its header and cannot save. A change to the access rules is refused when it would leave the person making it without write access to every project, so nobody can lock themselves out.
@@ -400,7 +423,7 @@ Picking a folder reads folder and file names only. Nothing in the folder is run.
 
 The Projects screen has a PROBLEMS column: `-` for none, or counts such as `2 err` and `1 warn`. A project file that cannot be read is shown as `BROKEN` with its error, and the rest of the TUI keeps working.
 
-- Enter opens the project. Its problems are listed, each with its fix underneath. `p` and `P` select the next or previous problem.
+- Enter opens the project. Its problems are listed, each with its fix underneath. `p` and `[` select the next or previous problem.
 - Inside a project, Enter or `x` shows the fix of the selected problem as a diff. Enter or `y` applies it. Esc cancels, and nothing is saved.
 - A problem with several fixes lists them. `[` and `]` choose one.
 - `E` opens the project file in your editor at the problem's line, then reloads. See [Editing the project file](#editing-the-project-file).
@@ -610,11 +633,11 @@ update:
 ```
 
 - Without an `update:` block a project is refreshed every `interval` of `config.yaml`, and the block is not needed. The block is read in both spellings of the file (`when@<env>` and `environments:`) and does not touch the generic and per-environment layout.
-- A project is due one `every` after its last refresh, and at once when it never was. The last refresh is kept in the state and shown in `cvewatch status` and on the TUI Status screen, together with the next due time. The TUI Projects screen shows each project as `every 1h · next 14:05`, `every 1h · due now`, `paused` (`auto: false`) or `manual` (scheduled updates are off).
+- A project is due one `every` after its last refresh, and at once when it never was. The last refresh is kept in the state and shown in `cvewatch status` and on the TUI Health screen, together with the next due time. The TUI Projects screen shows each project as `every 1h · next 14:05`, `every 1h · due now`, `paused` (`auto: false`) or `manual` (scheduled updates are off).
 - The daemon sleeps until the first project is due, but at most `interval`, so changes to the configuration are looked at. It never sleeps less than a minute, and after a failed cycle it waits at least 5 minutes.
 - A scheduled cycle fetches the feeds once and judges, writes reports and alerts only for the projects that are due. Advisories fetched earlier are judged for a project when it becomes due, so it misses nothing, and its alerts go out then.
-- `cvewatch update`, `cvewatch run` and `F` in the TUI refresh every project, including the ones with `auto: false`, and count as an update for each. A back-fill or revalidation after a configuration change looks at every project and is not an update.
-- `update: {auto: true}` in `config.yaml` is the main switch, true by default. False turns scheduled refreshes off for everything, in the daemon and the TUI; only `cvewatch update` and `F` refresh then.
+- `cvewatch update`, `cvewatch run` and `u` in the TUI refresh every project, including the ones with `auto: false`, and count as an update for each. A back-fill or revalidation after a configuration change looks at every project and is not an update.
+- `update: {auto: true}` in `config.yaml` is the main switch, true by default. False turns scheduled refreshes off for everything, in the daemon and the TUI; only `cvewatch update` and `u` refresh then.
 - Edit the block with `cvewatch project NAME -update-every 2h -update-auto false`, with the Updates field of the TUI field editor (`c` on a project), or with `set_update` in the MCP `edit_project` tool. `-update-every default` removes the period, and `auto: true` is not written because it is the default.
 - A period under 5 minutes stops the configuration from loading and is an error in `cvewatch check` and `cvewatch doctor`. A period over 30 days is a warning, and `auto: false` is a hint: scheduled runs skip the project. A missing block is not a hint.
 
