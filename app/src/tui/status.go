@@ -81,6 +81,33 @@ func renderStatus(rep status.Report, now time.Time, w int, projects []string, ho
 	}
 	add("")
 
+	add(section(fmt.Sprintf("Projects (%d)", len(rep.Projects))))
+	if !rep.Scheduled {
+		add(indentWrap("  ", "scheduled updates are off (update.auto in config.yaml): only update and the F key refresh", w)...)
+	}
+	if len(rep.Projects) == 0 {
+		add("  none")
+	}
+	prjW := 7
+	for _, p := range rep.Projects {
+		prjW = max(prjW, min(width(oneLine(p.Name)), 24))
+	}
+	if len(rep.Projects) > 0 {
+		add(stMuted.Render("  " + pad("PROJECT", prjW) + " " + pad("UPDATES", 10) + " " + pad("LAST UPDATE", 18) + " NEXT"))
+	}
+	for _, p := range rep.Projects {
+		every, _ := rep.Schedule(p)
+		next := "-"
+		switch {
+		case !p.Next.IsZero() && !p.Next.After(rep.GeneratedAt):
+			next = "due now"
+		case !p.Next.IsZero():
+			next = p.Next.UTC().Format("2006-01-02 15:04") + "Z"
+		}
+		add("  " + pad(oneLine(p.Name), prjW) + " " + pad(every, 10) + " " + pad(agoText(p.LastUpdate), 18) + " " + next)
+	}
+	add("")
+
 	add(section(fmt.Sprintf("Recent cycles (%d)", len(rep.Cycles))))
 	if len(rep.Cycles) == 0 {
 		add("  no cycle has run yet")

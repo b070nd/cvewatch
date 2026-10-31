@@ -95,9 +95,10 @@ func fields() []Field {
 		return Field{Path: path, Doc: KindSettings, Section: SecNotify, Label: label, Type: t, Help: help}
 	}
 
-	f := core("interval", "Interval", TypeDuration, "How often the daemon runs a cycle.")
+	f := core("interval", "Interval", TypeDuration, "How often a project is refreshed unless its file says otherwise (update.every), and the longest the daemon sleeps before it looks at the configuration again.")
 	f.Min = num(1)
 	add(f)
+	add(core("update.auto", "Scheduled updates", TypeBool, "Refresh projects by themselves, the daemon and the full-screen interface alike. Off, only update and the F key refresh. A project can opt out or pick its own period in its file (update.auto, update.every)."))
 	add(core("lookback", "Lookback", TypeDuration, "How far back a source's first run reaches. A project's since date reaches further, once: after you set or move it, the next fetch goes back to that date."))
 	add(core("retention", "Retention", TypeDuration, "Forget items that matched nothing after this long; 0 keeps them. At least twice the lookback. Until then a new tech or project can pick them up again (cvewatch revalidate)."))
 	add(core("data_dir", "Data directory", TypeString, "Where state, the audit log and backups live; relative to the root folder."))
@@ -112,9 +113,10 @@ func fields() []Field {
 	f = core("tui.refresh", "TUI refresh", TypeDuration, "How often the full-screen interface re-reads the state. At least 1s.")
 	f.Min = num(1)
 	add(f)
-	f = core("tui.fetch", "TUI fetch", TypeDuration, "How often the full-screen interface fetches the feeds itself; 0 only on request. A running daemon already fetches every interval.")
+	f = core("tui.fetch", "TUI fetch", TypeDuration, "A fixed period at which the full-screen interface fetches the feeds for every project, whatever the project schedule says. 0 leaves it to tui.auto.")
 	f.Min = num(0)
 	add(f)
+	add(core("tui.auto", "TUI auto update", TypeBool, "When no daemon is running, the full-screen interface refreshes on the project schedule (each project's update.every, else the interval). With a daemon it never fetches by itself. Needs update.auto."))
 	add(core("tui.editor", "TUI editor", TypeString, "The editor the E key opens files in, with its options, such as code --wait. Empty uses $VISUAL, then $EDITOR, then the first of the usual editors found on this machine."))
 	f = core("horizon.window", "Alert horizon", TypeEnum, "Only vulnerabilities published inside this window are judged, alerted and digested; findings that exist stay. unlimited is any time; custom uses from and to. Sources are fetched back to the lookback on a first run, so keep the lookback at least as long.")
 	f.Enum = config.Windows

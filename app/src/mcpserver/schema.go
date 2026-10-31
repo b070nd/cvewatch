@@ -34,6 +34,8 @@ func projectInSchema() map[string]any {
 			"to":            text(projectfile.ParamHelp("to")),
 			"image":         text(projectfile.ParamHelp("image")),
 			"since":         text(projectfile.ParamHelp("since")),
+			"every":         text(projectfile.ParamHelp("every")),
+			"auto":          map[string]any{"type": "boolean", "description": projectfile.ParamHelp("auto")},
 			"lockfile_type": text(projectfile.ParamHelp("lockfile.type")),
 			"lockfile_path": text(projectfile.ParamHelp("lockfile.path")),
 			"lockfile_env":  text(projectfile.ParamHelp("lockfile.env")),

@@ -59,9 +59,16 @@ type ProjectView struct {
 	Envs      []string    `json:"envs"`
 	Techs     []TechPin   `json:"techs"`
 	Lockfiles []LockEntry `json:"lockfiles"`
-	Since     string      `json:"since,omitempty"` // YYYY-MM-DD
+	Since     string      `json:"since,omitempty"`  // YYYY-MM-DD
+	Update    *UpdateView `json:"update,omitempty"` // only when the file has an update block
 
 	Differences []EnvDiff `json:"differences,omitempty"` // what differs from the generic techs, per environment
+}
+
+// UpdateView is the update block of a project file.
+type UpdateView struct {
+	Auto  bool   `json:"auto"`
+	Every string `json:"every,omitempty"` // empty: the interval of config.yaml
 }
 
 type TechPin struct {
@@ -108,6 +115,12 @@ func ViewOf(p model.Project) ProjectView {
 	}
 	if !p.Since.IsZero() {
 		v.Since = p.Since.Format(projectfile.SinceLayout)
+	}
+	if p.Update.Auto != nil || p.Update.Every > 0 {
+		v.Update = &UpdateView{Auto: p.AutoUpdate()}
+		if p.Update.Every > 0 {
+			v.Update.Every = model.Span(p.Update.Every)
+		}
 	}
 	return v
 }

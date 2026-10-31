@@ -97,7 +97,7 @@ func TestWaitPollsAndReportsChangesOnce(t *testing.T) {
 		}
 	}
 	var calls [][]string
-	ok := wait(context.Background(), clk, t0.Add(2*time.Minute), w, func(files []string) { calls = append(calls, files) })
+	ok := wait(context.Background(), clk, t0.Add(2*time.Minute), w, func(files []string) time.Time { calls = append(calls, files); return time.Time{} })
 	if !ok || len(calls) != 1 || !slices.Equal(calls[0], []string{"config/projects/shop.yaml"}) {
 		t.Fatalf("ok=%v calls=%v", ok, calls)
 	}
@@ -128,7 +128,7 @@ func TestWaitMergesASaveInSeveralSteps(t *testing.T) {
 		step++
 	}
 	var calls [][]string
-	wait(context.Background(), clk, t0.Add(time.Minute), w, func(files []string) { calls = append(calls, files) })
+	wait(context.Background(), clk, t0.Add(time.Minute), w, func(files []string) time.Time { calls = append(calls, files); return time.Time{} })
 	if len(calls) != 1 || !slices.Equal(calls[0], []string{"config/projects/a.yaml", "config/projects/b.yaml"}) {
 		t.Fatalf("calls = %v", calls)
 	}
@@ -137,7 +137,7 @@ func TestWaitMergesASaveInSeveralSteps(t *testing.T) {
 func TestWaitStopsWithTheContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if wait(ctx, &fakeClock{now: t0}, t0.Add(time.Hour), newWatcher(t.TempDir()), func([]string) { t.Fatal("no change expected") }) {
+	if wait(ctx, &fakeClock{now: t0}, t0.Add(time.Hour), newWatcher(t.TempDir()), func([]string) time.Time { t.Fatal("no change expected"); return time.Time{} }) {
 		t.Fatal("a cancelled context must end the wait")
 	}
 }

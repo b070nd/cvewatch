@@ -55,6 +55,11 @@ type Runner struct {
 	// BackfillOnly polls just the sources that still owe a back-fill and skips
 	// enrichment, pruning and digests: the quick run after a config change.
 	BackfillOnly bool
+	// Only names the projects a scheduled run judges, reconciles and alerts;
+	// nil means every project. The feeds and the stored advisories are shared,
+	// so they are fetched and kept for all: a project that is not named picks
+	// up what it missed on the run in which it is.
+	Only map[string]bool
 }
 
 // Phase is a step of a cycle, in the order they run.
@@ -96,6 +101,7 @@ type Result struct {
 	Enriched     int             `json:"enriched"`               // EPSS scores updated
 	Rated        int             `json:"rated"`                  // unrated issues that got a CVSS score from NVD
 	Fresh        map[string]bool `json:"-"`                      // vulnerabilities that gained findings this cycle
+	Updated      []string        `json:"updated,omitempty"`      // projects this cycle brought up to date
 	Alerted      int             `json:"alerted"`                // findings delivered, summed over channels
 	Digests      int             `json:"digests"`                // digests sent
 	Failed       []string        `json:"failed_sources"`         // sources that errored, with the reason
@@ -111,6 +117,9 @@ type fetched struct {
 	from  time.Time // start of the window asked for
 	back  bool
 	note  string
+	// resume is set with err when the windows before the failed one finished:
+	// items holds them and the next fetch starts here.
+	resume time.Time
 }
 
 // cycle carries what one run shares between its steps.
@@ -151,6 +160,9 @@ func (r *Runner) Run(ctx context.Context) (Result, error) {
 			c.res.Failed = append(c.res.Failed, src.ID+": "+f.err.Error())
 			r.Log.Warn("source failed", "source", src.ID, "err", f.err)
 			r.Ledger.SourceOutcome(src.ID, src.Type, c.now, 0, errors.New(query.Clip(f.err.Error(), 200)))
+			if !f.resume.IsZero() {
+				r.keepFinished(c, src, f)
+			}
 			continue
 		}
 		prior := r.Ledger.Feed(src.ID)
@@ -177,7 +189,8 @@ func (r *Runner) Run(ctx context.Context) (Result, error) {
 		c.res.Notes = append(c.res.Notes, note)
 		r.Log.Info(note)
 	}
-	c.reconcile()
+	c.catchUp()
+	c.reconcile(r.Only)
 	r.report(Progress{Phase: PhaseEnrich})
 	if !r.BackfillOnly {
 		c.enrich(ctx)
@@ -201,6 +214,12 @@ func (r *Runner) Run(ctx context.Context) (Result, error) {
 	if !r.BackfillOnly {
 		c.res.Digests = r.digests(ctx, c.now)
 	}
+	if !r.BackfillOnly {
+		c.res.Updated = r.covered()
+		for _, name := range c.res.Updated {
+			r.Ledger.SetLastUpdate(name, c.now)
+		}
+	}
 	r.Ledger.RecordCycle(model.CycleRecord{
 		Started: c.now, Finished: r.Now(), Items: c.res.Items, New: c.res.New, Merged: c.res.Merged,
 		Findings: c.res.Findings, Reconciled: c.res.Reconciled, Alerted: c.res.Alerted, Digests: c.res.Digests,
@@ -213,6 +232,21 @@ func (r *Runner) report(p Progress) {
 	if r.Progress != nil {
 		r.Progress(p)
 	}
+}
+
+// has is whether a run restricted to only includes the project; nil includes all.
+func has(only map[string]bool, project string) bool { return only == nil || only[project] }
+
+// covered lists the projects this run brings up to date, sorted.
+func (r *Runner) covered() []string {
+	var out []string
+	for _, p := range r.Cfg.Projects {
+		if has(r.Only, p.Name) {
+			out = append(out, p.Name)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 func (r *Runner) activeSources() []model.Source {
@@ -239,13 +273,16 @@ func (r *Runner) fetchAll(ctx context.Context, srcs []model.Source, now time.Tim
 		go func() {
 			defer wg.Done()
 			st := r.Ledger.Feed(src.ID) // read-only here; written after the join
+			if (src.Type == "nvd" || src.Type == "ghsa") && !st.Backfill.IsZero() && st.Backfill.Before(st.LastRun) {
+				r.Log.Info("fetching history", "source", src.ID, "from", st.Backfill.Format("2006-01-02"), "hint", "this can take minutes at the host's rate limit; stopping keeps what is fetched")
+			}
 			chunk := func(n, total int) {
 				mu.Lock()
 				defer mu.Unlock()
 				r.report(Progress{Phase: PhaseFetch, Done: done, Total: len(srcs), Source: src.ID, Chunk: n, Chunks: total})
 			}
 			o, err := feeds.FetchRange(ctx, r.Getter, src, st, now, r.Cfg.Lookback, chunk)
-			out[i] = fetched{items: o.Items, val: o.Validators, err: err, from: o.From, back: o.Backfilled, note: o.Note}
+			out[i] = fetched{items: o.Items, val: o.Validators, err: err, from: o.From, back: o.Backfilled, note: o.Note, resume: o.Resume}
 			mu.Lock()
 			defer mu.Unlock()
 			done++
@@ -322,10 +359,31 @@ func (c *cycle) process(it model.Item) {
 	v.Summary, v.Affected, v.Fixes = brief(v.Summary, v.Affected) // irrelevant: keep what a later revalidation needs
 }
 
+// keepFinished takes in the windows of a long fetch that finished before it
+// failed or was stopped and moves the source's cursor to where it broke off,
+// so the next run goes on from there instead of from the start.
+func (r *Runner) keepFinished(c *cycle, src model.Source, f fetched) {
+	st := r.Ledger.Feed(src.ID)
+	if !st.Backfill.IsZero() && f.resume.Before(st.LastRun) {
+		st.Backfill = f.resume
+	} else {
+		st.LastRun, st.Backfill = f.resume, time.Time{}
+	}
+	if st.Covered.IsZero() || f.from.Before(st.Covered) && !f.resume.Before(st.Covered) {
+		st.Covered = f.from
+	}
+	r.Ledger.SetFeed(src.ID, st)
+	r.Log.Info("kept what was fetched; the next run goes on from there", "source", src.ID, "items", len(f.items), "resume", f.resume.Format("2006-01-02"))
+	for _, it := range f.items {
+		c.res.Items++
+		c.process(it)
+	}
+}
+
 // reassess re-checks existing findings against affected data that arrived late.
 func (c *cycle) reassess(v *model.Vulnerability) {
 	c.r.Ledger.UpdateFindings(v.ID, func(f *model.Finding) {
-		if len(f.Installed) == 0 {
+		if len(f.Installed) == 0 || !has(c.r.Only, f.Project) {
 			return
 		}
 		applies, reasons := c.judge.Reassess(f.Installed, v.Affected)
@@ -337,13 +395,14 @@ func (c *cycle) reassess(v *model.Vulnerability) {
 }
 
 // reconcile re-checks open findings whose inventory changed: an upgraded
-// lockfile, a new declared version, a package that is gone. It only changes
+// lockfile, a new declared version, a package that is gone, for the projects
+// of only (nil: all). It only changes
 // what the finding records about the installed version and the verdict that
 // follows from it; status, owner and notes are left alone.
-func (c *cycle) reconcile() {
+func (c *cycle) reconcile(only map[string]bool) {
 	l := c.r.Ledger
 	for _, f := range l.Findings() {
-		if f.Status != model.StatusOpen || len(f.Installed) == 0 {
+		if f.Status != model.StatusOpen || len(f.Installed) == 0 || !has(only, f.Project) {
 			continue
 		}
 		tg, ok := c.inv.Target(f.Project, f.Env)
@@ -468,6 +527,7 @@ func (c *cycle) enrichEPSS(ctx context.Context) {
 }
 
 func (c *cycle) addFindings(vulnID string, ms []relevance.Match) {
+	ms = slices.DeleteFunc(slices.Clone(ms), func(m relevance.Match) bool { return !has(c.r.Only, m.Project) })
 	n := AddFindings(c.r.Ledger, vulnID, ms, c.now)
 	c.res.Findings += n
 	if n > 0 {
@@ -506,10 +566,11 @@ func safeURL(raw string) bool {
 func (c *cycle) writeReports() error {
 	for id := range c.dirty {
 		v := c.r.Ledger.Vuln(id)
-		if v == nil {
+		fs := c.r.Ledger.FindingsOf(id)
+		if v == nil || len(fs) == 0 && c.r.Only != nil { // an advisory only a project outside this run matches has no report yet
 			continue
 		}
-		path, err := report.Write(c.r.Cfg.AlertsDir, v, c.r.Ledger.FindingsOf(id), c.now)
+		path, err := report.Write(c.r.Cfg.AlertsDir, v, fs, c.now)
 		if err != nil {
 			return err
 		}
@@ -543,7 +604,7 @@ func (r *Runner) alert(ctx context.Context, now time.Time) int {
 		var batch []notify.Alert
 		for _, f := range r.Ledger.Findings() {
 			v := r.Ledger.Vuln(f.VulnID)
-			if f.Status != model.StatusOpen || f.Delivered(name) || v == nil ||
+			if f.Status != model.StatusOpen || f.Delivered(name) || v == nil || !has(r.Only, f.Project) ||
 				f.Applies == model.AppNotAffected || !v.Severity.AtLeast(d.Min) || !r.Cfg.Horizon.Contains(v.Published, now) {
 				continue
 			}

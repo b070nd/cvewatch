@@ -31,6 +31,9 @@ type State struct {
 	Digests map[string]time.Time `json:"digests,omitempty"`
 	// Judged is what the findings were last judged against; see Revalidate.
 	Judged *model.Judging `json:"judged,omitempty"`
+	// Updated remembers when each project was last refreshed, by a scheduled
+	// or a manual run; the next scheduled one is due a period after.
+	Updated map[string]time.Time `json:"updated,omitempty"`
 
 	// Health of the tool itself, for the status command, dashboard and TUI.
 	Cycles    []model.CycleRecord            `json:"cycles,omitempty"` // newest last, capped
@@ -66,6 +69,9 @@ func New(s State) *Ledger {
 	}
 	if s.Digests == nil {
 		s.Digests = map[string]time.Time{}
+	}
+	if s.Updated == nil {
+		s.Updated = map[string]time.Time{}
 	}
 	if s.Sources == nil {
 		s.Sources = map[string]model.SourceHealth{}
@@ -202,6 +208,10 @@ func (l *Ledger) RenameProject(from, to string) (int, error) {
 		delete(l.d.Findings, f.Key())
 		f.Project = to
 		l.d.Findings[f.Key()] = f
+	}
+	if at, ok := l.d.Updated[from]; ok {
+		delete(l.d.Updated, from)
+		l.d.Updated[to] = at
 	}
 	return len(moving), nil
 }
@@ -396,6 +406,11 @@ func (l *Ledger) Prune(before time.Time) int {
 	}
 	return n
 }
+
+// LastUpdate returns when a project was last refreshed (zero if never).
+func (l *Ledger) LastUpdate(project string) time.Time { return l.d.Updated[project] }
+
+func (l *Ledger) SetLastUpdate(project string, at time.Time) { l.d.Updated[project] = at }
 
 // Judged returns what the findings were last judged against, nil if never.
 func (l *Ledger) Judged() *model.Judging { return l.d.Judged }

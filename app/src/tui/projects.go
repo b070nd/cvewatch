@@ -240,13 +240,16 @@ func projectDetail(p projectRow, st *projectsState, w, room int, deep bool) []st
 		out = append(out, "  file: "+trunc(oneLine(p.File), w-8))
 	} else {
 		out = append(out, indentWrap("  technologies: ", techList(p), w)...)
+		if p.Updates != "" {
+			out = append(out, "  updates: "+trunc(oneLine(p.Updates), w-11))
+		}
 	}
 	out = append(out, problemLines(p.Problems, st, w, room, deep)...)
 	if p.Broken != "" {
 		return out
 	}
 	if deep {
-		out = append(out, stMuted.Render("  c edits the fields (environments, technologies, lockfiles, differences per environment, since)   + add   - remove"))
+		out = append(out, stMuted.Render("  c edits the fields (environments, technologies, lockfiles, differences per environment, since, updates)   + add   - remove"))
 	} else {
 		out = append(out, stMuted.Render("  + add   - remove   c edit fields   R rename   D duplicate   Z disable"))
 	}

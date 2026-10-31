@@ -635,3 +635,43 @@ func TestHorizonSettingsAreEditableAndChecked(t *testing.T) {
 		t.Fatalf("\n%s", got)
 	}
 }
+
+func TestUpdateSettingsAreEditableAndChecked(t *testing.T) {
+	root := t.TempDir()
+	f, ok := Lookup(KindSettings, "update.auto")
+	if !ok || f.Type != TypeBool || f.Default != "true" || f.Section != SecCore || !strings.Contains(f.Help, "update.every") {
+		t.Fatalf("update.auto: %+v", f)
+	}
+	if f, ok = Lookup(KindSettings, "tui.auto"); !ok || f.Type != TypeBool || f.Default != "true" || !strings.Contains(f.Help, "daemon") {
+		t.Fatalf("tui.auto: %+v", f)
+	}
+	if f, ok = Lookup(KindSettings, "interval"); !ok || !strings.Contains(f.Help, "update.every") {
+		t.Fatalf("interval is the default period of a project: %+v", f)
+	}
+	s := mustRead(t, root)
+	if _, err := s.With(Edit{Op: OpSet, Path: "update.auto", Value: "sometimes"}); err == nil {
+		t.Error("a bool setting took a word")
+	}
+	if _, err := s.With(Edit{Op: OpSet, Path: "update.every", Value: "1h"}); err == nil {
+		t.Error("update.every is a key of the project file, not of config.yaml")
+	}
+	c := mustWith(t, s, Edit{Op: OpSet, Path: "update.auto", Value: false}, Edit{Op: OpSet, Path: "tui.auto", Value: false})
+	if r := c.Validate(); r.Blocked() {
+		t.Fatalf("both must pass the loader: %+v", r.Issues)
+	}
+	if got := text(t, c, IDSettings); !strings.Contains(got, "update:\n  auto: false") || !strings.Contains(got, "auto: false") {
+		t.Fatalf("\n%s", got)
+	}
+}
+
+func TestShippedSettingsFileDocumentsTheUpdateKeys(t *testing.T) {
+	text := string(defaults.Settings())
+	for _, want := range []string{"# update:", "#   auto: true", "#   auto: true       # without a running daemon", "update: {every: 1h, auto: false}"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("config.yaml template lacks %q", want)
+		}
+	}
+	if example := string(defaults.ProjectExample()); !strings.Contains(example, "# update:") || !strings.Contains(example, "every: 1h") {
+		t.Errorf("the project example does not show the update block:\n%s", example)
+	}
+}
