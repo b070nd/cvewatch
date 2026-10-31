@@ -149,7 +149,7 @@ The technology catalog and the feeds are built in, so one binary is enough. `set
 - **Puts the urgent things first.** Order: actively exploited (CISA KEV), then severity, open in prod, exploit probability (EPSS, optional), age. Every issue says why it ranks where it does.
 - **Merges the duplicates.** The NVD entry, the GitHub advisory, the CISA listing and two news stories become one record with all links, the articles in order, and the known fix.
 - **Tells you where you already look.** Slack, a signed webhook or email, plus a daily "still open in prod" digest.
-- **Starts each project when you say.** A `since` date skips advisories published before it, for that project only. Other projects are not affected.
+- **Starts each project when you say.** A `since` date skips advisories published before it, for that project only, and closes the open findings from before it as not affected. Moving the date earlier reopens them. Other projects are not affected.
 - **Searches what you track.** `cvewatch search` finds issues by ID, part of an ID, words or fields such as `severity:high+` and `project:shop`, in every status.
 - **Looks back only as far as you say.** `horizon` in `config.yaml` limits what is judged, alerted and digested to the past hour, day, week, month or year, or to a custom range. It is unlimited by default, and findings that already exist stay.
 - **Names its environments.** `local`, `dev`, `prod` or any name you choose. A new project starts with `local`, and what differs in one environment is written once, in a `when@prod:` block.
@@ -192,7 +192,7 @@ cvewatch not-affected CVE-2026-109619 -project shop -env dev -note "dev has no n
 cvewatch evidence CVE-2026-109618
 ```
 
-**Always on.** Run `cvewatch daemon` (or the Docker image) and it refreshes every few hours. The full-screen interface re-reads the state every `tui.refresh` (30 seconds by default) and fetches the feeds when you press `F`; `tui.fetch` in `config.yaml` makes it fetch by itself. If you upgrade a lockfile, the open findings are re-checked on their own and each finding's history says what changed.
+**Always on.** Run `cvewatch daemon` (or the Docker image) and it refreshes every few hours. The full-screen interface re-reads the state every `tui.refresh` (30 seconds by default) and fetches the feeds when you press `F`; `tui.fetch` in `config.yaml` makes it fetch by itself. If you upgrade a lockfile, the open findings are re-checked on their own and each finding's history says what changed. Editing a project, `techs.yaml` or the alert horizon works the same way: the daemon notices within about 15 seconds, judges the stored advisories again and fetches older ones when the change needs them.
 
 ### The life of a finding
 
@@ -336,7 +336,7 @@ sequenceDiagram
 - **Feed text is untrusted data.** Titles and descriptions come from public websites. They are cleaned on the way in, escaped on the way out and delivered under `untrusted`; the server instructions tell the agent never to follow instructions found there.
 - **Writes are opt-in and recorded.** Every change is an audit-log entry with the actor (`mcp:<user>`), and the log is hash-chained, so editing history is detectable.
 - **Per-actor access.** `access:` in `config.yaml` limits which projects an actor sees and whether it may write; an agent never sees projects it has no access to.
-- **Nothing leaves the machine** except the feeds you configure, your channels and (only if you enable it) EPSS lookups for tracked CVE ids.
+- **Nothing leaves the machine** except the feeds you configure, your channels and NVD lookups of the CVSS score and (only if you enable it) EPSS lookups for tracked CVE ids.
 
 ```yaml
 access:
@@ -369,7 +369,7 @@ Agent snippet for your `CLAUDE.md` and details: [docs/agents.md](docs/agents.md)
 ## Know the limits
 
 - **Versions are checked only where feeds give ranges, and only for what you say runs.** NVD product data and GitHub advisories do; news and Hacker News do not, so those findings stay `unchecked` and a person confirms.
-- **First runs can be noisy.** `cvewatch doctor` and the shipped CPE names remove most of it; `excludes`, `match_structured`, `match_title_only` and `-min` tune the rest. Config edits apply to items first seen afterwards; `rescan` looks back on purpose.
+- **First runs can be noisy.** `cvewatch doctor` and the shipped CPE names remove most of it; `excludes`, `match_structured`, `match_title_only` and `-min` tune the rest. Config edits are judged against the stored advisories at once; `cvewatch revalidate` shows what they would change before `-apply`.
 - **No distro or OS-package advisories** (Debian, Alpine, Red Hat...) and no offline mode: use a scanner for what is inside an image, and cvewatch for who is exposed and what happened next.
 - **Package-level matching covers ten input formats today** (composer, npm, Go, pip, poetry, Pipfile, Gradle, Maven, CycloneDX, SPDX). Other stacks are covered by technology name, not by package.
 - **Fixes are what feeds say.** No package or container registry is queried and nothing is scanned. Image references are recorded, not verified.
@@ -378,7 +378,7 @@ Agent snippet for your `CLAUDE.md` and details: [docs/agents.md](docs/agents.md)
 
 ## Security and privacy
 
-Outbound requests go only to the feeds and channels you configure, plus FIRST's EPSS service if you turn it on. No telemetry. State and reports are created owner-only, secrets live in the environment and never in logs, and all feed text is treated as untrusted. Details and a threat model: [docs/security.md](docs/security.md). Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+Outbound requests go only to the feeds and channels you configure, plus NVD's CVE API for the CVSS score of tracked issues no feed rated (`enrich.cvss`, on by default) and FIRST's EPSS service if you turn it on. No telemetry. State and reports are created owner-only, secrets live in the environment and never in logs, and all feed text is treated as untrusted. Details and a threat model: [docs/security.md](docs/security.md). Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 ## Documentation
 

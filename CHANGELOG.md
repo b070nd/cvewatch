@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - Folder box in the TUI for new projects: Tab completes, Shift+Tab goes up one folder, Up and Down pick a folder. Rows show the lockfiles and manifests in each folder and a `project` tag.
-- TUI Projects screen shows a problems column and the problems of the selected project. `f` previews and applies a fix, `o` opens the file in `$EDITOR`. A project file that cannot be read is shown as broken instead of stopping the TUI.
+- TUI Projects screen shows a problems column and the problems of the selected project. `f` previews and applies a fix, `o` opens the file in the editor (`tui.editor`, else `$VISUAL` or `$EDITOR`). A project file that cannot be read is shown as broken instead of stopping the TUI.
 - `check_projects` MCP tool: read-only report of problems in project files, with the fixes it knows.
 - Validation warns when a lockfile's `env` is not in the project's `envs`, since such a lockfile is never read.
 - TUI breadcrumb under the screen tabs. Left, Esc and Backspace go back one level.
@@ -47,6 +47,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `published:` search field (`published:week`, `published:7d`, `published:2026-01-01..2026-03-01`, `published:..2026-03-01`) and `-published VALUE` on `list`, `update`, `search` and `export`.
 - TUI `t` cycles a time filter on the publication date (any time, past hour, day, week, month, year) on Overview and Findings, shown as a chip on the breadcrumb line; `0` clears it. Overview and Status show the alert horizon when it is not unlimited.
 
+- Revalidation: when a project, its technologies, versions per environment, environments, lockfiles or `since` date changes, or a `techs.yaml` entry or the alert horizon does, every stored advisory is judged again, including the ones that matched nothing before. New matches become findings, and nothing stored is removed. It runs at the start of every cycle, on the TUI's next read, and in the daemon within about 15 seconds of a configuration file changing.
+- `cvewatch revalidate [-apply] [-fetch] [-json]` previews or applies the same re-judging on the command line. `-fetch` also fetches the older advisories the change needs.
+- Back-fill: when a change starts earlier than what the sources have covered, NVD is asked in 119-day windows with paging, GitHub advisories are followed page by page, and KEV is read in full, so the older advisories arrive on the next fetch. Vendor records, RSS and Hacker News cannot go back, and the cycle notes say so.
+- TUI `V` revalidates after showing a preview (`y` or Enter applies). The header shows `revalidating` and `back-fill` while it runs, and the Projects list marks with `*` the projects whose changes are not judged yet.
+- `since` closes the open findings of advisories published before it, as not affected, with a note saying why. Moving the date earlier, or removing it, reopens the findings cvewatch closed. A status you set yourself is never changed.
+- `tui.editor` setting: the editor `E` opens files in, with its options (for example `code --wait`). Without it the TUI uses `$VISUAL`, then `$EDITOR`, then the first usual editor on the machine, and says which one it used.
+- The Linux kernel catalog entry takes the names people write: `ubuntu kernel`, `debian kernel`, `linux-image` and `linux image` are aliases of `linux-kernel`. The words of an unknown technology are matched one by one, so `ubuntu kernel` suggests `linux-kernel`.
+- CVSS scores are read for every version the sources carry (2.0, 3.0, 3.1 and 4.0), from NVD, CVE records, GitHub advisories, CSAF advisories and articles. An issue keeps its issuer's score first, then the newer version. `show` and the exports carry the version, vector and source (`cvss_version`, `cvss_vector` and `cvss_source`, added to the export schema).
+- `enrich: {cvss: true}`, on by default: tracked CVEs that no source rated get a score from NVD's public API, at most 5 per cycle and once a day per CVE. Only the CVE id is sent. Set `enrich.cvss: false` to turn it off.
+
 ### Changed
 - TUI has five screens, Overview, Findings, Projects, Status and Settings, on keys 1 to 5.
 - `cvewatch show` and report files now include Installed, Affected and History sections.
@@ -64,8 +74,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A project file without `envs` still means `dev`, `int`, `staging` and `prod`, and the review says so with a hint to list its environments. `environments:` is still read, but new files and edits write `when@<env>` blocks.
 - Development-only packages count by default in `local`, `dev`, `int`, `development` and `test`, not only in `dev` and `int`.
 - A `when@<env>` block for an environment the project does not have is an error with a fix. A lockfile or technology that names one is a warning.
+- Configuration edits apply to stored advisories, not only to items first seen afterwards: a `techs.yaml` or project change re-judges what is stored (see Added). `rescan` is now `revalidate`, and `rescan` still works.
+- The hint for a project without `since` says what a start date does now, including closing the findings of older advisories.
 
 ### Fixed
+- Editing a project's technologies or `since` date did not judge advisories that were already stored: only new sightings were judged, so a technology added later or an earlier `since` missed the older advisories.
+- `$EDITOR is not set` stopped the TUI from opening a project or settings file. The editor is looked up now (see `tui.editor`).
+- An unknown technology name such as `ubuntu kernel` gets a fix that renames it to the catalog name, not only a warning.
+- Kernel version suffixes such as `6.12.86-generic` were read as pre-releases, so they ranked before a fix at `6.12.86`. The build suffix no longer orders a version (`6.12.85+` is `6.12.85`).
 - `edit_project` and `preview_project_change` accept a `lockfile` object, so fixes from `check_projects` can be passed on as they are.
 - `cvewatch init` saved lockfile paths as absolute paths with the default `-root .`; they stay relative to the root now.
 - `cvewatch init -force` now edits an existing project file in place: its comments stay, and the old file is backed up.
