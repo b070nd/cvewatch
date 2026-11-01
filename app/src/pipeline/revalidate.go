@@ -284,7 +284,7 @@ func (c *cycle) rejudge(rv *Revalidation, only map[string]bool) {
 	started := time.Now()
 	next := started.Add(heartbeat)
 	for i, id := range ids {
-		if now := time.Now(); now.After(next) {
+		if now := time.Now(); !now.Before(next) {
 			c.r.Log.Info("still judging stored advisories", "done", i, "of", len(ids), "elapsed", now.Sub(started).Round(time.Second), "new_findings", rv.NewFindings)
 			next = now.Add(heartbeat)
 		}

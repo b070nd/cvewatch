@@ -370,7 +370,7 @@ func TestRevalidateSaysWhatItIsDoing(t *testing.T) {
 	}
 	var buf bytes.Buffer
 	g.Runner.Log = slog.New(slog.NewTextHandler(&buf, nil))
-	defer pipeline.SetHeartbeat(time.Nanosecond)()
+	defer pipeline.SetHeartbeat(0)()
 	revalidate(t, g, false)
 	out := buf.String()
 	for _, want := range []string{"msg=revalidating", "advisories=3", "msg=\"still judging stored advisories\"", " of=3", "msg=revalidated", "elapsed="} {
