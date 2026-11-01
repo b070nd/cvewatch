@@ -1,6 +1,7 @@
 package relevance
 
 import (
+	"math/rand"
 	"slices"
 	"strings"
 	"testing"
@@ -305,5 +306,24 @@ func TestHorizonKeepsItemsOutsideTheWindowOutOfEveryProject(t *testing.T) {
 	open := j.Judge(model.Item{Title: "PHP flaw", Published: from.AddDate(-5, 0, 0)}, []Target{{Project: "p", Env: model.EnvProd, Techs: techs}})
 	if len(open.Matches) != 1 {
 		t.Error("no horizon judges everything")
+	}
+}
+
+func TestWordMatchAgreesWithTheExpression(t *testing.T) {
+	termSets := [][]string{{"go"}, {"php"}, {"node.js", "nodejs"}, {"c++"}, {"a b", "ab"}, {" Spaced "}, {"é"}, {"k"}, {"s"}, {""}, {"vendor/package"}}
+	pieces := []string{"go", "php", "Node.js", "nodejs", "c++", "a", "b", " ", "ab", "-", ".", "/", "vendor/package", "GO", "PHP", "1", "é", "\u212a", "\u017f", "k", "K", "s", "S", "\n"}
+	rng := rand.New(rand.NewSource(1))
+	for i := 0; i < 20000; i++ {
+		var b strings.Builder
+		for n := rng.Intn(8); n >= 0; n-- {
+			b.WriteString(pieces[rng.Intn(len(pieces))])
+		}
+		text := b.String()
+		for _, terms := range termSets {
+			w := newWords(terms)
+			if got, want := w.match(newSubject(text)), wordRe(terms).MatchString(text); got != want {
+				t.Fatalf("terms %q in %q: fast %v, expression %v", terms, text, got, want)
+			}
+		}
 	}
 }

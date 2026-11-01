@@ -14,6 +14,9 @@ import (
 	"github.com/b070nd/cvewatch/app/src/relevance"
 )
 
+// heartbeat is how often a long judgement says it is still going.
+var heartbeat = 5 * time.Second
+
 const (
 	// An irrelevant record keeps this much of its summary and of its product
 	// list, so a later config change can judge it again without a new download.
@@ -97,8 +100,12 @@ func (r *Runner) Revalidate(apply bool) (Revalidation, error) {
 	}
 	c := newCycle(run)
 	cur := c.inv.Judging(run.Cfg, c.now)
+	started := time.Now()
+	r.Log.Info("revalidating", "advisories", len(run.Ledger.State().Vulns), "findings", len(run.Ledger.Findings()), "apply", apply)
 	rv := c.revalidate(inventory.Compare(run.Ledger.Judged(), cur, run.Cfg.Horizon, c.now), cur, false)
 	rv.Applied = apply
+	r.Log.Info("revalidated", "elapsed", time.Since(started).Round(time.Millisecond), "new_findings", rv.NewFindings, "closed", rv.Closed+rv.EnvClosed,
+		"reopened", rv.Reopened+rv.EnvReopened, "reconciled", rv.Reconciled, "unchanged", rv.Unchanged)
 	if !apply {
 		return rv, nil
 	}
@@ -273,7 +280,14 @@ func (c *cycle) setAuto(key string, st model.Status, auto bool, note, prior stri
 func (c *cycle) rejudge(rv *Revalidation, only map[string]bool) {
 	l := c.r.Ledger
 	targets := slices.DeleteFunc(slices.Clone(c.inv.Targets()), func(t relevance.Target) bool { return !has(only, t.Project) })
-	for _, id := range slices.Sorted(maps.Keys(l.State().Vulns)) {
+	ids := slices.Sorted(maps.Keys(l.State().Vulns))
+	started := time.Now()
+	next := started.Add(heartbeat)
+	for i, id := range ids {
+		if now := time.Now(); !now.Before(next) {
+			c.r.Log.Info("still judging stored advisories", "done", i, "of", len(ids), "elapsed", now.Sub(started).Round(time.Second), "new_findings", rv.NewFindings)
+			next = now.Add(heartbeat)
+		}
 		v := l.Vuln(id)
 		verdict := c.judge.Judge(ItemOf(v, c.r.Cfg.Sources), targets)
 		if len(verdict.Matches) == 0 {

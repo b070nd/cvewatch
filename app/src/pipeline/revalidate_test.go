@@ -1,7 +1,9 @@
 package pipeline_test
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -358,5 +360,22 @@ func TestStoppedBackfillKeepsFinishedWindowsAndResumes(t *testing.T) {
 	res = g.Run()
 	if got := len(nvdURLs(g)); got != 5 || len(res.Failed) != 0 || !g.Ledger.Feed("nvd").Backfill.IsZero() {
 		t.Fatalf("the next run fetches the 5 windows left, not 9: asked=%d failed=%v state=%+v", got, res.Failed, g.Ledger.Feed("nvd"))
+	}
+}
+
+func TestRevalidateSaysWhatItIsDoing(t *testing.T) {
+	g := quiet(t, phpProject, redisTechs)
+	for _, id := range []string{"CVE-2026-6001", "CVE-2026-6002", "CVE-2026-6003"} {
+		seed(g, id, "Pasta recipes "+id, newDay, "")
+	}
+	var buf bytes.Buffer
+	g.Runner.Log = slog.New(slog.NewTextHandler(&buf, nil))
+	defer pipeline.SetHeartbeat(0)()
+	revalidate(t, g, false)
+	out := buf.String()
+	for _, want := range []string{"msg=revalidating", "advisories=3", "msg=\"still judging stored advisories\"", " of=3", "msg=revalidated", "elapsed="} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
 	}
 }
