@@ -701,7 +701,7 @@ It runs in these places:
 
 - At the start of every cycle, so `cvewatch update` and the daemon's cycles do it when the fingerprint differs.
 - Between cycles the daemon looks at `config.yaml`, `techs.yaml`, the project files and the source files every 15 seconds. It reads their sizes and times, not their content. When one changes, it waits 2 seconds for a save made in several steps, then revalidates and back-fills at once instead of waiting for the next `interval`.
-- On the command line, `cvewatch revalidate` lists what would change and writes nothing. `-apply` makes the changes. `-fetch` also fetches the older advisories the change needs, and implies `-apply`. `-json` prints the counts and the changes. `rescan` is the old name and still works.
+- On the command line, `cvewatch revalidate` lists what would change and writes nothing. `-apply` makes the changes. `-fetch` also fetches the older advisories the change needs, and implies `-apply`. `-json` prints the counts and the changes. Progress goes to stderr (a start line, a line every five seconds while it judges, and a closing line with the time), so stdout stays the result. `rescan` is the old name and still works.
 - In the TUI, when a read finds the findings out of date, the same work runs as a quiet job, and `V` shows the preview first (see [Refresh and fetch](#refresh-and-fetch)).
 
 A ledger written before this version has no record of its judgement yet, so every project counts as changed. The first cycle judges the stored advisories once, which can add findings for advisories stored earlier, and asks the sources to reach back to the earliest start of any project (its `since` date or the horizon, whichever is later). The TUI leaves that to the cycle, or to `V`.

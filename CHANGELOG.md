@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- `cvewatch revalidate` and the judging at the start of an update are about five times faster on a large store: a technology name is looked up in the text of a stored advisory without a regular expression for plain ASCII text. The answers are the same.
+- `revalidate` writes progress to stderr, so `-json` on stdout stays machine-readable: a start line with the number of stored advisories, a line every five seconds with how many are judged, and a closing line with the time it took and the counts.
+
 ## [2.0.0] - 2026-10-31
 
 Version 2.0.0 changes things that integrations can see, so read the upgrade notes first. Each project has its own update schedule, a change to a project or to `techs.yaml` is judged against the stored advisories at once with older history fetched as needed, CVSS is read from every version the sources carry, and projects are kept apart by vendor. Environments are free and optional, you can add your own technologies, the monitor reports GREEN, YELLOW or RED, the TUI is switched by letters, and independent black-box validation led to many correctness fixes.

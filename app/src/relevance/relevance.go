@@ -18,7 +18,7 @@ import (
 type tech struct {
 	name    string
 	scheme  string // version ordering for what the tech runs: "", pypi, maven, go
-	re      *regexp.Regexp
+	re      words
 	exclude *regexp.Regexp // nil when the tech has no excludes
 	cpe     map[string]bool
 }
@@ -30,7 +30,7 @@ type Judge struct{ techs []tech }
 func New(techs []model.Tech) *Judge {
 	j := &Judge{}
 	for _, t := range techs {
-		c := tech{name: strings.ToLower(t.Name), scheme: t.Scheme, re: wordRe(t.Terms()), cpe: map[string]bool{}}
+		c := tech{name: strings.ToLower(t.Name), scheme: t.Scheme, re: newWords(t.Terms()), cpe: map[string]bool{}}
 		if len(t.Excludes) > 0 {
 			c.exclude = wordRe(t.Excludes)
 		}
@@ -149,12 +149,17 @@ func (j *Judge) Judge(it model.Item, targets []Target) Verdict {
 	}
 	schemes := map[string]string{}
 	hits := map[string]hit{}
+	text := newSubject(it.TechText())
+	plain := text
+	if it.TitleOnly {
+		plain = newSubject(it.Text())
+	}
 	for _, t := range j.techs {
 		if !declared[t.name] {
 			continue
 		}
 		schemes[t.name] = t.scheme
-		h, note, ok := t.judge(it)
+		h, note, ok := t.judge(it, text)
 		if note != "" {
 			v.Notes = append(v.Notes, note)
 		}
@@ -177,7 +182,7 @@ func (j *Judge) Judge(it model.Item, targets []Target) Verdict {
 		}
 		for _, pkg := range tg.Packages {
 			in := model.Installed{Name: pkg.Name, Version: pkg.Version, Ecosystem: pkg.Ecosystem, Via: "package"}
-			if rs, structured, ok := packageHit(it, pkg); ok {
+			if rs, structured, ok := packageHit(it, plain, pkg); ok {
 				why := "named in the advisory's package list"
 				if !structured {
 					why = "named in the text"
@@ -243,7 +248,7 @@ func applies(in model.Installed, ranges []model.Range, known bool) model.Applica
 
 // judge decides one tech. Structured CPE data wins over text when the tech
 // knows its CPE names: that is what removes "mentioned in passing" noise.
-func (t tech) judge(it model.Item) (h hit, note string, ok bool) {
+func (t tech) judge(it model.Item, text subject) (h hit, note string, ok bool) {
 	if len(t.cpe) > 0 {
 		for _, a := range it.Affected {
 			if a.Ecosystem == model.EcoCPE && t.cpe[a.Name] {
@@ -258,24 +263,23 @@ func (t tech) judge(it model.Item) (h hit, note string, ok bool) {
 				h.why = "named in the advisory's product data"
 				return h, "", true
 			}
-			if t.re.MatchString(it.TechText()) { // only explain techs the text did mention
+			if t.re.match(text) { // only explain techs the text did mention
 				return h, fmt.Sprintf("%s: mentioned in the text, but the advisory's product data names other products", t.name), false
 			}
 			return h, "", false
 		}
 		if it.StructuredOnly {
-			if t.re.MatchString(it.TechText()) {
+			if t.re.match(text) {
 				return h, fmt.Sprintf("%s: mentioned in the text, but there is no product data yet; waiting for the feed to analyse it", t.name), false
 			}
 			return h, "", false
 		}
 	}
-	text := it.TechText()
-	if !t.re.MatchString(text) {
+	if !t.re.match(text) {
 		return h, "", false
 	}
 	if t.exclude != nil {
-		if m := t.exclude.FindString(text); m != "" {
+		if m := t.exclude.FindString(text.text); m != "" {
 			return h, fmt.Sprintf("%s: excluded because the text also says %q", t.name, strings.TrimSpace(strings.Trim(m, " .,;:()[]\"'"))), false
 		}
 	}
@@ -298,7 +302,7 @@ func (t tech) matchesCPE(it model.Item) bool {
 // packageHit finds a lockfile package in the item. Structured package data
 // is exact; free text is searched only for scoped names (vendor/package),
 // and only when the feed gave no structured packages at all.
-func packageHit(it model.Item, pkg model.Package) (ranges []model.Range, structured, ok bool) {
+func packageHit(it model.Item, plain subject, pkg model.Package) (ranges []model.Range, structured, ok bool) {
 	hasStructured := false
 	want := pkgKey(pkg.Ecosystem, pkg.Name)
 	for _, a := range it.Affected {
@@ -315,7 +319,7 @@ func packageHit(it model.Item, pkg model.Package) (ranges []model.Range, structu
 		return ranges, len(ranges) > 0, true
 	}
 	scoped := strings.ContainsAny(pkg.Name, "/:") // vendor/package, group:artifact, module paths
-	if !hasStructured && scoped && wordRe([]string{pkg.Name}).MatchString(strings.ToLower(it.Text())) {
+	if !hasStructured && scoped && newWords([]string{pkg.Name}).match(plain) {
 		return nil, false, true
 	}
 	return nil, false, false
@@ -363,6 +367,76 @@ func (j *Judge) rangesFor(in model.Installed, affected []model.Affected) []model
 	}
 	return out
 }
+
+// subject is a text prepared once for every term that is looked for in it.
+type subject struct {
+	text  string
+	lower string
+	ascii bool
+}
+
+func newSubject(text string) subject {
+	return subject{text: text, lower: strings.ToLower(text), ascii: isASCII(text)}
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
+}
+
+// words is wordRe without the cost for the usual case. Plain ASCII terms in
+// plain ASCII text are looked up as substrings with the boundary checked by
+// hand; anything else goes through the expression, which holds the same rule.
+type words struct {
+	terms []string // lowercase
+	fast  bool     // every term is non-empty ASCII
+	re    *regexp.Regexp
+}
+
+func newWords(terms []string) words {
+	w := words{fast: true, re: wordRe(terms)}
+	for _, t := range terms {
+		t = strings.ToLower(strings.TrimSpace(t))
+		w.fast = w.fast && t != "" && isASCII(t)
+		w.terms = append(w.terms, t)
+	}
+	return w
+}
+
+func (w words) match(s subject) bool {
+	if !w.fast || !s.ascii {
+		return w.re.MatchString(s.text)
+	}
+	for _, t := range w.terms {
+		if hasWord(s.lower, t) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasWord reports whether term stands in text with no letter or digit on
+// either side. Both are lowercase ASCII.
+func hasWord(text, term string) bool {
+	for from := 0; ; {
+		i := strings.Index(text[from:], term)
+		if i < 0 {
+			return false
+		}
+		i += from
+		end := i + len(term)
+		if (i == 0 || !alnum(text[i-1])) && (end == len(text) || !alnum(text[end])) {
+			return true
+		}
+		from = i + 1
+	}
+}
+
+func alnum(c byte) bool { return c >= 'a' && c <= 'z' || c >= '0' && c <= '9' }
 
 // wordRe matches any term as a whole word, case-insensitively, so "go" does
 // not fire inside "google" and "php" does not fire inside "phpunit".
