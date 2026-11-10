@@ -201,6 +201,9 @@ func (s *Session) projectFiles() (map[string]string, error) {
 // to be created, and its file is <name>.yaml; it is an error when that file
 // belongs to another project.
 func (s *Session) ProjectFile(name string) (string, error) {
+	if err := s.mayRead(name); err != nil { // the answer can name another project's file
+		return "", err
+	}
 	files, err := s.projectFiles()
 	if err != nil {
 		return "", err
@@ -299,12 +302,24 @@ func absPath(p string) string {
 	return filepath.Clean(p)
 }
 
+// maySave checks the right to save a project edit: write access to the
+// project, or to every project when the edit creates it.
+func (s *Session) maySave(name string, created bool) error {
+	if created {
+		name = ""
+	}
+	return s.mayWrite(name)
+}
+
 // EditProject previews a change and, with Save, validates and writes it. The
 // file keeps its comments and layout, the old content is backed up, and the
 // edit is recorded in the audit log before anything is written. Creating a
 // project needs access to every project.
 func (s *Session) EditProject(c ProjectChange) (ProjectPreview, error) {
 	name := strings.TrimSpace(c.Project)
+	if err := s.mayRead(name); err != nil { // first: not even the file's existence is told to someone without access
+		return ProjectPreview{Project: name}, err
+	}
 	path, err := s.ProjectFile(name)
 	if err != nil {
 		return ProjectPreview{}, err
@@ -314,9 +329,6 @@ func (s *Session) EditProject(c ProjectChange) (ProjectPreview, error) {
 	var f *projectfile.File
 	switch {
 	case err == nil:
-		if err := s.mayRead(name); err != nil {
-			return out, err
-		}
 		if f, err = projectfile.Parse(old); err != nil {
 			return out, err
 		}
@@ -330,6 +342,11 @@ func (s *Session) EditProject(c ProjectChange) (ProjectPreview, error) {
 		}
 	default:
 		return out, err
+	}
+	if c.Save { // the right to save is settled before the change is worked out
+		if err := s.maySave(name, out.Created); err != nil {
+			return out, err
+		}
 	}
 	if c.Ops, err = s.declaredLockOps(f, c.Ops); err != nil {
 		return out, err
@@ -373,15 +390,10 @@ func (s *Session) EditProject(c ProjectChange) (ProjectPreview, error) {
 	if !c.Save {
 		return out, nil
 	}
-	if !out.Created {
-		if err := s.mayWrite(name); err != nil {
-			return out, err
-		}
-	} else if err := s.mayWrite(""); err != nil {
-		return out, err
-	}
 	if slices.ContainsFunc(c.Ops, func(o projectfile.Op) bool { return o.Kind == "set_vendor" }) {
-		if err := s.mayWrite(""); err != nil { // moving a project to another vendor changes who may see it
+		// Moving a project to another vendor changes who may see it. The actor
+		// may write the project, so it still gets the preview with the refusal.
+		if err := s.mayWrite(""); err != nil {
 			return out, fmt.Errorf("%w: setting a vendor needs write access to every project", ErrDenied)
 		}
 	}
