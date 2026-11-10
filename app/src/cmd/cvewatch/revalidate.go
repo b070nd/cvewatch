@@ -23,7 +23,7 @@ func revalidateCmd(ctx context.Context, s *ops.Session, args []string) error {
 		return err
 	}
 	*apply = *apply || *fetch
-	rv, err := s.Revalidate(*apply)
+	rv, err := s.RevalidateContext(ctx, *apply)
 	if err != nil {
 		return err
 	}
@@ -54,6 +54,9 @@ func revalidateCmd(ctx context.Context, s *ops.Session, args []string) error {
 	}
 	fmt.Printf("%d new finding(s), %d closed by a since date, %d reopened, %d re-checked after an inventory change, %d unchanged.\n",
 		rv.NewFindings, rv.Closed, rv.Reopened, rv.Reconciled, rv.Unchanged)
+	if rv.Retired > 0 {
+		fmt.Printf("%d retired (no longer matched).\n", rv.Retired)
+	}
 	if len(rv.Projects) > 0 {
 		fmt.Println("Projects changed:", strings.Join(rv.Projects, ", "))
 	}

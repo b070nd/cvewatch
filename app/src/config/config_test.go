@@ -573,3 +573,29 @@ func TestSourceAuthEnvMustBeAVariableNameNotAToken(t *testing.T) {
 		}
 	}
 }
+
+func TestProfilesLoadGloballyAndPerProjectAndBadOnesAreRefused(t *testing.T) {
+	load := func(global, project string) (*Bundle, error) {
+		root := t.TempDir()
+		put(t, root, "config/techs.yaml", "techs: [{name: php}]\n")
+		put(t, root, "config/config.yaml", global)
+		put(t, root, "config/projects/a.yaml", "name: a\ntechs: [{name: php}]\n"+project)
+		return Load(root)
+	}
+	b, err := load("profile: strict\n", "profile: discovery\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Profile != model.ProfileStrict || b.Projects[0].Profile != model.ProfileDiscovery {
+		t.Errorf("profiles = %q, %q", b.Profile, b.Projects[0].Profile)
+	}
+	if b, err = load("", ""); err != nil || b.Profile != "" || b.Projects[0].Profile != "" {
+		t.Errorf("empty profiles are valid: %v %q", err, b.Profile)
+	}
+	for name, c := range map[string][2]string{"global": {"profile: loose\n", ""}, "project": {"", "profile: loose\n"}} {
+		_, err := load(c[0], c[1])
+		if err == nil || !strings.Contains(err.Error(), "strict, balanced, discovery") {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+}

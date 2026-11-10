@@ -51,6 +51,9 @@ type Runner struct {
 	Now      func() time.Time
 	Progress func(Progress) // optional; see Progress
 	Actor    string         // who acts in the audit trail; default "cvewatch"
+	// Heartbeat is how often a long judgement logs that it is still going;
+	// zero means every five seconds.
+	Heartbeat time.Duration
 	// BackfillOnly polls just the sources that still owe a back-fill and skips
 	// enrichment, pruning and digests: the quick run after a config change.
 	BackfillOnly bool
@@ -97,6 +100,8 @@ type Result struct {
 	Pruned       int             `json:"pruned"`                 // old irrelevant records forgotten
 	Findings     int             `json:"findings"`               // findings created
 	Reconciled   int             `json:"reconciled"`             // findings re-checked because the inventory changed
+	Retired      int             `json:"retired,omitempty"`      // of those, findings given up because the advisory no longer matches what is installed
+	Retirable    int             `json:"retirable,omitempty"`    // findings the advisory's product data disproves, left for `revalidate -apply` (retire: manual)
 	Enriched     int             `json:"enriched"`               // EPSS scores updated
 	Rated        int             `json:"rated"`                  // unrated issues that got a CVSS score from NVD
 	Fresh        map[string]bool `json:"-"`                      // vulnerabilities that gained findings this cycle
@@ -123,21 +128,39 @@ type fetched struct {
 
 // cycle carries what one run shares between its steps.
 type cycle struct {
-	r      *Runner
-	judge  *relevance.Judge
-	inv    *inventory.Inventory
-	now    time.Time
-	dirty  map[string]bool // vulnerabilities whose report needs rewriting
-	events []audit.Event
-	res    Result
+	r     *Runner
+	judge *relevance.Judge
+	match *relevance.Matcher // the judge compiled for every target
+	inv   *inventory.Inventory
+	now   time.Time
+	dirty map[string]bool // vulnerabilities whose report needs rewriting
+	// retired are the findings given up this run because the advisory no
+	// longer matches what is installed, in the order it happened.
+	retired []model.Finding
+	// holdUnmatched keeps disproved matches as they are and only counts them
+	// in held: the configuration asks for a person to retire them.
+	holdUnmatched bool
+	held          int
+	events        []audit.Event
+	res           Result
 }
 
 func newCycle(r *Runner) *cycle {
 	now := r.Now()
+	judge, inv := relevance.New(r.Cfg.Techs), inventory.Load(r.Cfg).Within(r.Cfg.Horizon, now)
 	return &cycle{
-		r: r, judge: relevance.New(r.Cfg.Techs), inv: inventory.Load(r.Cfg).Within(r.Cfg.Horizon, now), now: now,
+		r: r, judge: judge, match: judge.Compile(inv.Targets()), inv: inv, now: now,
 		dirty: map[string]bool{}, res: Result{Fresh: map[string]bool{}},
+		holdUnmatched: r.Cfg.Retire == model.RetireManual,
 	}
+}
+
+// matcher is the judge compiled for the targets of only (nil: all).
+func (c *cycle) matcher(only map[string]bool) *relevance.Matcher {
+	if only == nil {
+		return c.match
+	}
+	return c.judge.Compile(slices.DeleteFunc(slices.Clone(c.inv.Targets()), func(t relevance.Target) bool { return !only[t.Project] }))
 }
 
 // Run executes one cycle. A failing source never stops the others, and its
@@ -147,7 +170,9 @@ func (r *Runner) Run(ctx context.Context) (Result, error) {
 	for _, p := range c.inv.Problems() {
 		r.Log.Warn("inventory problem", "problem", p.String())
 	}
-	c.revalidateIfStale()
+	if err := c.revalidateIfStale(ctx); err != nil {
+		return c.res, err
+	}
 	srcs := r.polled()
 	var recentOnly []string // back-fill asked of sources that cannot serve history
 	results := r.fetchAll(ctx, srcs, c.now)
@@ -188,8 +213,14 @@ func (r *Runner) Run(ctx context.Context) (Result, error) {
 		c.res.Notes = append(c.res.Notes, note)
 		r.Log.Info(note)
 	}
-	c.catchUp()
-	c.reconcile(r.Only)
+	if err := c.catchUp(ctx); err != nil {
+		return c.res, err
+	}
+	c.held = 0 // counted once, by the pass over every finding that follows
+	c.reconcile(c.matcher(r.Only))
+	if c.res.Retirable = c.held; c.held > 0 {
+		r.Log.Info("findings whose match is disproved were left as they are", "findings", c.held, "hint", "retire is manual: run `cvewatch revalidate -apply`")
+	}
 	c.applyEnvs(&Revalidation{}, r.Only) // also repairs data from before a revalidation saw the change
 	r.report(Progress{Phase: PhaseEnrich})
 	if !r.BackfillOnly {
@@ -303,7 +334,7 @@ func (c *cycle) process(it model.Item) {
 	if prior := l.Lookup(it.Keys()); prior != nil && !prior.Published.IsZero() && (judged.Published.IsZero() || prior.Published.Before(judged.Published)) {
 		judged.Published = prior.Published
 	}
-	verdict := c.judge.Judge(judged, c.inv.Targets())
+	verdict := c.match.Judge(judged)
 
 	known, folded, linked := l.Identify(it, verdict.Relevant())
 	for _, g := range folded {
@@ -339,8 +370,8 @@ func (c *cycle) process(it model.Item) {
 				c.res.New++
 			}
 		}
-		if change.Evidence {
-			c.reassess(known)
+		if change.Evidence { // affected data or product names that arrived late
+			c.settle(known, c.matcher(c.r.Only), false)
 		}
 		if change.Any && (hadFindings || verdict.Relevant()) {
 			c.dirty[known.ID] = true
@@ -379,109 +410,12 @@ func (r *Runner) keepFinished(c *cycle, src model.Source, f fetched) {
 	}
 }
 
-// reassess re-checks existing findings against affected data that arrived late.
-func (c *cycle) reassess(v *model.Vulnerability) {
-	c.r.Ledger.UpdateFindings(v.ID, func(f *model.Finding) {
-		if len(f.Installed) == 0 || !has(c.r.Only, f.Project) {
-			return
-		}
-		applies, reasons := c.judge.Reassess(f.Installed, v.Affected)
-		if applies != f.Applies {
-			f.Applies, f.Reasons, f.Updated = applies, reasons, c.now
-			c.dirty[v.ID] = true
-		}
-	})
-}
-
-// reconcile re-checks open findings whose inventory changed: an upgraded
-// lockfile, a new declared version, a package that is gone, for the projects
-// of only (nil: all). It only changes
-// what the finding records about the installed version and the verdict that
-// follows from it; status, owner and notes are left alone. A package whose
-// lockfile cannot be read is not gone, it is unknown, and stays as it was.
-func (c *cycle) reconcile(only map[string]bool) {
-	l := c.r.Ledger
-	for _, f := range l.Findings() {
-		if f.Status != model.StatusOpen || !has(only, f.Project) {
-			continue
-		}
-		tg, ok := c.inv.Target(f.Project, f.Env)
-		v := l.Vuln(f.VulnID)
-		if !ok || v == nil {
-			continue
-		}
-		if len(f.Installed) == 0 {
-			c.reinstalled(f, tg, v)
-			continue
-		}
-		unreadable := len(c.inv.Unreadable(f.Project, f.Env)) > 0
-		var now []model.Installed
-		var changes, gone []string
-		for _, old := range f.Installed {
-			cur, found := tg.Find(old)
-			switch {
-			case !found && old.Via == "package" && unreadable:
-				now = append(now, old)
-			case !found:
-				gone = append(gone, old.Label())
-			case cur.Version != old.Version:
-				changes = append(changes, old.Label()+" → "+cur.Label())
-				now = append(now, cur)
-			default:
-				now = append(now, cur)
-			}
-		}
-		if len(changes) == 0 && len(gone) == 0 {
-			continue
-		}
-
-		applies, reasons := model.AppNotAffected, []string{"no longer installed: " + strings.Join(gone, ", ")}
-		if len(now) > 0 {
-			applies, reasons = c.judge.Reassess(now, v.Affected)
-		}
-		note := strings.Join(append(changes, prefixed("removed ", gone)...), "; ") + "; now " + string(applies)
-		labels := make([]string, len(now))
-		for i, in := range now {
-			labels[i] = in.Label()
-		}
-		c.inventoryChange(f, now, labels, applies, reasons, note)
+// reconcile settles every vulnerability that has findings: an upgraded
+// lockfile, a new declared version, a package that is gone or back.
+func (c *cycle) reconcile(m *relevance.Matcher) {
+	for _, v := range c.r.Ledger.Relevant() {
+		c.settle(v, m, false)
 	}
-}
-
-// reinstalled judges a finding again that was left with nothing installed
-// ("no longer installed") when what it matched is back in the target, or was
-// wrongly given up on. The advisory ranges decide; it is judged like a new match.
-func (c *cycle) reinstalled(f model.Finding, tg relevance.Target, v *model.Vulnerability) {
-	if f.Applies != model.AppNotAffected || len(f.Reasons) == 0 || !strings.HasPrefix(f.Reasons[0], "no longer installed") {
-		return
-	}
-	for _, m := range c.judge.Judge(ItemOf(v, c.r.Cfg.Sources), []relevance.Target{tg}).Matches {
-		labels := make([]string, len(m.Installed))
-		for i, in := range m.Installed {
-			labels[i] = in.Label()
-		}
-		c.inventoryChange(f, m.Installed, labels, m.Applies, m.Reasons, "installed again: "+strings.Join(labels, ", ")+"; now "+string(m.Applies))
-	}
-}
-
-// inventoryChange records a new installed state on a finding, in its history and in the audit trail.
-func (c *cycle) inventoryChange(f model.Finding, now []model.Installed, labels []string, applies model.Applicability, reasons []string, note string) {
-	c.r.Ledger.Mutate(f.Key(), func(m *model.Finding) {
-		m.Installed, m.Matched, m.Applies, m.Reasons, m.Updated = now, labels, applies, reasons, c.now
-		m.History = append(m.History, model.Disposition{Time: c.now, Actor: "cvewatch", Action: "inventory", Note: note})
-	})
-	c.events = append(c.events, audit.Event{Time: c.now, Actor: "cvewatch", Action: "inventory", Vuln: f.VulnID,
-		Project: f.Project, Env: string(f.Env), Note: note})
-	c.dirty[f.VulnID] = true
-	c.res.Reconciled++
-}
-
-func prefixed(p string, xs []string) []string {
-	out := make([]string, len(xs))
-	for i, x := range xs {
-		out[i] = p + x
-	}
-	return out
 }
 
 func (c *cycle) enrich(ctx context.Context) {
@@ -623,13 +557,18 @@ func (c *cycle) writeReports() error {
 // but never alerted.
 func (r *Runner) alert(ctx context.Context, now time.Time) int {
 	sent := 0
+	discovery := map[string]bool{}
+	for _, p := range r.Cfg.Projects {
+		discovery[p.Name] = p.Profile.Or(r.Cfg.Profile) == model.ProfileDiscovery
+	}
 	for _, d := range r.Channels {
 		name := d.Channel.Name()
 		var batch []notify.Alert
 		for _, f := range r.Ledger.Findings() {
 			v := r.Ledger.Vuln(f.VulnID)
 			if f.Status != model.StatusOpen || f.Delivered(name) || v == nil || !has(r.Only, f.Project) ||
-				f.Applies == model.AppNotAffected || !v.Severity.AtLeast(d.Min) || !r.Cfg.Horizon.Contains(v.Published, now) {
+				f.Applies == model.AppNotAffected || !v.Severity.AtLeast(d.Min) || !r.Cfg.Horizon.Contains(v.Published, now) ||
+				discovery[f.Project] && f.WeakOnly() { // the discovery profile records text matches, it does not page for them
 				continue
 			}
 			if n := len(batch); n > 0 && batch[n-1].Vuln.ID == v.ID {

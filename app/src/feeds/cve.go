@@ -295,6 +295,7 @@ func (r cveRecord) item(srcID string) (model.Item, bool) {
 		URL:       "https://www.cve.org/CVERecord?id=" + id,
 		Summary:   summary,
 		Affected:  r.affected(),
+		Products:  r.products(),
 		Fixes:     r.fixes(srcID),
 		Published: parseTime(r.Meta.Published),
 	}
@@ -338,6 +339,32 @@ func placeholder(s string) bool {
 	return false
 }
 
+func namedProduct(vendor, name string) []model.Product {
+	name = plain(name)
+	if placeholder(name) {
+		return nil
+	}
+	vendor = plain(vendor)
+	if placeholder(vendor) {
+		vendor = ""
+	}
+	return []model.Product{{Vendor: vendor, Name: name}}
+}
+
+func (r cveRecord) products() []model.Product {
+	var out []model.Product
+	for _, c := range append([]cveContainer{r.Containers.CNA}, r.Containers.ADP...) {
+		for _, a := range c.Affected {
+			for _, p := range namedProduct(a.Vendor, a.Product) {
+				if len(out) < cveMaxAffected && !slices.Contains(out, p) {
+					out = append(out, p)
+				}
+			}
+		}
+	}
+	return out
+}
+
 // affected keeps products that carry CPE names, as NVD data does. Vendors
 // without CPEs write free text ("2.4.9, 2.4.8-p5, ..."), which is not turned
 // into ranges: those findings stay unchecked for a person to confirm.
@@ -355,7 +382,7 @@ func (r cveRecord) affected() []model.Affected {
 				switch {
 				case clean:
 					e.Ranges = ranges
-				case ver != "":
+				case ver != "" && ver != "-":
 					e.Ranges = []model.Range{{Min: ver, Max: ver}}
 				}
 				if len(list) < maxAffected || slices.ContainsFunc(list, func(x model.Affected) bool { return x.Name == name }) {

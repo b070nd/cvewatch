@@ -18,6 +18,16 @@ import (
 // result says what would, which any session may ask for. Applying needs write
 // access to all projects.
 func (s *Session) Revalidate(apply bool) (pipeline.Revalidation, error) {
+	return s.RevalidateContext(context.Background(), apply)
+}
+
+// RevalidateContext stops evaluation when cancelled; after the pipeline starts
+// writing reports/audit it completes the commit before returning.
+func (s *Session) RevalidateContext(ctx context.Context, apply bool) (pipeline.Revalidation, error) {
+	started := time.Now()
+	if err := ctx.Err(); err != nil {
+		return pipeline.Revalidation{}, err
+	}
 	f, err := s.scope(query.Filter{})
 	if err != nil {
 		return pipeline.Revalidation{}, err
@@ -27,15 +37,22 @@ func (s *Session) Revalidate(apply bool) (pipeline.Revalidation, error) {
 			return pipeline.Revalidation{}, err
 		}
 	}
-	rv, err := s.revalidateOnce(apply)
+	rv, err := s.revalidateOnce(ctx, apply)
 	if apply && errors.Is(err, store.ErrConflict) { // another process saved first (SQLite): reload and redo once
 		if rerr := s.reload(); rerr != nil {
 			return pipeline.Revalidation{}, rerr
 		}
-		rv, err = s.revalidateOnce(apply)
+		s.Log.Info("retrying revalidation after a state conflict", "phase", "retry")
+		rv, err = s.revalidateOnce(ctx, apply)
 	}
 	if err != nil {
+		rv.Applied = false
 		return rv, err
+	}
+	if apply {
+		s.Log.Info("revalidation committed", "phase", "complete", "elapsed", time.Since(started).Round(time.Millisecond))
+	} else {
+		s.Log.Info("revalidation preview complete", "phase", "complete", "elapsed", time.Since(started).Round(time.Millisecond))
 	}
 	if len(f.Projects) > 0 { // keep other projects' issues out of what this actor sees
 		rv.Projects = slices.DeleteFunc(rv.Projects, func(p string) bool { return !slices.Contains(f.Projects, p) })
@@ -51,13 +68,14 @@ func (s *Session) Revalidate(apply bool) (pipeline.Revalidation, error) {
 	return rv, nil
 }
 
-func (s *Session) revalidateOnce(apply bool) (pipeline.Revalidation, error) {
+func (s *Session) revalidateOnce(ctx context.Context, apply bool) (pipeline.Revalidation, error) {
 	r := &pipeline.Runner{Cfg: s.Cfg, Ledger: s.Ledger, Audit: s.Audit, Log: s.Log, Now: s.Now, Actor: s.Actor}
-	rv, err := r.Revalidate(apply)
+	rv, err := r.RevalidateContext(ctx, apply)
 	if err != nil || !apply {
 		return rv, err
 	}
 	if err := s.Commit(); err != nil {
+		rv.Applied = false
 		s.Audit.Append(audit.Event{Time: s.Now(), Actor: s.Actor, Action: "revalidate-failed", Note: "not saved: " + err.Error()})
 		return rv, err
 	}
@@ -92,9 +110,11 @@ func (s *Session) Stale() (Staleness, error) {
 	if len(f.Projects) > 0 {
 		out.Projects = slices.DeleteFunc(out.Projects, func(p string) bool { return !slices.Contains(f.Projects, p) })
 	}
-	for _, src := range s.Cfg.Sources {
-		if !src.Disabled && !s.Ledger.Feed(src.ID).Backfill.IsZero() {
-			out.BackfillPending = append(out.BackfillPending, src.ID)
+	if len(f.Projects) == 0 { // the feeds are shared settings: only someone who sees everything is told about them
+		for _, src := range s.Cfg.Sources {
+			if !src.Disabled && !s.Ledger.Feed(src.ID).Backfill.IsZero() {
+				out.BackfillPending = append(out.BackfillPending, src.ID)
+			}
 		}
 	}
 	return out, nil

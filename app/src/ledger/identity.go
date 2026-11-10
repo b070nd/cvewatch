@@ -78,6 +78,11 @@ func isAliasPair(ids []string) bool {
 
 func (l *Ledger) similar(it model.Item) *model.Vulnerability {
 	for _, base := range l.Relevant() {
+		// Similar wording is not evidence that two independently identified
+		// vulnerabilities are aliases. It may associate an ID-less article.
+		if hasAdvisoryID(it.IDs) && hasAdvisoryID(base.Keys()) {
+			continue
+		}
 		if !it.Published.IsZero() {
 			if gap := base.Published.Sub(it.Published); gap >= mergeWindow || gap <= -mergeWindow {
 				continue
@@ -88,6 +93,28 @@ func (l *Ledger) similar(it model.Item) *model.Vulnerability {
 		}
 	}
 	return nil
+}
+
+func hasAdvisoryID(ids []string) bool {
+	return slices.ContainsFunc(ids, func(id string) bool {
+		return strings.HasPrefix(id, "CVE-") || strings.HasPrefix(id, "GHSA-")
+	})
+}
+
+// identityAliases uses the same evidence requirement as record unification:
+// only an advisory's explicit CVE/GHSA pair establishes a multi-ID identity.
+// Roundups and bulletins can still be linked to each named record by Identify.
+func identityAliases(it model.Item, primary string) []string {
+	ids := it.Keys()
+	if len(ids) > 1 && (model.RefKind(it.SourceType) != model.RefAdvisory || !isAliasPair(ids)) {
+		return nil
+	}
+	for _, id := range ids {
+		if strings.HasPrefix(primary, "CVE-") && strings.HasPrefix(id, "CVE-") && id != primary {
+			return nil
+		}
+	}
+	return without(ids, primary)
 }
 
 // unify folds several records into the one first seen, moves their findings
@@ -104,6 +131,7 @@ func (l *Ledger) unify(vs []*model.Vulnerability) (*model.Vulnerability, []*mode
 		main.Aliases = appendMissing(main.Aliases, append([]string{g.ID}, g.Aliases...)...)
 		main.Refs = mergeRefs(main.Refs, g.Refs)
 		main.Affected = mergeAffected(main.Affected, g.Affected)
+		main.Products = mergeProducts(main.Products, g.Products)
 		main.Fixes = mergeFixes(main.Fixes, g.Fixes)
 		main.Techs = appendMissing(main.Techs, g.Techs...)
 		if main.KEV == nil {
@@ -121,16 +149,25 @@ func (l *Ledger) unify(vs []*model.Vulnerability) (*model.Vulnerability, []*mode
 		if r := g.Rating(); r.Better(main.Rating()) {
 			main.SetRating(r)
 		}
+		// Move its findings across in key order, so which one survives where
+		// both records have a finding for a target never depends on map order:
+		// the surviving record's own finding, else the first one moved.
+		var keys []string
 		for key, f := range l.d.Findings {
-			if f.VulnID != g.ID {
-				continue
+			if f.VulnID == g.ID {
+				keys = append(keys, key)
 			}
+		}
+		slices.Sort(keys)
+		for _, key := range keys {
+			f := l.d.Findings[key]
 			delete(l.d.Findings, key)
 			f.VulnID = main.ID
 			if _, taken := l.d.Findings[f.Key()]; !taken {
 				l.d.Findings[f.Key()] = f
 			}
 		}
+		l.ofVuln = nil
 		delete(l.d.Vulns, g.ID)
 	}
 	l.index(main)
@@ -150,7 +187,7 @@ func (l *Ledger) Absorb(v *model.Vulnerability, it model.Item) Change {
 	if refs := mergeRefs(v.Refs, []model.Ref{refOf(it)}); !slices.Equal(refs, v.Refs) {
 		v.Refs, changed = refs, true
 	}
-	if aliases := appendMissing(slices.Clone(v.Aliases), without(it.Keys(), v.ID)...); len(aliases) != len(v.Aliases) {
+	if aliases := appendMissing(slices.Clone(v.Aliases), identityAliases(it, v.ID)...); len(aliases) != len(v.Aliases) {
 		v.Aliases, changed = aliases, true
 	}
 	l.index(v)
@@ -164,17 +201,30 @@ func (l *Ledger) Absorb(v *model.Vulnerability, it model.Item) Change {
 	if a := mergeAffected(v.Affected, it.Affected); !affectedEqual(a, v.Affected) {
 		v.Affected, changed, c.Evidence = a, true, true
 	}
+	if products := mergeProducts(v.Products, it.Products); !slices.Equal(products, v.Products) {
+		v.Products, changed, c.Evidence = products, true, true
+	}
 	if f := mergeFixes(v.Fixes, it.Fixes); len(f) != len(v.Fixes) {
 		v.Fixes, changed, c.Evidence = f, true, true
 	}
 	if it.KEV != nil && v.KEV == nil {
 		v.KEV, changed = it.KEV, true // a later KEV listing counts, even though it shares its URL with the NVD entry
 	}
-	if !it.Published.IsZero() && it.Published.Before(v.Published) {
+	if !it.Published.IsZero() && (v.Published.IsZero() || it.Published.Before(v.Published)) {
 		v.Published, changed = it.Published, true
 	}
 	c.Any = changed
 	return c
+}
+
+func mergeProducts(have, more []model.Product) []model.Product {
+	out := slices.Clone(have)
+	for _, p := range more {
+		if !slices.Contains(out, p) {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func refOf(it model.Item) model.Ref {

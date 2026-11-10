@@ -19,6 +19,7 @@ sources:
     auth_env: GITHUB_TOKEN   # without a token GitHub allows 60 requests an hour per IP; a token raises that to 5000 and needs no scopes for public advisories
   - id: hackernews
     type: hn
+    match_title_only: true   # a story's body may mention a technology incidentally
     url: https://hn.algolia.com/api/v1/search_by_date?query=CVE&tags=story&hitsPerPage=100&numericFilters=created_at_i%3E{since_unix}
   - id: thehackernews
     type: rss

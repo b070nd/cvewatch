@@ -178,6 +178,12 @@ var OpTable = []OpSpec{
 		Flag:    "-vendor NAME", Args: []string{"-vendor", "acme"},
 	},
 	{
+		Kind: "set_profile", Summary: "set how much evidence a match needs for the project: strict, balanced or discovery; empty takes the global profile",
+		Params:  []Param{{"profile", "string", false, "strict, balanced or discovery; empty clears, so the profile of config.yaml applies"}},
+		Example: Op{Kind: "set_profile", Profile: "strict"},
+		Flag:    "-profile P", Args: []string{"-profile", "strict"},
+	},
+	{
 		Kind: "set_update", Summary: "set how often the project is refreshed, or take it out of scheduled runs",
 		Params: []Param{
 			{"every", "string", false, "a period such as 30m, 1h or 2d, at least 5m; default removes it, so the interval of config.yaml applies; empty leaves it"},

@@ -28,7 +28,7 @@ func sample() []query.Issue {
 		Priority: []string{"known exploited", "open in prod"}, ProdOpen: true, Report: "reports/CVE-2026-0001.md",
 		Targets: []query.Target{
 			{Vendor: "acme", Project: "shop", Env: model.EnvStaging, Status: model.StatusOpen, Applies: model.AppAffected, Matched: []string{"php 8.2.1", "ext-x"},
-				Reasons: []string{"version in range", "tech match"}, Owner: "ann", Due: now.Add(-24 * time.Hour), Overdue: true, Ticket: "OPS-1",
+				Reasons: []string{"version in range", "tech match"}, Basis: []string{"cpe", "package"}, Retired: "unmatched", Owner: "ann", Due: now.Add(-24 * time.Hour), Overdue: true, Ticket: "OPS-1",
 				Updated: now.Add(-time.Hour), Note: "waiting for window", Evidence: 2},
 			{Vendor: "acme", Project: "shop", Env: model.EnvProd, Status: model.StatusOpen, Applies: model.AppAffected, Matched: []string{"php 8.2.1"},
 				Owner: "bob", Due: now.Add(24 * time.Hour), Updated: now},
@@ -113,7 +113,7 @@ func TestJSONRoundTrip(t *testing.T) {
 
 func TestCSVHeaderAndRows(t *testing.T) {
 	rows := csvRows(t, New(sample(), now))
-	if got := strings.Join(rows[0], ","); got != "id,aliases,severity,cvss,kev,kev_due,epss,published,age_hours,priority,project,env,status,applies,owner,due,overdue,ticket,matched,reasons,fix_available,official_fix,articles,note,updated,title,url,vendor" {
+	if got := strings.Join(rows[0], ","); got != "id,aliases,severity,cvss,kev,kev_due,epss,published,age_hours,priority,project,env,status,applies,owner,due,overdue,ticket,matched,reasons,fix_available,official_fix,articles,note,updated,title,url,vendor,basis" {
 		t.Fatalf("header %s", got)
 	}
 	if len(rows) != 4 {
@@ -125,7 +125,7 @@ func TestCSVHeaderAndRows(t *testing.T) {
 		"project": "shop", "env": "staging", "status": "open", "applies": "affected", "owner": "ann", "due": "2026-10-27", "overdue": "true",
 		"ticket": "OPS-1", "matched": "php 8.2.1; ext-x", "reasons": "version in range; tech match", "fix_available": "true",
 		"official_fix": "true", "articles": "2", "note": "waiting for window", "updated": "2026-10-28T11:00:00Z",
-		"title": "PHP remote code execution", "url": "https://example.com/a", "vendor": "acme",
+		"title": "PHP remote code execution", "url": "https://example.com/a", "vendor": "acme", "basis": "cpe; package",
 	}
 	for k, v := range want {
 		if got := rows[1][col(t, k)]; got != v {

@@ -239,6 +239,13 @@ func (d *detail) build(w int) *detailLayout {
 		if len(t.Matched) > 0 {
 			s += " [matched " + oneLine(strings.Join(t.Matched, ", ")) + "]"
 		}
+		if len(t.Basis) > 0 {
+			s += " [basis " + strings.Join(t.Basis, ", ")
+			if t.Weak() {
+				s += ": unconfirmed"
+			}
+			s += "]"
+		}
 		add(indentWrap("  "+oneLine(t.Project)+"/"+string(t.Env)+": ", s, w)...)
 	}
 	switch {

@@ -82,7 +82,7 @@ func (d Document) WriteJSON(w io.Writer) error {
 var csvHeader = []string{
 	"id", "aliases", "severity", "cvss", "kev", "kev_due", "epss", "published", "age_hours", "priority",
 	"project", "env", "status", "applies", "owner", "due", "overdue", "ticket", "matched", "reasons",
-	"fix_available", "official_fix", "articles", "note", "updated", "title", "url", "vendor",
+	"fix_available", "official_fix", "articles", "note", "updated", "title", "url", "vendor", "basis",
 }
 
 // WriteCSV writes one row per issue and target. Text cells come from public
@@ -122,7 +122,7 @@ func (d Document) WriteCSV(w io.Writer) error {
 				cell(strings.Join(t.Matched, "; ")), cell(strings.Join(t.Reasons, "; ")),
 				strconv.FormatBool(is.Fix.Available), strconv.FormatBool(is.Fix.Official),
 				strconv.Itoa(len(is.Untrusted.Articles)), cell(t.Note), stamp(t.Updated),
-				cell(is.Untrusted.Title), cell(url), cell(t.Vendor),
+				cell(is.Untrusted.Title), cell(url), cell(t.Vendor), cell(strings.Join(t.Basis, "; ")),
 			}
 			if err := cw.Write(row); err != nil {
 				return err

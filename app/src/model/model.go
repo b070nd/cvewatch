@@ -255,7 +255,8 @@ type Project struct {
 	Envs      []Env         `yaml:"envs"`   // none means LegacyEnvs
 	Techs     []ProjectTech `yaml:"techs"`
 	Lockfiles []Lockfile    `yaml:"lockfiles"`
-	Since     time.Time     `yaml:"since"` // vulnerabilities published before this day are not checked
+	Since     time.Time     `yaml:"since"`   // vulnerabilities published before this day are not checked
+	Profile   Profile       `yaml:"profile"` // matching profile; empty takes the global one
 	Update    ProjectUpdate `yaml:"update"`
 	// Environments holds the differences per environment from either spelling,
 	// when@<env> or the old environments: key (EnvConfig.Old says which).
@@ -344,7 +345,7 @@ func (k *keyAt) UnmarshalYAML(n *yaml.Node) error {
 	return nil
 }
 
-var projectKeys = []string{"name", "vendor", "envs", "techs", "lockfiles", "since", "update", "environments"}
+var projectKeys = []string{"name", "vendor", "envs", "techs", "lockfiles", "since", "profile", "update", "environments"}
 
 // UnmarshalYAML gathers the when@<env> blocks into Environments next to the
 // old environments: map; any other unknown key stays an error.
@@ -549,13 +550,73 @@ type Fix struct {
 	Official bool    `json:"official,omitempty"`
 }
 
+// Basis says what tied something a project runs to an advisory. It is the
+// stable id of the matching rule, kept on every match so a finding knows why
+// it exists and can be retired when that reason no longer holds.
+type Basis string
+
+const (
+	BasisCPE     Basis = "cpe"     // the advisory's CPE product is one of the technology's CPE names
+	BasisPackage Basis = "package" // the advisory's package list names the lockfile package
+	BasisProduct Basis = "product" // the advisory's vendor/product name is the technology's or the package's name
+	BasisTitle   Basis = "title"   // the technology's name stands in the title
+	BasisText    Basis = "text"    // the name stands in the title or the summary
+)
+
+// Authoritative reports whether the basis is the source's own product
+// identity. Title and text matches are weak: a mention is not an identity.
+func (b Basis) Authoritative() bool { return b == BasisCPE || b == BasisPackage || b == BasisProduct }
+
+// Profile is how much evidence a project asks for before an advisory becomes
+// a finding. The empty value is ProfileBalanced.
+type Profile string
+
+const (
+	ProfileStrict    Profile = "strict"    // only authoritative product identity creates findings
+	ProfileBalanced  Profile = "balanced"  // text counts when the advisory carries no product identity
+	ProfileDiscovery Profile = "discovery" // balanced, plus text matches still waiting for product data; weak matches are recorded, not alerted
+)
+
+// Profiles lists the valid profile names.
+func Profiles() []Profile { return []Profile{ProfileStrict, ProfileBalanced, ProfileDiscovery} }
+
+// Or returns the profile, or the fallback when it is empty.
+func (p Profile) Or(fallback Profile) Profile {
+	if p == "" {
+		return fallback
+	}
+	return p
+}
+
+// Valid reports whether the profile is empty or a known name.
+func (p Profile) Valid() bool { return p == "" || slices.Contains(Profiles(), p) }
+
 // Installed is what a project runs that an item matched: a configured
-// technology (Via "tech") or a lockfile package (Via "package").
+// technology (Via "tech") or a lockfile package (Via "package"). Basis is why
+// it matched; it is empty on findings older than match provenance.
 type Installed struct {
-	Name      string `json:"name"`
-	Version   string `json:"version,omitempty"`
-	Ecosystem string `json:"ecosystem,omitempty"`
-	Via       string `json:"via"`
+	Name      string  `json:"name"`
+	Version   string  `json:"version,omitempty"`
+	Ecosystem string  `json:"ecosystem,omitempty"`
+	Via       string  `json:"via"`
+	Basis     []Basis `json:"basis,omitempty"`
+}
+
+// Same reports whether two entries are the same installed thing at the same
+// version, whatever tied them to the advisory.
+func (i Installed) Same(o Installed) bool {
+	return i.Name == o.Name && i.Version == o.Version && i.Ecosystem == o.Ecosystem && i.Via == o.Via
+}
+
+// Weak reports whether every known basis is a title or text match. An entry
+// without a recorded basis is not weak: nothing says it is.
+func (i Installed) Weak() bool {
+	for _, b := range i.Basis {
+		if b.Authoritative() {
+			return false
+		}
+	}
+	return len(i.Basis) > 0
 }
 
 func (i Installed) Label() string {
@@ -582,6 +643,13 @@ type EPSS struct {
 
 // ---- runtime data ----
 
+// Product is a source's explicit vendor/product identity when it does not
+// provide a package coordinate or CPE. Names are not inferred from prose.
+type Product struct {
+	Vendor string `json:"vendor,omitempty"`
+	Name   string `json:"name"`
+}
+
 // Item is a normalized feed entry before deduplication.
 type Item struct {
 	SourceID   string
@@ -591,6 +659,7 @@ type Item struct {
 	Summary    string     // plain text, no markup
 	IDs        []string   // CVE / GHSA ids found; first one is the primary
 	Affected   []Affected // structured affected products and packages, if the feed has them
+	Products   []Product  // explicit product names, without invented CPEs or ranges
 	Fixes      []Fix      // remedies the feed names
 	Published  time.Time
 	Severity   Severity
@@ -733,6 +802,7 @@ type Vulnerability struct {
 	FirstSeen   time.Time  `json:"first_seen"`
 	Refs        []Ref      `json:"refs"`
 	Affected    []Affected `json:"affected,omitempty"`
+	Products    []Product  `json:"products,omitempty"`
 	Fixes       []Fix      `json:"fixes,omitempty"`
 	KEV         *KEV       `json:"kev,omitempty"`
 	EPSS        *EPSS      `json:"epss,omitempty"`
@@ -754,8 +824,12 @@ type Finding struct {
 	Installed []Installed   `json:"installed,omitempty"`
 	Applies   Applicability `json:"applies,omitempty"` // whether the installed version is in the affected range
 	Reasons   []string      `json:"reasons,omitempty"` // why this finding exists, in plain words
-	Updated   time.Time     `json:"updated"`
-	AlertedAt time.Time     `json:"alerted_at,omitempty"` // legacy: first delivery; see Alerted
+	// Retired says why cvewatch itself gave up on the match while the finding
+	// stayed open: it then has nothing installed and counts as not affected.
+	// A match that returns clears it.
+	Retired   Retirement `json:"retired,omitempty"`
+	Updated   time.Time  `json:"updated"`
+	AlertedAt time.Time  `json:"alerted_at,omitempty"` // legacy: first delivery; see Alerted
 
 	// Workflow. Owner, Due and Ticket say who handles it and by when; Note is
 	// the current reason or remark; Evidence and History keep the trail.
@@ -767,6 +841,38 @@ type Finding struct {
 	// Alerted records the delivery per channel ("slack", "webhook", "email"),
 	// so one failing channel does not repeat alerts on the others.
 	Alerted map[string]time.Time `json:"alerted,omitempty"`
+}
+
+// Retirement is why a match no longer holds.
+type Retirement string
+
+const (
+	RetiredUninstalled Retirement = "uninstalled" // what matched is no longer in the inventory
+	RetiredUnmatched   Retirement = "unmatched"   // it is still installed, but the advisory no longer matches it
+)
+
+// RetireMode says who retires a match the advisory's product data disproves.
+// The empty value is RetireAuto. What is no longer installed is always
+// retired by the update itself: that is the inventory, not a judgement.
+type RetireMode string
+
+const (
+	RetireAuto   RetireMode = "auto"   // every update retires what is disproved
+	RetireManual RetireMode = "manual" // updates only say how many; `revalidate -apply` retires them
+)
+
+// Valid reports whether the mode is empty or a known name.
+func (m RetireMode) Valid() bool { return m == "" || m == RetireAuto || m == RetireManual }
+
+// WeakOnly reports whether every installed entry matched on title or text
+// alone. Findings without recorded provenance are not weak.
+func (f Finding) WeakOnly() bool {
+	for _, in := range f.Installed {
+		if !in.Weak() {
+			return false
+		}
+	}
+	return len(f.Installed) > 0
 }
 
 // Evidence is a note and link attached to a finding: an advisory, a merge

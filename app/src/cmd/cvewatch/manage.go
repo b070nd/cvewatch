@@ -305,7 +305,7 @@ type projectEdit struct {
 func parseProjectEdit(args []string) (projectEdit, error) {
 	fs := flag.NewFlagSet("project", flag.ContinueOnError)
 	var set, remove, lock, unlock, lockDev, lockNoDev, envSet, envUnset, envAdd, envRemove, envRename, envExclude, envInclude, techEnvs, image listFlag
-	var since, vendor, updateEvery, updateAuto optFlag
+	var since, vendor, profile, updateEvery, updateAuto optFlag
 	fs.Var(&set, "set", "declare tech=version (version may be empty), repeatable")
 	fs.Var(&remove, "remove", "stop declaring a tech, repeatable")
 	fs.Var(&lock, "lock", "add a lockfile as type:path[:env][:dev], repeatable")
@@ -323,6 +323,7 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 	fs.Var(&image, "image", "set the image of an environment as env=tag (empty tag clears), repeatable")
 	fs.Var(&since, "since", "date advisories count from, YYYY-MM-DD (empty clears)")
 	fs.Var(&vendor, "vendor", "the vendor (customer or organisation) that owns the project, a lowercase name (empty clears)")
+	fs.Var(&profile, "profile", "how much evidence a match needs: strict, balanced or discovery (default or empty clears: the profile of config.yaml applies)")
 	fs.Var(&updateEvery, "update-every", "how often the project is refreshed, such as 30m, 1h or 2d, at least 5m (default removes it: the interval of config.yaml applies)")
 	fs.Var(&updateAuto, "update-auto", "false takes the project out of scheduled runs (update and the u key still include it), true puts it back")
 	envs := fs.String("envs", "", "comma-separated environments, any names (\"all\" means the old default dev,int,staging,prod)")
@@ -381,6 +382,13 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 	}
 	if vendor.set {
 		changes = append(changes, projectfile.Op{Kind: "set_vendor", Vendor: vendor.val})
+	}
+	if profile.set {
+		v := profile.val
+		if v == "default" {
+			v = ""
+		}
+		changes = append(changes, projectfile.Op{Kind: "set_profile", Profile: v})
 	}
 	if updateEvery.set || updateAuto.set {
 		op := projectfile.Op{Kind: "set_update", Every: updateEvery.val}
@@ -457,7 +465,7 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 		changes = append(changes, projectfile.Op{Kind: "set_image", Env: model.Env(env), Image: img})
 	}
 	if len(changes) == 0 {
-		return projectEdit{}, errors.New("nothing to change: use -set, -remove, -env-set, -env-unset, -image, -lock, -unlock, -lock-dev, -lock-nodev, -since, -vendor, -update-every, -update-auto, -envs, -env-add, -env-remove, -env-rename, -env-exclude, -env-include, -tech-envs or -migrate-envs (cvewatch project NAME -h lists them)")
+		return projectEdit{}, errors.New("nothing to change: use -set, -remove, -env-set, -env-unset, -image, -lock, -unlock, -lock-dev, -lock-nodev, -since, -vendor, -profile, -update-every, -update-auto, -envs, -env-add, -env-remove, -env-rename, -env-exclude, -env-include, -tech-envs or -migrate-envs (cvewatch project NAME -h lists them)")
 	}
 	return projectEdit{name: name, ops: changes, save: *save}, nil
 }

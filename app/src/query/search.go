@@ -32,7 +32,7 @@ type token struct {
 	isOr    bool
 }
 
-var fieldNames = []string{"id", "severity", "vendor", "project", "env", "owner", "ticket", "tech", "status", "applies", "kev", "fix", "overdue", "after", "before", "published"}
+var fieldNames = []string{"id", "severity", "vendor", "project", "env", "owner", "ticket", "tech", "status", "applies", "kev", "fix", "overdue", "basis", "after", "before", "published"}
 
 var fieldAliases = map[string]string{"cve": "id", "sev": "severity"}
 
@@ -231,6 +231,17 @@ func valueTest(field, v string, now time.Time) (func(Issue, Target) bool, error)
 		return targetTest(func(t Target) bool { return strings.EqualFold(t.Owner, v) }), nil
 	case "ticket":
 		return targetTest(func(t Target) bool { return strings.EqualFold(t.Ticket, v) }), nil
+	case "basis":
+		v = strings.ToLower(v)
+		if v != "weak" && !slices.Contains(basisOrder(), v) {
+			return nil, fmt.Errorf("unknown basis %q; use one of: cpe, package, product, title, text, weak", v)
+		}
+		return targetTest(func(t Target) bool {
+			if v == "weak" {
+				return t.Weak()
+			}
+			return slices.Contains(t.Basis, v)
+		}), nil
 	case "tech":
 		return ofIssue(func(is Issue) bool {
 			return slices.ContainsFunc(is.Techs, func(tech string) bool { return strings.EqualFold(tech, v) })

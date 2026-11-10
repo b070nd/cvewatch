@@ -12,6 +12,15 @@ import (
 
 var now = time.Date(2026, 10, 3, 5, 0, 0, 0, time.UTC)
 
+func TestUnknownPublicationIsLabelledUnknown(t *testing.T) {
+	out := Render(&model.Vulnerability{ID: "CVE-2026-1001", Title: "KEV-only issue", FirstSeen: now,
+		KEV: &model.KEV{DateAdded: now},
+	}, nil, now)
+	if !strings.Contains(out, "**Published:** unknown") || strings.Contains(out, "0001-01-01") || !strings.Contains(out, "list since 2026-10-03") {
+		t.Fatalf("unknown publication or distinct KEV date rendered incorrectly:\n%s", out)
+	}
+}
+
 func TestPathIsStable(t *testing.T) {
 	v := &model.Vulnerability{ID: "CVE-2026-1111", Techs: []string{"php"}, FirstSeen: time.Date(2026, 10, 27, 23, 0, 0, 0, time.UTC)}
 	if got := Path("alerts", v); got != filepath.Join("alerts", "2026", "2026-10-27-php-cve-2026-1111.md") {
@@ -62,10 +71,11 @@ func TestRenderShowsArticlesChronologicallyFixAndAge(t *testing.T) {
 		Fixes: []model.Fix{{Kind: model.FixVersion, Detail: "8.2.30", Source: "ghsa", Official: true, URL: "https://fix.test"}},
 	}
 	out := Render(v, []model.Finding{{VulnID: "CVE-1", Project: "shop", Env: model.EnvProd, Status: model.StatusOpen,
-		Applies: model.AppAffected, Reasons: []string{"php@8.2.10: in range"}}}, now)
+		Applies: model.AppAffected, Reasons: []string{"php@8.2.10: in range"},
+		Installed: []model.Installed{{Name: "php", Basis: []model.Basis{model.BasisTitle}}}}}, now)
 	for _, want := range []string{"(3d 5h ago)", "**Articles found:** 2", "**Also reported as:** CVE-2",
 		"**version** 8.2.30 (ghsa, official) https://fix.test", "https://nvd.test/1 (nvd)",
-		"inside the affected range", "php@8.2.10: in range"} {
+		"inside the affected range", "php@8.2.10: in range", "Matched on: the title only (title).", "confirm it."} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}

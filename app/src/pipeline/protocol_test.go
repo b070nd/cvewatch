@@ -107,6 +107,7 @@ func TestAFindingDamagedByAnEarlierMissingLockfileRecovers(t *testing.T) {
 	g := lockRig(t)
 	g.Ledger.Mutate(g.Findings("CVE-2026-3001")[0].Key(), func(f *model.Finding) { // what the old behaviour left behind
 		f.Installed, f.Matched, f.Applies, f.Reasons = nil, []string{}, model.AppNotAffected, []string{"no longer installed: monolog/monolog@3.0.0"}
+		f.Retired = model.RetiredUninstalled // what loading such data marks it as
 	})
 	g.Run()
 	f := g.Findings("CVE-2026-3001")[0]
@@ -116,6 +117,7 @@ func TestAFindingDamagedByAnEarlierMissingLockfileRecovers(t *testing.T) {
 
 	g.Ledger.Mutate(f.Key(), func(f *model.Finding) {
 		f.Installed, f.Matched, f.Applies, f.Reasons = nil, []string{}, model.AppNotAffected, []string{"no longer installed: monolog/monolog@3.0.0"}
+		f.Retired = model.RetiredUninstalled // what loading such data marks it as
 	})
 	g.Write("composer.lock", otherLock)
 	g.Reload()
