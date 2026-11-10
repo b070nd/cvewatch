@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-11-11
+
 ### Added
 - Match basis: every finding records why it matched (`cpe`, `package`, `product`, `title`, `text`). It is shown in reports, `why`, the TUI, JSON and CSV exports (new last column `basis`), and `search basis:weak` finds matches that rest on a mention.
 - Matching profiles `strict`, `balanced` (default) and `discovery`, global (`profile:` in `config.yaml`) or per project (`profile:` in the project file, `cvewatch project NAME -profile P`, MCP `set_profile`).
