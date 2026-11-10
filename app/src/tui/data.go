@@ -3,21 +3,18 @@ package tui
 import (
 	"errors"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/b070nd/cvewatch/app/src/audit"
 	"github.com/b070nd/cvewatch/app/src/catalog"
 	"github.com/b070nd/cvewatch/app/src/config"
 	"github.com/b070nd/cvewatch/app/src/discovery"
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/ops"
 	"github.com/b070nd/cvewatch/app/src/priority"
-	"github.com/b070nd/cvewatch/app/src/projectfile"
 	"github.com/b070nd/cvewatch/app/src/projectflow"
 	"github.com/b070nd/cvewatch/app/src/query"
 	"github.com/b070nd/cvewatch/app/src/setup"
@@ -41,21 +38,11 @@ type snapshot struct {
 	StaleKnown bool          // Stale was read; false when it could not be
 }
 
+// projectRow is a project of the workspace with what only this screen works out.
 type projectRow struct {
-	ops.ProjectView
-	HasFile  bool                // has its own file under config/projects, so it can be edited here
-	File     string              // that file
-	Broken   string              // why the file does not load; the row then shows only its name
-	Problems []projectfile.Issue // what is wrong with the file, errors first
-	Hints    []projectfile.Hint  // what may not be covered or cause trouble; not errors
-
-	Written []ops.LockEntry // the lockfiles as the file spells them (the loaded ones have resolved paths), for the editor
-
-	Disabled     bool                          // the file is switched off (<name>.yaml.disabled): listed, not loaded
-	Environments map[model.Env]model.EnvConfig // deployed versions and image per environment
-	EnvsUnset    bool                          // the file has no envs: Envs is the old default
-	Unjudged     bool                          // its changes are not judged against the stored findings yet
-	Updates      string                        // when it is refreshed: every 1h · next 14:05, paused or manual
+	ops.WorkspaceProject
+	Unjudged bool   // its changes are not judged against the stored findings yet
+	Updates  string // when it is refreshed: every 1h · next 14:05, paused or manual
 }
 
 func (p projectRow) counts() (errs, warns int) {
@@ -75,114 +62,24 @@ func loadSnapshot(s *ops.Session) (*snapshot, error) { return loadSnapshotMemo(s
 
 // loadSnapshotMemo is loadSnapshot that asks the memo for the staleness, which
 // reads lockfiles, so it is only worked out again when the files changed.
+// What is in the workspace, and who may see it, is decided by ops.
 func loadSnapshotMemo(s *ops.Session, memo *staleMemo) (*snapshot, error) {
-	if _, err := s.List(query.Filter{Project: noProject}); err != nil {
+	w, err := s.Workspace()
+	if err != nil {
 		return nil, err // access denied shows here
 	}
-	sn := &snapshot{At: s.Now(), Root: s.Cfg.Root, ByProject: map[string][]query.Issue{}, Horizon: s.Cfg.Horizon, Stamp: inputStamp(s.Cfg)}
-	var err error
+	sn := &snapshot{At: w.At, Root: w.Root, ByProject: w.Issues, Status: w.Status, Violations: w.Violations, Horizon: w.Horizon,
+		Stamp: inputStamp(s.Cfg)}
+	for _, warning := range w.Warnings {
+		sn.Warnings = append(sn.Warnings, oneLine(warning))
+	}
+	for _, p := range w.Projects {
+		sn.Projects = append(sn.Projects, projectRow{WorkspaceProject: p})
+	}
 	sn.Stale, sn.StaleKnown = memo.staleness(s, sn.Stamp)
-	warn := func(what string, err error) { sn.Warnings = append(sn.Warnings, what+": "+oneLine(err.Error())) }
-	if sn.Status, err = s.Status(); err != nil {
-		warn("status", err)
-	}
-	if sn.Violations, err = s.Violations(); err != nil {
-		warn("policy", err)
-	}
-	files, err := s.ProjectNames()
-	if err != nil {
-		warn("project files", err)
-	}
-	problems, err := s.ProjectProblems("")
-	if err != nil {
-		warn("project problems", err)
-	}
-	byProject := map[string][]projectfile.Issue{}
-	for _, i := range problems {
-		byProject[i.Project] = append(byProject[i.Project], i)
-	}
-	hints, err := s.ProjectHints("")
-	if err != nil {
-		warn("project hints", err)
-	}
-	hintsOf := map[string][]projectfile.Hint{}
-	for _, h := range hints {
-		hintsOf[h.Project] = append(hintsOf[h.Project], h.Hint)
-	}
-	fileOf := func(name string) string {
-		path, _ := s.ProjectFile(name)
-		return path
-	}
-	allowed, _, open := s.Cfg.Allowed(audit.Actor())
-	for _, p := range s.Cfg.Projects {
-		if !open && !slices.Contains(allowed, p.Name) {
-			continue
-		}
-		v := ops.ViewOf(p)
-		v.Envs = v.Envs[:0]
-		for _, e := range p.EffectiveEnvs() {
-			v.Envs = append(v.Envs, string(e))
-		}
-		row := projectRow{ProjectView: v, HasFile: slices.Contains(files, p.Name), File: fileOf(p.Name), Problems: byProject[p.Name], Hints: hintsOf[p.Name], Environments: p.Environments, EnvsUnset: len(p.Envs) == 0}
-		if row.HasFile {
-			row.Written = writtenLockfiles(row.File)
-		}
-		sn.Projects = append(sn.Projects, row)
-	}
-	for _, br := range s.Cfg.Broken {
-		if !open && !slices.Contains(allowed, br.Name) {
-			continue
-		}
-		// the parse error is already in Err; the file-level issue would say it twice
-		rest := slices.DeleteFunc(slices.Clone(byProject[br.Name]), func(i projectfile.Issue) bool { return i.Field == "file" })
-		sn.Projects = append(sn.Projects, projectRow{ProjectView: ops.ProjectView{Name: br.Name}, HasFile: true, File: br.File, Broken: strings.TrimPrefix(br.Err, br.File+": "), Problems: rest})
-	}
-	off, err := s.DisabledProjects()
-	if err != nil {
-		warn("disabled projects", err)
-	}
-	for _, name := range off {
-		if slices.ContainsFunc(sn.Projects, func(p projectRow) bool { return p.Name == name }) {
-			continue // a live file of the same name wins; the disabled one is a leftover
-		}
-		file, _ := s.DisabledFile(name)
-		sn.Projects = append(sn.Projects, projectRow{ProjectView: ops.ProjectView{Name: name}, HasFile: true, File: file, Disabled: true})
-	}
-	sn.sortByVendor()
-	for _, p := range sn.Projects {
-		if p.Disabled {
-			continue
-		}
-		issues, err := s.List(query.Filter{Project: p.Name})
-		if err != nil {
-			return nil, err
-		}
-		if len(issues) > 0 {
-			sn.ByProject[p.Name] = issues
-		}
-	}
 	sn.markUnjudged()
 	sn.markUpdates()
 	return sn, nil
-}
-
-// noProject is a name no project has, for a read that only checks access.
-const noProject = "\x00"
-
-// sortByVendor lists the projects of one vendor together, the vendors in
-// alphabetical order and the projects without a vendor last. Without any
-// vendor the order stays as it was.
-func (sn *snapshot) sortByVendor() {
-	if !slices.ContainsFunc(sn.Projects, func(p projectRow) bool { return p.Vendor != "" }) {
-		return
-	}
-	rank := func(p projectRow) string {
-		if p.Vendor == "" {
-			return "\xff"
-		}
-		return p.Vendor
-	}
-	slices.SortStableFunc(sn.Projects, func(a, b projectRow) int { return strings.Compare(rank(a), rank(b)) })
 }
 
 // markUpdates says in words when each project is refreshed.
@@ -194,55 +91,6 @@ func (sn *snapshot) markUpdates() {
 			p.Updates = strings.TrimSuffix(every+" · "+next, " · ")
 		}
 	}
-}
-
-// writtenLockfiles reads the lockfiles of a project file as they are written
-// there, which is what an edit has to name; nil when the file does not parse.
-func writtenLockfiles(path string) []ops.LockEntry {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-	f, err := projectfile.Parse(data)
-	if err != nil {
-		return nil
-	}
-	return ops.ViewOf(f.Project()).Lockfiles
-}
-
-// counts is the overview's arithmetic, kept apart so it can be tested.
-type counts struct {
-	Issues   int
-	Findings int
-	BySev    map[int]int // by severity rank, open issues
-	ByEnv    map[model.Env]int
-	KEV      int
-	ProdOpen int
-	Overdue  int
-}
-
-func countsOf(issues []query.Issue) counts {
-	c := counts{BySev: map[int]int{}, ByEnv: map[model.Env]int{}, Issues: len(issues)}
-	for _, is := range issues {
-		c.BySev[is.Severity.Rank()]++
-		if is.KEV != nil {
-			c.KEV++
-		}
-		if is.ProdOpen {
-			c.ProdOpen++
-		}
-		for _, t := range is.Targets {
-			if t.Status != model.StatusOpen {
-				continue
-			}
-			c.Findings++
-			c.ByEnv[t.Env]++
-			if t.Overdue {
-				c.Overdue++
-			}
-		}
-	}
-	return c
 }
 
 // ---- messages ----
@@ -428,43 +276,31 @@ func resolveCmd(b Backend, c ops.Change) tea.Cmd {
 	}
 }
 
-// bulkCmd applies the changes one after the other in one write session, so
-// they share the actor and the audit trail. It stops at the first refusal;
-// what landed before it stays.
+// bulkCmd applies the changes as one operation of ops: it stops at the first
+// refusal, and what landed before it stays.
 func bulkCmd(b Backend, cs []ops.Change) tea.Cmd {
 	return func() tea.Msg {
+		var res ops.BulkResult
+		err := b.Write(func(s *ops.Session) (err error) {
+			res, err = s.ResolveAll(cs)
+			return err
+		})
+		// an issue of a project is done when every change asked for it landed
 		left := map[string]int{}
 		for _, c := range cs {
 			left[c.Project+"\x00"+c.ID]++
 		}
-		var findings, applied int
-		var late error
 		var done []string
-		err := b.Write(func(s *ops.Session) error {
-			for _, c := range cs {
-				n, e := s.Resolve(c)
-				if n == 0 && e != nil {
-					return e
-				}
-				if e != nil {
-					late = e // saved, but the report file failed
-				}
-				findings += n
-				applied++
-				key := c.Project + "\x00" + c.ID
-				if left[key]--; left[key] == 0 {
-					done = append(done, key)
-				}
+		for _, c := range res.Done {
+			key := c.Project + "\x00" + c.ID
+			if left[key]--; left[key] == 0 {
+				done = append(done, key)
 			}
-			return nil
-		})
-		if err != nil && applied > 0 {
-			err = fmt.Errorf("%d of %d changes written, then: %w", applied, len(cs), err)
 		}
 		if err != nil {
 			return bulkMsg{err: err, done: done}
 		}
-		return bulkMsg{info: fmt.Sprintf("%s: %s in %s", changeWords[cs[0].Status], plural(findings, "finding", "findings"), plural(len(done), "issue", "issues")), warn: late, done: done}
+		return bulkMsg{info: fmt.Sprintf("%s: %s in %s", changeWords[cs[0].Status], plural(res.Findings, "finding", "findings"), plural(len(done), "issue", "issues")), warn: res.ReportErr, done: done}
 	}
 }
 

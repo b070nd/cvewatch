@@ -53,6 +53,20 @@ func (r TimeRange) Contains(published, now time.Time) bool {
 	return (from.IsZero() || !published.Before(from)) && (to.IsZero() || !published.After(to))
 }
 
+// Keep returns the issues published inside the range.
+func (r TimeRange) Keep(issues []Issue, now time.Time) []Issue {
+	if r.Any() {
+		return issues
+	}
+	var out []Issue
+	for _, is := range issues {
+		if r.Contains(is.Published, now) {
+			out = append(out, is)
+		}
+	}
+	return out
+}
+
 // Next cycles any time, hour, day, week, month, year, any time; a range that is no preset goes to any time.
 func (r TimeRange) Next() TimeRange {
 	for i, p := range Presets {

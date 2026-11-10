@@ -100,7 +100,7 @@ func TestFindingsFilterFallsBackToWordsOnBadQuery(t *testing.T) {
 		{ID: "CVE-1", Severity: model.SevHigh, Untrusted: query.Untrusted{Title: "Bug: heap overflow"}},
 		{ID: "CVE-2", Severity: model.SevHigh, Untrusted: query.Untrusted{Title: "Other"}},
 	}
-	if got := filterIssues(all, model.SevUnknown, "bug: heap"); len(got) != 1 || got[0].ID != "CVE-1" {
+	if got := query.Narrow(all, model.SevUnknown, "bug: heap"); len(got) != 1 || got[0].ID != "CVE-1" {
 		t.Fatalf("text that does not parse as a query must still filter by words: %+v", got)
 	}
 }

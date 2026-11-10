@@ -14,6 +14,7 @@ import (
 	"github.com/b070nd/cvewatch/app/src/ledger"
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/ops"
+	"github.com/b070nd/cvewatch/app/src/query"
 	"github.com/b070nd/cvewatch/app/src/store"
 )
 
@@ -372,11 +373,11 @@ func TestCountsOf(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		c := countsOf(sn.ByProject["shop"])
+		c := query.Count(sn.ByProject["shop"])
 		if c.Issues != 3 || c.Findings != 3 || c.BySev[4] != 1 || c.BySev[3] != 1 || c.BySev[1] != 1 || c.ByEnv[model.EnvProd] != 1 || c.ProdOpen != 1 || c.KEV != 0 {
 			t.Fatalf("%+v", c)
 		}
-		if c := countsOf(sn.ByProject["mw"]); c.Issues != 1 || c.Findings != 1 || c.ByEnv[model.EnvProd] != 1 {
+		if c := query.Count(sn.ByProject["mw"]); c.Issues != 1 || c.Findings != 1 || c.ByEnv[model.EnvProd] != 1 {
 			t.Fatalf("mw %+v", c)
 		}
 		for name, rows := range sn.ByProject {

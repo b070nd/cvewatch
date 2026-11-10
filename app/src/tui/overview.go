@@ -9,6 +9,7 @@ import (
 
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/priority"
+	"github.com/b070nd/cvewatch/app/src/query"
 )
 
 // overviewState is the Overview: a short summary above the list of all the
@@ -52,7 +53,7 @@ func flow(items []string, w int, indent string) []string {
 // less important blocks go, so that the list keeps room.
 func (m *app) overviewHead(w, h int) []string {
 	sn := m.data
-	c := countsOf(m.dataIssues())
+	c := query.Count(m.dataIssues())
 	rep := sn.Status
 	const listMin = 7 // count line, column heads and a few rows
 	var blocks []summaryBlock

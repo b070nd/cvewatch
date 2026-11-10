@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -14,7 +13,6 @@ import (
 	"github.com/b070nd/cvewatch/app/src/config"
 	"github.com/b070nd/cvewatch/app/src/ops"
 	"github.com/b070nd/cvewatch/app/src/pipeline"
-	"github.com/b070nd/cvewatch/app/src/status"
 )
 
 var fetchSpin = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -307,23 +305,12 @@ func (m *app) fetchDone(msg fetchDoneMsg) tea.Cmd {
 // way. A fixed tui.fetch period replaces the schedule, and tui.auto turns it off.
 func (m *app) autoUpdate() tea.Cmd {
 	sn := m.data
-	if !m.tui.Auto || m.tui.Fetch > 0 || m.fet.denied || m.fet.job != nil || m.ctx.Err() != nil || !sn.updateDue() ||
+	if !m.tui.Auto || m.tui.Fetch > 0 || m.fet.denied || m.fet.job != nil || m.ctx.Err() != nil || sn == nil || !sn.Status.UpdateDue(sn.At) ||
 		time.Since(m.fet.autoAt) < autoRetry {
 		return nil
 	}
 	m.fet.autoAt = time.Now()
 	return m.jobBegin(jobUpdate, true)
-}
-
-// updateDue is whether the schedule calls for an update by the program itself:
-// scheduled updates are on, no daemon is alive to do them, and a project is due.
-func (sn *snapshot) updateDue() bool {
-	if sn == nil || !sn.Status.Scheduled || sn.Status.Daemon.Alive() {
-		return false
-	}
-	return slices.ContainsFunc(sn.Status.Projects, func(p status.ProjectRow) bool {
-		return p.Auto && !p.Next.IsZero() && !p.Next.After(sn.At)
-	})
 }
 
 // fetchClick opens the details when the progress cell in the header is clicked.

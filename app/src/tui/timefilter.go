@@ -17,20 +17,6 @@ func (m *app) timeNow() time.Time {
 	return time.Now()
 }
 
-// inRange keeps the issues published inside the range.
-func inRange(issues []query.Issue, r query.TimeRange, now time.Time) []query.Issue {
-	if r.Any() {
-		return issues
-	}
-	var out []query.Issue
-	for _, is := range issues {
-		if r.Contains(is.Published, now) {
-			out = append(out, is)
-		}
-	}
-	return out
-}
-
 // cycleTime steps the time filter: any time, past hour, 24 hours, week, month, year.
 func (m *app) cycleTime() tea.Cmd {
 	m.published = m.published.Next()
