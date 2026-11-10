@@ -60,6 +60,8 @@ type Target struct {
 	Note    string              `json:"note,omitempty"`
 	Matched []string            `json:"matched"`
 	Reasons []string            `json:"reasons,omitempty"` // why this finding exists, in plain words
+	Basis   []string            `json:"basis,omitempty"`   // what tied it to the advisory: cpe, package, product, title, text; empty on older findings
+	Retired string              `json:"retired,omitempty"` // uninstalled or unmatched when cvewatch gave up on the match
 	Owner   string              `json:"owner,omitempty"`
 	Due     time.Time           `json:"due,omitempty"`
 	Overdue bool                `json:"overdue,omitempty"`
@@ -292,10 +294,14 @@ func issue(v *model.Vulnerability, now time.Time) Issue {
 		kev = &KEVInfo{DateAdded: v.KEV.DateAdded, DueDate: v.KEV.DueDate, Ransomware: v.KEV.Ransomware}
 		kevAction = Clip(v.KEV.Action, 200)
 	}
+	ageHours := 0
+	if !v.Published.IsZero() && !now.Before(v.Published) {
+		ageHours = int(now.Sub(v.Published).Hours())
+	}
 	return Issue{
 		KEV: kev, EPSS: v.EPSS,
 		ID: v.ID, Aliases: v.Aliases, Severity: v.Severity, CVSS: v.CVSS, CVSSVersion: v.CVSSVersion, CVSSVector: v.CVSSVector, CVSSSource: v.CVSSSource, Published: v.Published,
-		Age: Age(v.Published, now), AgeHours: int(now.Sub(v.Published).Hours()),
+		Age: Age(v.Published, now), AgeHours: ageHours,
 		FirstSeen: v.FirstSeen, Techs: v.Techs, ArticleCount: len(arts), Fix: fix,
 		Report: v.ReportPath, Targets: []Target{},
 		Untrusted: Untrusted{
@@ -342,10 +348,35 @@ func target(f model.Finding, now time.Time, vendor string) Target {
 		a = model.AppUnknown
 	}
 	return Target{
-		Vendor: vendor, Project: f.Project, Env: f.Env, Status: f.Status, Applies: a, Note: f.Note, Matched: f.Matched, Reasons: f.Reasons,
+		Vendor: vendor, Project: f.Project, Env: f.Env, Status: f.Status, Applies: a, Note: f.Note, Matched: f.Matched, Reasons: f.Reasons, Basis: basisOf(f), Retired: string(f.Retired),
 		Owner: f.Owner, Due: f.Due, Overdue: !f.Due.IsZero() && now.After(f.Due) && f.Status == model.StatusOpen,
 		Ticket: f.Ticket, Updated: f.Updated, Evidence: len(f.Evidence),
 	}
+}
+
+// basisOrder is the fixed order bases are listed in.
+func basisOrder() []string { return []string{"cpe", "package", "product", "title", "text"} }
+
+// basisOf lists the distinct bases over the installed entries in a fixed
+// order, so equal findings give equal output.
+func basisOf(f model.Finding) []string {
+	var out []string
+	for _, b := range basisOrder() {
+		if slices.ContainsFunc(f.Installed, func(i model.Installed) bool { return slices.Contains(i.Basis, model.Basis(b)) }) {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// Weak reports whether the target rests on title or text mentions alone.
+func (t Target) Weak() bool {
+	for _, b := range t.Basis {
+		if model.Basis(b).Authoritative() {
+			return false
+		}
+	}
+	return len(t.Basis) > 0
 }
 
 // Age renders the time since t in the two most useful units, e.g. "12m",

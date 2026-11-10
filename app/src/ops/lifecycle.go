@@ -127,6 +127,9 @@ func (s *Session) DisabledProjects() ([]string, error) {
 
 // DisabledFile is the switched-off file of a project, if there is one.
 func (s *Session) DisabledFile(name string) (string, bool) {
+	if _, _, open := s.Cfg.Allowed(baseActor(s.Actor)); !open { // as DisabledProjects: a disabled project is in nobody's rules
+		return "", false
+	}
 	files, err := s.disabledFiles()
 	path, ok := files[name]
 	return path, ok && err == nil
@@ -159,15 +162,15 @@ func (s *Session) planLifecycle(r LifecycleRequest) (*lifecyclePlan, error) {
 	if r.CloseFindings && r.Verb != VerbDelete {
 		return pl, errors.New("close_findings applies to delete only")
 	}
+	if err := s.mayRead(pl.name); err != nil { // before any file is looked for
+		return pl, err
+	}
 	dir := s.projectsDir()
 	var err error
 	if err := pl.resolveFiles(s); err != nil {
 		return pl, err
 	}
 	if err := pl.locate(s); err != nil {
-		return pl, err
-	}
-	if err := s.mayRead(pl.name); err != nil {
 		return pl, err
 	}
 

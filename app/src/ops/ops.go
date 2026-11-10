@@ -213,6 +213,22 @@ func (s *Session) vendors() map[string]string {
 	return out
 }
 
+// Access is decided by scope, mayRead, mayWrite and mayPublish, and by
+// nothing else. Every operation asks first, before it validates input, reads
+// a file or computes anything, so a refusal never says whether a project
+// exists and never costs work.
+
+// mayPublish checks that the actor may write a page everyone reads (the
+// dashboard, a calendar): it must see every project, or the shared page would
+// show one actor's part as the whole, and it must be allowed to change things.
+// It does not need the data lock, so read-only sessions may publish.
+func (s *Session) mayPublish() error {
+	if _, write, open := s.Cfg.Allowed(baseActor(s.Actor)); !write || !open {
+		return fmt.Errorf("%w: %s may not write shared pages (it needs write access to every project)", ErrDenied, s.Actor)
+	}
+	return nil
+}
+
 // mayWrite checks write access to one project ("" means all projects).
 func (s *Session) mayWrite(project string) error {
 	if s.readOnly {
@@ -270,6 +286,9 @@ func (s *Session) Calendar(month time.Time, f query.Filter) ([]calendar.Entry, e
 
 // WriteCalendar renders the month as a self-contained HTML page in the alerts directory.
 func (s *Session) WriteCalendar(month time.Time, f query.Filter) (string, error) {
+	if err := s.mayPublish(); err != nil {
+		return "", err
+	}
 	entries, err := s.Calendar(month, f)
 	if err != nil {
 		return "", err
@@ -303,19 +322,22 @@ func (s *Session) ExplainIn(id string, f query.Filter) (Explanation, error) {
 		return Explanation{}, err
 	}
 	v := s.Ledger.Vuln(is.ID)
-	verdict := s.judge(v)
+	verdict := s.judge(v, f)
 	ex := Explanation{ID: v.ID, Stored: is.Targets, Notes: verdict.Notes, Relevant: verdict.Relevant()}
 	for _, m := range verdict.Matches {
-		if !f.Allows(m.Project) {
-			continue
-		}
 		ex.Today = append(ex.Today, fmt.Sprintf("%s: %s — %s", m.Project, m.Applies, strings.Join(m.Reasons, "; ")))
 	}
 	return ex, nil
 }
 
-func (s *Session) judge(v *model.Vulnerability) relevance.Verdict {
-	return relevance.New(s.Cfg.Techs).Judge(pipeline.ItemOf(v, s.Cfg.Sources), inventory.Load(s.Cfg).Within(s.Cfg.Horizon, s.Now()).Targets())
+// judge judges a stored record against the project environments the filter
+// lets through, so the verdict, its notes and the matches all speak of what
+// the actor may see and asked for, and of nothing else.
+func (s *Session) judge(v *model.Vulnerability, f query.Filter) relevance.Verdict {
+	targets := slices.DeleteFunc(slices.Clone(inventory.Load(s.Cfg).Within(s.Cfg.Horizon, s.Now()).Targets()), func(t relevance.Target) bool {
+		return !f.Allows(t.Project) || f.Env != "" && t.Env != f.Env
+	})
+	return relevance.New(s.Cfg.Techs).Judge(pipeline.ItemOf(v, s.Cfg.Sources), targets)
 }
 
 // ---- writes ----
@@ -362,6 +384,9 @@ func clean(s string, max int) string { return query.Clip(s, max) }
 
 // Resolve applies a status change.
 func (s *Session) Resolve(c Change) (int, error) {
+	if err := s.mayWrite(c.Project); err != nil { // before anything says whether the project exists
+		return 0, err
+	}
 	if err := c.validate(s.Cfg); err != nil {
 		return 0, err
 	}
@@ -379,6 +404,9 @@ type Assignment struct {
 }
 
 func (s *Session) Assign(a Assignment) (int, error) {
+	if err := s.mayWrite(a.Project); err != nil {
+		return 0, err
+	}
 	if err := validateTarget(s.Cfg, a.Project, a.Env); err != nil {
 		return 0, err
 	}
@@ -422,6 +450,9 @@ type Attachment struct {
 }
 
 func (s *Session) Attach(a Attachment) (int, error) {
+	if err := s.mayWrite(a.Project); err != nil {
+		return 0, err
+	}
 	if err := validateTarget(s.Cfg, a.Project, a.Env); err != nil {
 		return 0, err
 	}
@@ -615,6 +646,11 @@ type InventoryView struct {
 }
 
 func (s *Session) Inventory(project string) (InventoryView, error) {
+	if project != "" {
+		if err := s.mayRead(project); err != nil {
+			return InventoryView{}, err
+		}
+	}
 	f, err := s.scope(query.Filter{Project: project})
 	if err != nil {
 		return InventoryView{}, err
@@ -703,6 +739,9 @@ func (s *Session) DashboardHTML() (string, error) {
 
 // WriteDashboard writes the dashboard page, owner-only, and returns its path.
 func (s *Session) WriteDashboard() (string, error) {
+	if err := s.mayPublish(); err != nil {
+		return "", err
+	}
 	page, err := s.DashboardHTML()
 	if err != nil {
 		return "", err

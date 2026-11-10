@@ -131,7 +131,12 @@ func (c nvdCVE) affected() []model.Affected {
 				if !m.Vulnerable || !ok {
 					continue
 				}
-				a := model.Affected{Ecosystem: "cpe", Name: name, Ranges: []model.Range{m.rng(ver)}}
+				a := model.Affected{Ecosystem: "cpe", Name: name}
+				// CPE '-' means not applicable, not every version. Retain the
+				// identity without manufacturing an unbounded affected range.
+				if ver != "-" || m.VersionStartIncluding != "" || m.VersionStartExcluding != "" || m.VersionEndIncluding != "" || m.VersionEndExcluding != "" {
+					a.Ranges = []model.Range{m.rng(ver)}
+				}
 				if len(list) >= maxAffected && !slices.ContainsFunc(list, func(e model.Affected) bool { return e.Name == name }) {
 					continue
 				}
@@ -161,7 +166,8 @@ func (m nvdCPEMatch) rng(cpeVersion string) model.Range {
 }
 
 // cpeProduct reads "cpe:2.3:part:vendor:product:version:..." and returns
-// "vendor:product" and the version ("" when it is "*" or "-"), lower-case and unescaped.
+// "vendor:product" and version, retaining '-' (not applicable) separately from
+// '*' (any version). A concrete update, such as p2, is part of the version.
 func cpeProduct(criteria string) (name, ver string, ok bool) {
 	f := splitCPE(strings.ToLower(strings.TrimSpace(criteria)))
 	if len(f) < 5 || f[0] != "cpe" {
@@ -171,8 +177,11 @@ func cpeProduct(criteria string) (name, ver string, ok bool) {
 	if vendor == "" || product == "" {
 		return "", "", false
 	}
-	if len(f) > 5 && f[5] != "*" && f[5] != "-" {
+	if len(f) > 5 && f[5] != "*" {
 		ver = unescapeCPE(f[5])
+	}
+	if ver != "" && ver != "-" && len(f) > 6 && f[6] != "*" && f[6] != "-" {
+		ver += "-" + unescapeCPE(f[6])
 	}
 	return vendor + ":" + product, ver, true
 }

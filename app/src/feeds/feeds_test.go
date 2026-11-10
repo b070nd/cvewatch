@@ -282,7 +282,7 @@ func TestKEV(t *testing.T) {
 	if a.Summary != "Actively exploited (CISA KEV). Lets attackers run code." || a.Severity != model.SevHigh {
 		t.Errorf("item a = %+v", a)
 	}
-	if !reflect.DeepEqual(a.IDs, []string{"CVE-2025-0001"}) || !a.Published.Equal(time.Date(2025, 12, 30, 0, 0, 0, 0, time.UTC)) {
+	if !reflect.DeepEqual(a.IDs, []string{"CVE-2025-0001"}) || !a.Published.IsZero() || a.KEV == nil || !a.KEV.DateAdded.Equal(time.Date(2025, 12, 30, 0, 0, 0, 0, time.UTC)) {
 		t.Errorf("item a = %+v", a)
 	}
 	if items[1].IDs[0] != "CVE-2025-0003" {
@@ -309,7 +309,7 @@ func TestGHSA(t *testing.T) {
 		t.Fatalf("got %d items", len(items))
 	}
 	a := items[0]
-	if want := []string{"CVE-2025-9999", "CVE-2025-1234", "GHSA-CFGH-2345-WXQR"}; !reflect.DeepEqual(a.IDs, want) {
+	if want := []string{"CVE-2025-9999", "GHSA-CFGH-2345-WXQR"}; !reflect.DeepEqual(a.IDs, want) {
 		t.Errorf("ids = %v, want %v", a.IDs, want)
 	}
 	wantAff := []model.Affected{
@@ -440,7 +440,7 @@ func TestNVDAffectedAndFixes(t *testing.T) {
 		}},
 		{Ecosystem: "cpe", Name: "example:gadget", Ranges: []model.Range{{Min: "3.1", Max: "3.1"}}},
 		{Ecosystem: "cpe", Name: "example:everything", Ranges: []model.Range{{}}},
-		{Ecosystem: "cpe", Name: "example:na", Ranges: []model.Range{{}}},
+		{Ecosystem: "cpe", Name: "example:na"},
 		{Ecosystem: "cpe", Name: "ex:corp:wid-get", Ranges: []model.Range{{Min: "1.0", Max: "1.0"}}},
 	}
 	if !reflect.DeepEqual(it.Affected, want) {

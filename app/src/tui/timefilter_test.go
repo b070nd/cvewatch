@@ -175,7 +175,7 @@ func TestInRangeKeepsOnlyIssuesPublishedInside(t *testing.T) {
 	issues := []query.Issue{{ID: "new", Published: now.Add(-time.Minute)}, {ID: "old", Published: now.Add(-400 * 24 * time.Hour)}, {ID: "undated"}}
 	ids := func(r query.TimeRange) string {
 		var out []string
-		for _, is := range inRange(issues, r, now) {
+		for _, is := range r.Keep(issues, now) {
 			out = append(out, is.ID)
 		}
 		return strings.Join(out, ",")

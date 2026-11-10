@@ -349,6 +349,17 @@ func succeeded(in Input) bool {
 // Alive is whether a daemon runs: it recorded a heartbeat and is not overdue.
 func (d Daemon) Alive() bool { return d.Mode == "daemon" && d.Level == Green }
 
+// UpdateDue is whether a front end should refresh by itself at the moment:
+// scheduled updates are on, no daemon is alive to do them, and a project is due.
+func (r Report) UpdateDue(at time.Time) bool {
+	if !r.Scheduled || r.Daemon.Alive() {
+		return false
+	}
+	return slices.ContainsFunc(r.Projects, func(p ProjectRow) bool {
+		return p.Auto && !p.Next.IsZero() && !p.Next.After(at)
+	})
+}
+
 func daemon(in Input) Daemon {
 	d := Daemon{Level: Yellow, Interval: in.Interval}
 	if in.Beat != nil {

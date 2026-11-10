@@ -181,7 +181,7 @@ func (m *app) rescope() {
 		for _, name := range m.tenantNames() {
 			all = append(all, m.data.ByProject[name]...)
 		}
-		m.narrowed = inRange(all, m.published, m.timeNow())
+		m.narrowed = m.published.Keep(all, m.timeNow())
 		m.ovw.lead = m.data.Status.Problems
 	}
 	m.cache[scrOverview] = textCache{}

@@ -26,11 +26,11 @@ type issueList struct {
 	in        input
 	sel       map[string]bool // issues marked for a change of many, by issueKey; always among vis
 
-	lead    []status.Problem  // rows before the issues: the problems that wait for a person (Overview)
-	grouped bool              // the rows are of several projects and are listed in a section each
-	per     int               // at most this many rows of each project; 0 for all
-	secs    map[string]counts // by project: all its rows that passed the filter, also those the top left out
-	room    int               // the lines the list was last given, for a click
+	lead    []status.Problem        // rows before the issues: the problems that wait for a person (Overview)
+	grouped bool                    // the rows are of several projects and are listed in a section each
+	per     int                     // at most this many rows of each project; 0 for all
+	secs    map[string]query.Counts // by project: all its rows that passed the filter, also those the top left out
+	room    int                     // the lines the list was last given, for a click
 }
 
 type findingsState struct {
@@ -48,56 +48,19 @@ func minLabel(s model.Severity) string {
 	return string(s) + "+"
 }
 
-// filterIssues keeps issues at or above min that match the search text (see
-// query.ParseSearch); text that does not parse is matched as plain words.
-func filterIssues(all []query.Issue, min model.Severity, text string) []query.Issue {
-	search, perr := query.ParseSearch(text)
-	words := strings.Fields(strings.ToLower(text))
-	var out []query.Issue
-	for _, is := range all {
-		if !is.Severity.AtLeast(min) {
-			continue
-		}
-		if perr == nil {
-			if search.Match(is) {
-				out = append(out, is)
-			}
-			continue
-		}
-		// A field still being typed, such as "severity:", does not parse yet; match words until it does.
-		if len(words) > 0 {
-			hay := strings.ToLower(strings.Join(append([]string{is.ID, is.Untrusted.Title, strings.Join(is.Techs, " "), strings.Join(is.Aliases, " ")}, targetWords(is)...), " "))
-			if !slices.ContainsFunc(words, func(w string) bool { return !strings.Contains(hay, w) }) {
-				out = append(out, is)
-			}
-			continue
-		}
-		out = append(out, is)
-	}
-	return out
-}
-
-func targetWords(is query.Issue) []string {
-	var out []string
-	for _, t := range is.Targets {
-		out = append(out, t.Project, string(t.Env), t.Owner)
-	}
-	return out
-}
-
 // refit filters the issues again after they or the filter changed and puts
 // the cursor back on its issue.
 func (l *issueList) refit(all []query.Issue) {
-	l.vis = filterIssues(all, l.min, l.text)
+	l.vis = query.Narrow(all, l.min, l.text)
 	l.secs = nil
 	if l.grouped {
-		l.secs = map[string]counts{}
+		l.secs = map[string]query.Counts{}
 		by := map[string][]query.Issue{}
 		for _, is := range l.vis {
 			by[rowProject(is)] = append(by[rowProject(is)], is)
 		}
 		for p, rows := range by {
-			l.secs[p] = countsOf(rows)
+			l.secs[p] = query.Count(rows)
 		}
 	}
 	if l.per > 0 {

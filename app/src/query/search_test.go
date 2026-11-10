@@ -23,7 +23,7 @@ func searchIssues() []Issue {
 		ID: "CVE-2026-5678", Severity: model.SevCritical, Published: time.Date(2026, 10, 2, 8, 0, 0, 0, time.UTC),
 		Techs: []string{"openssl"}, Applies: model.AppUnknown, KEV: &KEVInfo{}, Fix: FixInfo{Available: true, Official: true},
 		Untrusted: Untrusted{Title: "OpenSSL overflow", Description: "Affects the WordPress plugin"},
-		Targets:   []Target{{Project: "blog", Env: model.EnvStaging, Status: model.StatusOpen, Applies: model.AppUnknown, Owner: "Bob", Matched: []string{"libssl@3.0.1"}}},
+		Targets:   []Target{{Project: "blog", Env: model.EnvStaging, Status: model.StatusOpen, Applies: model.AppUnknown, Owner: "Bob", Matched: []string{"libssl@3.0.1"}, Basis: []string{"title", "text"}}},
 	}
 	nginx := Issue{
 		ID: "CVE-2025-0001", Severity: model.SevLow, Published: time.Date(2026, 1, 1, 0, 30, 0, 0, time.FixedZone("plus2", 2*3600)),
@@ -58,6 +58,9 @@ func TestSearchMatches(t *testing.T) {
 		{"jane", php},
 		{"ops-12", php},
 		{"staging", openssl},
+		{"basis:weak", openssl},
+		{"basis:TEXT", openssl},
+		{"basis:cpe", ""},
 		{"blog", openssl},
 		{"nginx", nginx},
 		{`php memory "use after free" -wordpress`, php},

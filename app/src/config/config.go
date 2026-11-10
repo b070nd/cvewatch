@@ -45,6 +45,13 @@ type Settings struct {
 	Dashboard Dashboard     `yaml:"dashboard"` // a static status page, refreshed by the daemon
 	TUI       TUI           `yaml:"tui"`       // the full-screen interface
 	Horizon   Horizon       `yaml:"horizon"`   // which publication dates are judged, alerted and digested
+	// Profile is how much evidence a match needs before it becomes a finding:
+	// strict, balanced (the default) or discovery. A project file may set its own.
+	Profile model.Profile `yaml:"profile"`
+	// Retire says whether an update retires a match that the advisory's own
+	// product data disproves (auto, the default), or only reports it and
+	// leaves the change to `cvewatch revalidate -apply` (manual).
+	Retire model.RetireMode `yaml:"retire"`
 	// Access optionally limits who may see and change which projects, by the
 	// actor name (CVEWATCH_ACTOR or the OS user). Empty means everyone may do
 	// everything, which is right for a single operator. This is authorization
@@ -574,6 +581,12 @@ func (b *Bundle) validate(decoded map[string]bool, og origins) []Issue {
 	if b.TUI.Editor != "" && strings.TrimSpace(b.TUI.Editor) == "" {
 		fail(og.settings, "tui.editor", "tui.editor must not be blank (remove it to use $VISUAL, $EDITOR or the usual editors)")
 	}
+	if !b.Profile.Valid() {
+		fail(og.settings, "profile", "profile %q is not valid (use %s)", b.Profile, profileNames())
+	}
+	if !b.Retire.Valid() {
+		fail(og.settings, "retire", "retire %q is not valid (use %s or %s)", b.Retire, model.RetireAuto, model.RetireManual)
+	}
 	for _, hp := range b.Horizon.Problems() {
 		fail(og.settings, "horizon."+hp.Field, "%s", hp.Msg)
 	}
@@ -588,6 +601,15 @@ func (b *Bundle) validate(decoded map[string]bool, og origins) []Issue {
 		fail(og.settings, "retention", "retention must be at least twice the lookback, or old items could be judged again")
 	}
 	return out
+}
+
+// profileNames lists the valid profiles for an error message.
+func profileNames() string {
+	var names []string
+	for _, p := range model.Profiles() {
+		names = append(names, string(p))
+	}
+	return strings.Join(names, ", ")
 }
 
 var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -632,6 +654,9 @@ func projectErrors(p model.Project, seen map[string]bool) []fieldErr {
 	seen[p.Name] = true
 	if !model.ValidVendor(p.Vendor) {
 		fail("vendor", "project %s: vendor %q is not valid (lowercase letters, digits, - and _, at most 63 characters)", p.Name, p.Vendor)
+	}
+	if !p.Profile.Valid() {
+		fail("profile", "project %s: profile %q is not valid (use %s)", p.Name, p.Profile, profileNames())
 	}
 	for _, e := range p.Envs {
 		if !e.Valid() {

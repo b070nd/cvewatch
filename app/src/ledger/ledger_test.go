@@ -16,7 +16,9 @@ func item(title, url, src string, ids ...string) model.Item {
 
 func TestStatusSurvivesAddFinding(t *testing.T) {
 	l := New(State{})
-	v := l.Create(item("PHP bug", "https://a.test/1", "s", "CVE-2026-1", "GHSA-AAAA-BBBB-CCCC"), day, []string{"php"})
+	it := item("PHP bug", "https://a.test/1", "s", "CVE-2026-1", "GHSA-AAAA-BBBB-CCCC")
+	it.SourceType = "ghsa"
+	v := l.Create(it, day, []string{"php"})
 	f := model.Finding{VulnID: v.ID, Project: "shop", Env: model.EnvProd, Status: model.StatusOpen}
 	if !l.AddFinding(f) || l.AddFinding(f) {
 		t.Fatal("AddFinding must insert once")
@@ -64,6 +66,65 @@ func TestRoundupArticleLinksButNeverMerges(t *testing.T) {
 	}
 	if l.Vuln(b.ID) == nil || len(b.Refs) != 2 {
 		t.Fatalf("both records must stay and both must list the article: %+v", b.Refs)
+	}
+	l.Absorb(got, roundup)
+	if len(a.Aliases) != 0 || l.Lookup([]string{b.ID}) != b {
+		t.Fatal("absorbing the linked roundup must not alias its distinct CVEs")
+	}
+}
+
+func TestDistinctIdentifiedAdvisoriesNeverMergeByTitle(t *testing.T) {
+	l := New(State{})
+	a := item("PHP request memory corruption vulnerability", "https://a.test/1", "nvd", "CVE-2026-1001")
+	v := l.Create(a, day, []string{"php"})
+	l.AddFinding(model.Finding{VulnID: v.ID, Project: "shop", Env: model.EnvProd, Status: model.StatusOpen})
+	a.IDs = []string{"CVE-2026-1002"}
+	if got, _, _ := l.Identify(a, true); got != nil {
+		t.Fatalf("distinct CVE merged solely by title: %s", got.ID)
+	}
+}
+
+func TestLegacyAliasesCannotShadowCanonicalRecords(t *testing.T) {
+	a := &model.Vulnerability{ID: "CVE-2026-1001", Aliases: []string{"CVE-2026-1002", "GHSA-AAAA-BBBB-CCCC"}}
+	b := &model.Vulnerability{ID: "CVE-2026-1002"}
+	for range 50 {
+		l := New(State{Vulns: map[string]*model.Vulnerability{a.ID: a, b.ID: b}})
+		l.Absorb(a, item("repeat sighting", "https://a.test/1", "nvd", a.ID))
+		if l.Lookup([]string{b.ID}) != b {
+			t.Fatal("legacy alias shadowed the canonical CVE")
+		}
+	}
+	l := New(State{Vulns: map[string]*model.Vulnerability{a.ID: a}})
+	if l.Lookup([]string{b.ID}) != nil {
+		t.Fatal("a legacy cross-CVE alias must not identify an independent CVE")
+	}
+	if l.Lookup([]string{"GHSA-AAAA-BBBB-CCCC"}) != a {
+		t.Fatal("legitimate GHSA alias was lost")
+	}
+}
+
+func TestUnknownPublicationAndProductsSurviveReloadAndEnrichment(t *testing.T) {
+	l := New(State{})
+	it := item("PHP memory corruption", "https://a.test/1", "kev", "CVE-2026-1001")
+	it.Published = time.Time{}
+	it.Products = []model.Product{{Vendor: "PHP Group", Name: "PHP"}}
+	v := l.Create(it, day, nil)
+	copy, err := l.Clone()
+	if err != nil {
+		t.Fatal(err)
+	}
+	v = copy.Vuln(v.ID)
+	if !v.Published.IsZero() || len(v.Products) != 1 {
+		t.Fatalf("unknown date or product identity lost on reload: %+v", v)
+	}
+	it.Published = day.AddDate(-10, 0, 0)
+	if c := copy.Absorb(v, it); !c.Any || !v.Published.Equal(it.Published) {
+		t.Fatal("later enrichment must fill an unknown publication date")
+	}
+	it.Published = day
+	copy.Absorb(v, it)
+	if !v.Published.Equal(day.AddDate(-10, 0, 0)) {
+		t.Fatal("a newer sighting must not replace the earliest known publication")
 	}
 }
 

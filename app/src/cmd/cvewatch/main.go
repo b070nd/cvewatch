@@ -470,7 +470,11 @@ func why(s *ops.Session, args []string) error {
 	}
 	fmt.Printf("%s\n\nDecided when first seen:\n", ex.ID)
 	for _, t := range ex.Stored {
-		fmt.Printf("  %s/%s [%s] %s\n", t.Project, t.Env, t.Applies, strings.Join(t.Reasons, "; "))
+		fmt.Printf("  %s/%s [%s] %s", t.Project, t.Env, t.Applies, strings.Join(t.Reasons, "; "))
+		if len(t.Basis) > 0 {
+			fmt.Printf(" (basis: %s)", strings.Join(t.Basis, ", "))
+		}
+		fmt.Println()
 	}
 	fmt.Printf("\nJudged again with today's config (relevant: %v):\n", ex.Relevant)
 	for _, l := range ex.Today {

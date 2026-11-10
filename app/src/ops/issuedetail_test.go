@@ -45,6 +45,7 @@ func richStore(t *testing.T) store.Storage {
 	l := ledger.New(ledger.State{})
 	v := l.Create(model.Item{Title: "Remote code execution in Example", Summary: "An attacker can run code.", URL: "https://news.test/1",
 		IDs: []string{"CVE-2026-0100", "GHSA-AAAA-BBBB-CCCC"}, Severity: model.SevCritical, CVSS: 9.8, Published: day, SourceID: "hn", SourceType: "hn"}, day, []string{"php"})
+	v.Aliases = []string{"GHSA-AAAA-BBBB-CCCC"} // already verified in this stored-detail fixture
 	v.Refs = append(v.Refs, model.Ref{Source: "nvd", Kind: model.RefAdvisory, URL: "https://nvd.test/CVE-2026-0100"},
 		model.Ref{Source: "evil", Kind: model.RefAdvisory, URL: "javascript:alert(1)"})
 	v.Fixes = []model.Fix{{Kind: model.FixVersion, Detail: "8.2.30", Source: "ghsa", Official: true, URL: "https://fix.test/8.2.30"}}

@@ -49,15 +49,19 @@ func truncate(s string, n int) string {
 	return string([]rune(s)[:n-1]) + "…"
 }
 
-// finish cleans an item and sets its ids: explicit ids plus those found in
-// the text, CVEs first, no duplicates. ok is false when the title is empty.
+// finish cleans an item. Structured identity fields are authoritative; IDs
+// mentioned in their descriptions are references, not additional aliases.
+// Articles without explicit identities still discover IDs in their text.
 func finish(srcID string, it model.Item, explicit ...string) (_ model.Item, ok bool) {
 	title, summary := plain(it.Title), plain(it.Summary)
 	if title == "" {
 		return it, false
 	}
 	it.SourceID = srcID
-	it.IDs = mergeIDs(explicit, model.ExtractIDs(title+"\n"+summary))
+	it.IDs = mergeIDs(explicit, nil)
+	if len(it.IDs) == 0 {
+		it.IDs = mergeIDs(nil, model.ExtractIDs(title+"\n"+summary))
+	}
 	it.Title = truncate(title, maxText)
 	it.Summary = truncate(summary, maxText)
 	if !it.Rating().Valid() {

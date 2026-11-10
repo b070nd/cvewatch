@@ -19,6 +19,7 @@ func seed() *ledger.Ledger {
 	add := func(id string, sev model.Severity, first time.Time, aliases ...string) *model.Vulnerability {
 		v := l.Create(model.Item{Title: id + " title", URL: "https://a.test/" + id, IDs: append([]string{id}, aliases...),
 			Severity: sev, Published: first, SourceID: "feed", SourceType: "rss"}, first, []string{"php"})
+		v.Aliases = aliases // established identities in this read-model fixture, not inferred from RSS
 		return v
 	}
 	add("LOW", model.SevLow, day)
@@ -48,7 +49,7 @@ func seed() *ledger.Ledger {
 		}
 		l.AddFinding(f)
 	}
-	return l
+	return ledger.New(l.State())
 }
 
 func ids(is []Issue) string {
@@ -57,6 +58,13 @@ func ids(is []Issue) string {
 		out = append(out, i.ID)
 	}
 	return strings.Join(out, ",")
+}
+
+func TestUnknownPublicationHasNoInventedAge(t *testing.T) {
+	i := issue(&model.Vulnerability{ID: "CVE-2026-1001"}, now)
+	if !i.Published.IsZero() || i.Age != "" || i.AgeHours != 0 {
+		t.Fatalf("unknown publication acquired an age: %+v", i)
+	}
 }
 
 func TestOpenOrdersFiltersAndHidesUnaffected(t *testing.T) {

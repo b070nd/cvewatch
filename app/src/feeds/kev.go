@@ -54,13 +54,13 @@ func parseKEV(body []byte, src model.Source, since time.Time) ([]model.Item, err
 			kev.DueDate = due
 		}
 		it, ok := finish(src.ID, model.Item{
-			Title:     fmt.Sprintf("%s %s: %s", v.VendorProject, v.Product, v.VulnerabilityName),
-			URL:       link,
-			Summary:   summary,
-			Fixes:     fixes,
-			KEV:       kev,
-			Published: added,
-			Severity:  model.SevHigh,
+			Title:    fmt.Sprintf("%s %s: %s", v.VendorProject, v.Product, v.VulnerabilityName),
+			URL:      link,
+			Summary:  summary,
+			Fixes:    fixes,
+			KEV:      kev,
+			Products: namedProduct(v.VendorProject, v.Product),
+			Severity: model.SevHigh,
 		}, v.CVEID)
 		if ok {
 			items = append(items, it)

@@ -44,6 +44,12 @@ func Compare(a, b Facts) int {
 		return 1
 	}
 	switch ta, tb := a.Published, b.Published; {
+	case ta.IsZero() && tb.IsZero():
+		return 0
+	case ta.IsZero():
+		return 1
+	case tb.IsZero():
+		return -1
 	case ta.Before(tb):
 		return -1
 	case tb.Before(ta):

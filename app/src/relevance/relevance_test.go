@@ -139,21 +139,6 @@ func TestPackagesStructuredAndScopedText(t *testing.T) {
 	}
 }
 
-func TestReassessUsesLateRanges(t *testing.T) {
-	j := New([]model.Tech{{Name: "php", CPE: []string{"php:php"}}})
-	in := []model.Installed{{Name: "php", Version: "8.2.10", Via: "tech"}, {Name: "lodash", Version: "4.17.21", Ecosystem: "npm", Via: "package"}}
-	got, reasons := j.Reassess(in, []model.Affected{
-		{Ecosystem: "cpe", Name: "php:php", Ranges: []model.Range{{Max: "8.2.30", MaxExcl: true}}},
-		{Ecosystem: "npm", Name: "lodash", Ranges: []model.Range{{Max: "4.17.21", MaxExcl: true}}},
-	})
-	if got != model.AppAffected || len(reasons) != 2 {
-		t.Fatalf("worst of the two must win: %v %v", got, reasons)
-	}
-	if got, _ := j.Reassess(in, nil); got != model.AppUnknown {
-		t.Fatalf("no data must stay unknown, got %v", got)
-	}
-}
-
 // targetsOf builds one production target per project for tests that do not care about environments.
 func targetsOf(projects []model.Project, pkgs map[string][]model.Package) []Target {
 	var out []Target

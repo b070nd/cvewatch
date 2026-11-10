@@ -37,6 +37,10 @@ func TestCompareDefaultOrder(t *testing.T) {
 	if Compare(high, high) != 0 {
 		t.Error("equal facts compare equal")
 	}
+	unknownDate := Facts{Severity: model.SevHigh}
+	if Compare(unknownDate, highOld) <= 0 || Compare(highOld, unknownDate) >= 0 || Compare(unknownDate, unknownDate) != 0 {
+		t.Error("unknown publication must not be treated as an ancient exposure")
+	}
 }
 
 func TestReasonsUseOnlyOwnData(t *testing.T) {

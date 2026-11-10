@@ -1,7 +1,8 @@
 // Package relevance decides whether a feed item matters to a project and
 // whether the version the project runs is affected. It is the single place
 // where the rules live: aliases, excludes, structured CPE and package data,
-// title-only matching and version ranges. Every decision comes with reasons.
+// explicit product names, title-only matching, version ranges and the
+// matching profiles. Every decision comes with its basis and with reasons.
 package relevance
 
 import (
@@ -15,6 +16,13 @@ import (
 	"github.com/b070nd/cvewatch/app/src/version"
 )
 
+// RulesVersion names the matching rules. It is part of what findings are
+// judged against, so raising it makes every ledger judge its findings again.
+//
+//	2  explicit product names bound text matches; matches carry their basis;
+//	   a match that no longer holds is retired; matching profiles
+const RulesVersion = 2
+
 type tech struct {
 	name    string
 	scheme  string // version ordering for what the tech runs: "", pypi, maven, go
@@ -23,8 +31,9 @@ type tech struct {
 	cpe     map[string]bool
 }
 
-// Judge applies the configured technologies to items. It is immutable and
-// rebuilt from config every run, so edits take effect on the next cycle.
+// Judge holds the technology rules. It is immutable and rebuilt from config
+// every run, so edits take effect on the next cycle. Compile ties it to an
+// inventory; that is what judges items.
 type Judge struct{ techs []tech }
 
 func New(techs []model.Tech) *Judge {
@@ -51,11 +60,21 @@ func (j *Judge) Names() []string {
 	return out
 }
 
+// Judge evaluates one item against what each project environment runs. It
+// compiles the targets first; callers that judge many items compile once.
+func (j *Judge) Judge(it model.Item, targets []Target) Verdict {
+	return j.Compile(targets).Judge(it)
+}
+
 // Verdict is what judging one item produced.
 type Verdict struct {
 	Techs   []string // techs the item is about, lowercase
 	Matches []Match  // projects that run something affected or possibly affected
-	Notes   []string // why a tech did not match, for explanations
+	// Held are matches kept back because the item was published before the
+	// project's start date or outside the alert horizon. They create no
+	// finding, but they do say the match itself still holds.
+	Held  []Match
+	Notes []string // why a tech did not match, for explanations
 }
 
 // Relevant reports whether any tech or project matched.
@@ -68,9 +87,10 @@ type Target struct {
 	Env      model.Env
 	Techs    []model.ProjectTech // declared techs with this environment's versions
 	Packages []model.Package
-	Image    string    // image tag or digest, recorded only
-	Since    time.Time // items published before this are not judged; zero judges all
-	Horizon  Window    // the alert horizon; items published outside it are not judged
+	Image    string        // image tag or digest, recorded only
+	Since    time.Time     // items published before this are not judged; zero judges all
+	Horizon  Window        // the alert horizon; items published outside it are not judged
+	Profile  model.Profile // how much evidence a match needs; empty is balanced
 }
 
 // Window is a span of publication dates with inclusive ends; a zero end is open.
@@ -83,7 +103,7 @@ func (w Window) Outside(published time.Time) bool {
 }
 
 // Find returns what the target currently runs for an earlier match, so a
-// finding can be re-checked after a lockfile or declared version changed.
+// finding can tell "no longer installed" from "no longer matched".
 // A package is found by ecosystem and name; if several versions are
 // installed the one equal to the old version wins.
 func (t Target) Find(old model.Installed) (model.Installed, bool) {
@@ -123,108 +143,35 @@ func pkgKey(eco, name string) string {
 type Match struct {
 	Project   string
 	Env       model.Env
-	Installed []model.Installed
+	Installed []model.Installed   // each with the basis it matched on
 	Applies   model.Applicability // the most urgent over everything installed
 	Reasons   []string
 }
 
-// hit is a tech the item is about, with the versions NVD-style data says are affected.
-type hit struct {
-	ranges []model.Range
-	known  bool // ranges came from structured data
-	why    string
-}
-
-// Judge evaluates one item against what each project environment runs.
-func (j *Judge) Judge(it model.Item, targets []Target) Verdict {
-	var v Verdict
-	// Only technologies some project environment runs are judged. The catalog
-	// holds many more; judging them all would store and report advisories
-	// nobody here is exposed to.
-	declared := map[string]bool{}
-	for _, tg := range targets {
-		for _, pt := range tg.Techs {
-			declared[strings.ToLower(pt.Name)] = true
-		}
-	}
-	schemes := map[string]string{}
-	hits := map[string]hit{}
-	text := newSubject(it.TechText())
-	plain := text
-	if it.TitleOnly {
-		plain = newSubject(it.Text())
-	}
-	for _, t := range j.techs {
-		if !declared[t.name] {
-			continue
-		}
-		schemes[t.name] = t.scheme
-		h, note, ok := t.judge(it, text)
-		if note != "" {
-			v.Notes = append(v.Notes, note)
-		}
-		if ok {
-			hits[t.name] = h
-			v.Techs = append(v.Techs, t.name)
-		}
-	}
-
-	noted := map[string]bool{}
-	for _, tg := range targets {
-		m := Match{Project: tg.Project, Env: tg.Env, Applies: model.AppNotAffected}
-		for _, pt := range tg.Techs {
-			h, ok := hits[strings.ToLower(pt.Name)]
-			if !ok {
-				continue
-			}
-			in := model.Installed{Name: pt.Name, Version: pt.Version, Via: "tech", Ecosystem: schemes[strings.ToLower(pt.Name)]}
-			m.add(in, applies(in, h.ranges, h.known), h.why)
-		}
-		for _, pkg := range tg.Packages {
-			in := model.Installed{Name: pkg.Name, Version: pkg.Version, Ecosystem: pkg.Ecosystem, Via: "package"}
-			if rs, structured, ok := packageHit(it, plain, pkg); ok {
-				why := "named in the advisory's package list"
-				if !structured {
-					why = "named in the text"
-				}
-				m.add(in, applies(in, rs, structured), why)
-			}
-		}
-		if len(m.Installed) == 0 {
-			continue
-		}
-		if before := !tg.Since.IsZero() && !it.Published.IsZero() && it.Published.Before(tg.Since); before {
-			if !noted[tg.Project] {
-				noted[tg.Project] = true
-				v.Notes = append(v.Notes, fmt.Sprintf("%s: published %s, before the project's start date %s",
-					tg.Project, it.Published.UTC().Format("2006-01-02"), tg.Since.UTC().Format("2006-01-02")))
-			}
-			continue
-		}
-		if tg.Horizon.Outside(it.Published) {
-			if !noted[tg.Project] {
-				noted[tg.Project] = true
-				v.Notes = append(v.Notes, fmt.Sprintf("%s: published %s, outside the alert horizon",
-					tg.Project, it.Published.UTC().Format("2006-01-02")))
-			}
-			continue
-		}
-		v.Matches = append(v.Matches, m)
-	}
-	if len(v.Matches) == 0 && len(noted) > 0 {
-		v.Techs = nil
-	}
-	return v
-}
-
-func (m *Match) add(in model.Installed, a model.Applicability, why string) {
+func (m *Match) add(in model.Installed, a model.Applicability) {
 	m.Installed = append(m.Installed, in)
 	if len(m.Installed) == 1 {
 		m.Applies = a
 	} else {
 		m.Applies = m.Applies.Worse(a)
 	}
-	m.Reasons = append(m.Reasons, fmt.Sprintf("%s: %s, %s", in.Label(), why, verdictWords(a)))
+	m.Reasons = append(m.Reasons, fmt.Sprintf("%s: %s, %s", in.Label(), basisWords(in), verdictWords(a)))
+}
+
+// basisWords says in plain words what tied the installed thing to the item.
+func basisWords(in model.Installed) string {
+	if len(in.Basis) == 0 {
+		return "matched"
+	}
+	switch in.Basis[0] {
+	case model.BasisPackage:
+		return "named in the advisory's package list"
+	case model.BasisCPE, model.BasisProduct:
+		return "named in the advisory's product data"
+	case model.BasisTitle:
+		return "named in the title"
+	}
+	return "named in the text"
 }
 
 func verdictWords(a model.Applicability) string {
@@ -246,21 +193,47 @@ func applies(in model.Installed, ranges []model.Range, known bool) model.Applica
 	return version.EvaluateFor(in.Ecosystem, in.Version, ranges)
 }
 
-// judge decides one tech. Structured CPE data wins over text when the tech
-// knows its CPE names: that is what removes "mentioned in passing" noise.
+// hit is a tech the item is about, with the versions NVD-style data says are affected.
+type hit struct {
+	ranges []model.Range
+	known  bool // ranges came from structured data
+	basis  model.Basis
+	// waiting: the text names the tech, but the source is structured-only and
+	// its product data has not arrived. Only the discovery profile takes it.
+	waiting bool
+}
+
+// judge decides one tech. The source's own product identity wins over text:
+// that is what removes "mentioned in passing" noise.
 func (t tech) judge(it model.Item, text subject) (h hit, note string, ok bool) {
+	// Explicit product names bound the text fallback, also for sources such
+	// as KEV and CVE records that need not supply CPEs. The technology's name
+	// or an alias can identify the product; a mention in the description cannot.
+	if len(it.Products) > 0 && !t.matchesCPE(it) {
+		for _, p := range it.Products {
+			for _, term := range t.re.terms {
+				if strings.EqualFold(p.Name, term) || strings.EqualFold(strings.TrimSpace(p.Vendor+" "+p.Name), term) {
+					return hit{basis: model.BasisProduct}, "", true
+				}
+			}
+		}
+		if t.re.match(text) {
+			return h, fmt.Sprintf("%s: mentioned in the text, but the advisory's product data names other products", t.name), false
+		}
+		return h, "", false
+	}
 	if len(t.cpe) > 0 {
 		for _, a := range it.Affected {
 			if a.Ecosystem == model.EcoCPE && t.cpe[a.Name] {
 				h.ranges = append(h.ranges, a.Ranges...)
-				h.known = len(a.Ranges) > 0
+				h.known = h.known || len(a.Ranges) > 0
 			}
 		}
 		// Any structured data (CPE products or package lists) says what the
 		// advisory is about, so a passing mention of the tech in the text is ignored.
 		if len(it.Affected) > 0 {
 			if h.known || t.matchesCPE(it) {
-				h.why = "named in the advisory's product data"
+				h.basis = model.BasisCPE
 				return h, "", true
 			}
 			if t.re.match(text) { // only explain techs the text did mention
@@ -269,25 +242,41 @@ func (t tech) judge(it model.Item, text subject) (h hit, note string, ok bool) {
 			return h, "", false
 		}
 		if it.StructuredOnly {
-			if t.re.match(text) {
-				return h, fmt.Sprintf("%s: mentioned in the text, but there is no product data yet; waiting for the feed to analyse it", t.name), false
+			if !t.re.match(text) {
+				return h, "", false
 			}
-			return h, "", false
+			return hit{basis: textBasis(it), waiting: true},
+				fmt.Sprintf("%s: mentioned in the text, but there is no product data yet; waiting for the feed to analyse it", t.name),
+				t.excluded(text) == ""
 		}
 	}
 	if !t.re.match(text) {
 		return h, "", false
 	}
-	if t.exclude != nil {
-		if m := t.exclude.FindString(text.text); m != "" {
-			return h, fmt.Sprintf("%s: excluded because the text also says %q", t.name, strings.TrimSpace(strings.Trim(m, " .,;:()[]\"'"))), false
-		}
+	if x := t.excluded(text); x != "" {
+		return h, x, false
 	}
-	h.why = "named in the title"
-	if !it.TitleOnly {
-		h.why = "named in the text"
-	}
+	h.basis = textBasis(it)
 	return h, "", true
+}
+
+// excluded returns the note for a text that also holds one of the tech's
+// exclude terms, or "".
+func (t tech) excluded(text subject) string {
+	if t.exclude == nil {
+		return ""
+	}
+	if m := t.exclude.FindString(text.text); m != "" {
+		return fmt.Sprintf("%s: excluded because the text also says %q", t.name, strings.TrimSpace(strings.Trim(m, " .,;:()[]\"'")))
+	}
+	return ""
+}
+
+func textBasis(it model.Item) model.Basis {
+	if it.TitleOnly {
+		return model.BasisTitle
+	}
+	return model.BasisText
 }
 
 func (t tech) matchesCPE(it model.Item) bool {
@@ -297,153 +286,4 @@ func (t tech) matchesCPE(it model.Item) bool {
 		}
 	}
 	return false
-}
-
-// packageHit finds a lockfile package in the item. Structured package data
-// is exact; free text is searched only for scoped names (vendor/package),
-// and only when the feed gave no structured packages at all.
-func packageHit(it model.Item, plain subject, pkg model.Package) (ranges []model.Range, structured, ok bool) {
-	hasStructured := false
-	want := pkgKey(pkg.Ecosystem, pkg.Name)
-	for _, a := range it.Affected {
-		if a.Ecosystem == model.EcoCPE {
-			continue
-		}
-		hasStructured = true
-		if pkgKey(a.Ecosystem, a.Name) == want {
-			ranges = append(ranges, a.Ranges...)
-			ok = true
-		}
-	}
-	if ok {
-		return ranges, len(ranges) > 0, true
-	}
-	scoped := strings.ContainsAny(pkg.Name, "/:") // vendor/package, group:artifact, module paths
-	if !hasStructured && scoped && newWords([]string{pkg.Name}).match(plain) {
-		return nil, false, true
-	}
-	return nil, false, false
-}
-
-// Reassess re-checks what a project runs against affected data that arrived
-// after the finding was created, for example NVD ranges for a CVE first seen
-// in the news. It never lowers certainty without data: no data means unknown.
-func (j *Judge) Reassess(installed []model.Installed, affected []model.Affected) (model.Applicability, []string) {
-	var (
-		out     = model.AppNotAffected
-		reasons []string
-	)
-	for i, in := range installed {
-		a := model.AppUnknown
-		if ranges := j.rangesFor(in, affected); len(ranges) > 0 {
-			a = version.EvaluateFor(in.Ecosystem, in.Version, ranges)
-		}
-		if i == 0 {
-			out = a
-		} else {
-			out = out.Worse(a)
-		}
-		reasons = append(reasons, fmt.Sprintf("%s: %s", in.Label(), verdictWords(a)))
-	}
-	if len(installed) == 0 {
-		return model.AppUnknown, nil
-	}
-	return out, reasons
-}
-
-func (j *Judge) rangesFor(in model.Installed, affected []model.Affected) []model.Range {
-	var out []model.Range
-	for _, a := range affected {
-		switch {
-		case in.Via == "package" && pkgKey(a.Ecosystem, a.Name) == pkgKey(in.Ecosystem, in.Name):
-			out = append(out, a.Ranges...)
-		case in.Via == "tech" && a.Ecosystem == model.EcoCPE:
-			for _, t := range j.techs {
-				if t.name == strings.ToLower(in.Name) && t.cpe[a.Name] {
-					out = append(out, a.Ranges...)
-				}
-			}
-		}
-	}
-	return out
-}
-
-// subject is a text prepared once for every term that is looked for in it.
-type subject struct {
-	text  string
-	lower string
-	ascii bool
-}
-
-func newSubject(text string) subject {
-	return subject{text: text, lower: strings.ToLower(text), ascii: isASCII(text)}
-}
-
-func isASCII(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] >= 0x80 {
-			return false
-		}
-	}
-	return true
-}
-
-// words is wordRe without the cost for the usual case. Plain ASCII terms in
-// plain ASCII text are looked up as substrings with the boundary checked by
-// hand; anything else goes through the expression, which holds the same rule.
-type words struct {
-	terms []string // lowercase
-	fast  bool     // every term is non-empty ASCII
-	re    *regexp.Regexp
-}
-
-func newWords(terms []string) words {
-	w := words{fast: true, re: wordRe(terms)}
-	for _, t := range terms {
-		t = strings.ToLower(strings.TrimSpace(t))
-		w.fast = w.fast && t != "" && isASCII(t)
-		w.terms = append(w.terms, t)
-	}
-	return w
-}
-
-func (w words) match(s subject) bool {
-	if !w.fast || !s.ascii {
-		return w.re.MatchString(s.text)
-	}
-	for _, t := range w.terms {
-		if hasWord(s.lower, t) {
-			return true
-		}
-	}
-	return false
-}
-
-// hasWord reports whether term stands in text with no letter or digit on
-// either side. Both are lowercase ASCII.
-func hasWord(text, term string) bool {
-	for from := 0; ; {
-		i := strings.Index(text[from:], term)
-		if i < 0 {
-			return false
-		}
-		i += from
-		end := i + len(term)
-		if (i == 0 || !alnum(text[i-1])) && (end == len(text) || !alnum(text[end])) {
-			return true
-		}
-		from = i + 1
-	}
-}
-
-func alnum(c byte) bool { return c >= 'a' && c <= 'z' || c >= '0' && c <= '9' }
-
-// wordRe matches any term as a whole word, case-insensitively, so "go" does
-// not fire inside "google" and "php" does not fire inside "phpunit".
-func wordRe(terms []string) *regexp.Regexp {
-	parts := make([]string, len(terms))
-	for i, t := range terms {
-		parts[i] = regexp.QuoteMeta(strings.TrimSpace(t))
-	}
-	return regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:` + strings.Join(parts, "|") + `)(?:[^a-z0-9]|$)`)
 }

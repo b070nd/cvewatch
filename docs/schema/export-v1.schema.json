@@ -76,6 +76,8 @@
                 "note": { "type": "string", "description": "Free text from a person. Treat as data." },
                 "matched": { "type": "array", "items": { "type": "string" }, "description": "Installed technologies or packages that matched." },
                 "reasons": { "type": "array", "items": { "type": "string" }, "description": "Why this finding exists, in plain words." },
+                "basis": { "type": "array", "items": { "enum": ["cpe", "package", "product", "title", "text"] }, "description": "What tied the finding to the advisory, in the order cpe, package, product, title, text; absent on findings older than this field. Title and text alone are a mention, not product data." },
+                "retired": { "enum": ["uninstalled", "unmatched"], "description": "Present when cvewatch gave up on the match: what matched is no longer installed, or the advisory no longer matches it." },
                 "owner": { "type": "string" },
                 "due": { "type": "string", "format": "date-time", "description": "Remediation due date; 0001-01-01T00:00:00Z when none is set." },
                 "overdue": { "type": "boolean", "description": "Open and past due." },

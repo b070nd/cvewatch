@@ -46,7 +46,8 @@ type State struct {
 //
 //	1  per-channel delivery records (Finding.Alerted) replace Finding.AlertedAt
 //	2  health records: cycles, per-source and per-channel outcomes, heartbeat
-const SchemaVersion = 2
+//	3  Finding.Retired says why a match was given up; matches carry their basis
+const SchemaVersion = 3
 
 // maxCycles is how many cycle records are kept.
 const maxCycles = 50
@@ -54,6 +55,9 @@ const maxCycles = 50
 type Ledger struct {
 	d     State
 	byKey map[string]string // any id or alias -> primary vulnerability id
+	// ofVuln lists the findings of each vulnerability. It is built on first
+	// use and dropped whenever a finding is added, moved or removed.
+	ofVuln map[string][]*model.Finding
 }
 
 // New wraps loaded state, filling in empty maps and building the id index.
@@ -104,7 +108,17 @@ func (l *Ledger) Clone() (*Ledger, error) {
 }
 
 func (l *Ledger) index(v *model.Vulnerability) {
+	l.byKey[v.ID] = v.ID
 	for _, k := range v.Keys() {
+		if strings.HasPrefix(v.ID, "CVE-") && strings.HasPrefix(k, "CVE-") && k != v.ID {
+			continue // distinct CVEs in legacy roundups are not identities
+		}
+		// A canonical record always owns its ID, even when legacy bad data
+		// also lists that ID as another record's alias. Map iteration order
+		// must not decide which vulnerability a caller sees.
+		if k != v.ID && l.d.Vulns[k] != nil {
+			continue
+		}
 		l.byKey[k] = v.ID
 	}
 }
@@ -126,17 +140,15 @@ func (l *Ledger) Vuln(id string) *model.Vulnerability { return l.d.Vulns[id] }
 func (l *Ledger) Create(it model.Item, now time.Time, techs []string) *model.Vulnerability {
 	keys := it.Keys()
 	v := &model.Vulnerability{
-		ID: keys[0], Aliases: slices.Clone(keys[1:]), Title: it.Title, Summary: it.Summary,
+		ID: keys[0], Aliases: identityAliases(it, keys[0]), Title: it.Title, Summary: it.Summary,
 		Severity: it.Severity, CVSS: it.CVSS, CVSSVersion: it.CVSSVersion, CVSSVector: it.CVSSVector, CVSSSource: it.CVSSSource,
 		Published: it.Published, FirstSeen: now,
 		Refs: []model.Ref{refOf(it)}, Affected: slices.Clone(it.Affected), Fixes: slices.Clone(it.Fixes),
-		KEV: it.KEV, Techs: techs,
+		Products: slices.Clone(it.Products),
+		KEV:      it.KEV, Techs: techs,
 	}
 	if v.Severity == "" {
 		v.Severity = model.SevUnknown
-	}
-	if v.Published.IsZero() {
-		v.Published = now
 	}
 	l.d.Vulns[v.ID] = v
 	l.index(v)
@@ -164,6 +176,7 @@ func (l *Ledger) AddFinding(f model.Finding) bool {
 		return false
 	}
 	l.d.Findings[f.Key()] = &f
+	l.ofVuln = nil
 	return true
 }
 
@@ -185,8 +198,31 @@ func (l *Ledger) Findings() []model.Finding {
 	return out
 }
 
+// FindingsOf returns copies of one vulnerability's findings, ordered by
+// project, then promotion order of the env.
 func (l *Ledger) FindingsOf(vulnID string) []model.Finding {
-	return slices.DeleteFunc(l.Findings(), func(f model.Finding) bool { return f.VulnID != vulnID })
+	fs := l.findingsOf(vulnID)
+	out := make([]model.Finding, len(fs))
+	for i, f := range fs {
+		out[i] = *f
+	}
+	slices.SortFunc(out, func(a, b model.Finding) int {
+		if c := strings.Compare(a.Project, b.Project); c != 0 {
+			return c
+		}
+		return model.EnvCompare(a.Env, b.Env)
+	})
+	return out
+}
+
+func (l *Ledger) findingsOf(vulnID string) []*model.Finding {
+	if l.ofVuln == nil {
+		l.ofVuln = map[string][]*model.Finding{}
+		for _, f := range l.d.Findings {
+			l.ofVuln[f.VulnID] = append(l.ofVuln[f.VulnID], f)
+		}
+	}
+	return l.ofVuln[vulnID]
 }
 
 // RenameProject moves every finding of a project to a new name, re-keying them.
@@ -205,6 +241,7 @@ func (l *Ledger) RenameProject(from, to string) (int, error) {
 		}
 	}
 	for _, f := range moving {
+		l.ofVuln = nil
 		delete(l.d.Findings, f.Key())
 		f.Project = to
 		l.d.Findings[f.Key()] = f
@@ -246,6 +283,7 @@ func (l *Ledger) RenameEnv(project string, from, to model.Env) (int, error) {
 		}
 	}
 	for _, f := range moving {
+		l.ofVuln = nil
 		delete(l.d.Findings, f.Key())
 		f.Env = to
 		l.d.Findings[f.Key()] = f
@@ -264,10 +302,8 @@ func (l *Ledger) Mutate(key string, fn func(*model.Finding)) bool {
 
 // UpdateFindings lets fn adjust every finding of one vulnerability in place.
 func (l *Ledger) UpdateFindings(vulnID string, fn func(*model.Finding)) {
-	for _, f := range l.d.Findings {
-		if f.VulnID == vulnID {
-			fn(f)
-		}
+	for _, f := range l.findingsOf(vulnID) {
+		fn(f)
 	}
 }
 
@@ -426,6 +462,16 @@ func migrate(s *State) {
 		for _, f := range s.Findings {
 			if !f.AlertedAt.IsZero() && f.Alerted == nil {
 				f.Alerted = map[string]time.Time{"slack": f.AlertedAt} // before channels, Slack was the only one
+			}
+		}
+	}
+	if s.SchemaVersion < 3 {
+		for _, f := range s.Findings {
+			// The match was given up on because nothing of it was installed any
+			// more; that used to be told only by the first reason's wording.
+			if f.Retired == "" && len(f.Installed) == 0 && f.Applies == model.AppNotAffected &&
+				len(f.Reasons) > 0 && strings.HasPrefix(f.Reasons[0], "no longer installed") {
+				f.Retired = model.RetiredUninstalled
 			}
 		}
 	}

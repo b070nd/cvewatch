@@ -10,6 +10,7 @@ import (
 
 	"github.com/b070nd/cvewatch/app/src/config"
 	"github.com/b070nd/cvewatch/app/src/model"
+	"github.com/b070nd/cvewatch/app/src/relevance"
 )
 
 // Judging fingerprints every input of the judgement: per project its
@@ -23,10 +24,14 @@ func (i *Inventory) Judging(cfg *config.Bundle, at time.Time) model.Judging {
 	for _, t := range cfg.Techs {
 		defs[strings.ToLower(t.Name)] = t
 	}
+	policy := sourcePolicy(cfg.Sources)
 	for _, p := range cfg.Projects {
 		h := sha256.New()
 		since := p.Since.UTC()
 		fmt.Fprintf(h, "project %s\nsince %s\n", p.Name, sinceKey(since))
+		// The matching rules, the profile and what each source lets a match
+		// rest on decide verdicts as much as the inventory does.
+		fmt.Fprintf(h, "rules %d\nprofile %s\nsources %s\n", relevance.RulesVersion, p.Profile.Or(cfg.Profile).Or(model.ProfileBalanced), policy)
 		envs := slices.Clone(p.EffectiveEnvs())
 		model.SortEnvs(envs)
 		names := map[string]bool{}
@@ -67,6 +72,18 @@ func (i *Inventory) Judging(cfg *config.Bundle, at time.Time) model.Judging {
 	}
 	j.Hash = hex.EncodeToString(all.Sum(nil)[:12])
 	return j
+}
+
+// sourcePolicy lists the sources that bound what a match may rest on, sorted.
+func sourcePolicy(sources []model.Source) string {
+	var out []string
+	for _, s := range sources {
+		if s.MatchTitleOnly || s.MatchStructured {
+			out = append(out, fmt.Sprintf("%s:%v:%v", s.ID, s.MatchTitleOnly, s.MatchStructured))
+		}
+	}
+	slices.Sort(out)
+	return strings.Join(out, ",")
 }
 
 func sorted(in []string) []string {

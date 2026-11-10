@@ -122,6 +122,7 @@ type Op struct {
 	Image    string         `json:"image,omitempty"`
 	Since    string         `json:"since,omitempty"`    // YYYY-MM-DD, for set_since; empty clears
 	Vendor   string         `json:"vendor,omitempty"`   // for set_vendor; empty clears
+	Profile  string         `json:"profile,omitempty"`  // strict, balanced or discovery, for set_profile; empty clears
 	Every    string         `json:"every,omitempty"`    // a period, for set_update; "default" removes it, empty leaves it
 	Auto     *bool          `json:"auto,omitempty"`     // for set_update; nil leaves it
 	Lockfile model.Lockfile `json:"lockfile,omitempty"` // for set_lockfile_dev its Dev is the new value
@@ -227,6 +228,8 @@ func apply(root *yaml.Node, op Op) error {
 		return setLockfileDev(root, op.Lockfile)
 	case "set_since":
 		return setSince(root, strings.TrimSpace(op.Since))
+	case "set_profile":
+		return setProfile(root, strings.TrimSpace(op.Profile))
 	case "set_update":
 		return setUpdate(root, strings.TrimSpace(op.Every), op.Auto)
 	case "set_vendor":
@@ -388,7 +391,7 @@ func setSince(root *yaml.Node, since string) error {
 		return nil
 	}
 	at := len(root.Content) // a new date goes after the inventory, before what differs per environment
-	for _, k := range []string{"lockfiles", "techs", "envs", "vendor", "name"} {
+	for _, k := range []string{"lockfiles", "techs", "envs", "profile", "vendor", "name"} {
 		if i := mapIndex(root, k); i >= 0 {
 			at = i + 2
 			break
@@ -416,6 +419,38 @@ func setVendor(root *yaml.Node, vendor string) error {
 	}
 	root.Content = append(root.Content[:at], append([]*yaml.Node{str("vendor", 0), str(vendor, 0)}, root.Content[at:]...)...)
 	return nil
+}
+
+func setProfile(root *yaml.Node, profile string) error {
+	if profile == "" { // an empty profile clears it
+		mapDel(root, "profile")
+		return nil
+	}
+	if !model.Profile(profile).Valid() {
+		return fmt.Errorf("invalid profile %q (use %s)", profile, profileNames())
+	}
+	if mapGet(root, "profile") != nil {
+		setStr(root, "profile", profile, 0)
+		return nil
+	}
+	at := len(root.Content) // a new profile goes after the vendor, else after the name
+	for _, k := range []string{"vendor", "name"} {
+		if i := mapIndex(root, k); i >= 0 {
+			at = i + 2
+			break
+		}
+	}
+	root.Content = append(root.Content[:at], append([]*yaml.Node{str("profile", 0), str(profile, 0)}, root.Content[at:]...)...)
+	return nil
+}
+
+// profileNames lists the valid profiles for an error message.
+func profileNames() string {
+	var names []string
+	for _, p := range model.Profiles() {
+		names = append(names, string(p))
+	}
+	return strings.Join(names, ", ")
 }
 
 // ParseEvery reads a period of the update block: a duration such as 30m or 1h,
@@ -457,7 +492,7 @@ func setUpdate(root *yaml.Node, every string, auto *bool) error {
 	}
 	if mapGet(root, "update") == nil {
 		at := 0 // a new block goes after the inventory, before what differs per environment
-		for _, k := range []string{"name", "vendor", "envs", "techs", "lockfiles", "since"} {
+		for _, k := range []string{"name", "vendor", "profile", "envs", "techs", "lockfiles", "since"} {
 			if i := mapIndex(root, k); i >= 0 {
 				at = max(at, i+2)
 			}

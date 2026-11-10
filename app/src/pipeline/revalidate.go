@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"slices"
@@ -11,11 +12,11 @@ import (
 	"github.com/b070nd/cvewatch/app/src/inventory"
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/query"
-	"github.com/b070nd/cvewatch/app/src/relevance"
 )
 
-// heartbeat is how often a long judgement says it is still going.
-var heartbeat = 5 * time.Second
+// heartbeat is how often a long judgement says it is still going, unless the
+// runner sets its own.
+const heartbeat = 5 * time.Second
 
 const (
 	// An irrelevant record keeps this much of its summary and of its product
@@ -38,7 +39,7 @@ func brief(summary string, affected []model.Affected) (string, []model.Affected,
 // that kept no summary is judged by its title.
 func ItemOf(v *model.Vulnerability, sources []model.Source) model.Item {
 	it := model.Item{
-		Title: v.Title, Summary: v.Summary, IDs: v.Keys(), Affected: v.Affected, Severity: v.Severity,
+		Title: v.Title, Summary: v.Summary, IDs: v.Keys(), Affected: v.Affected, Products: v.Products, Severity: v.Severity,
 		Published: v.Published, TitleOnly: v.Summary == "",
 	}
 	if len(v.Refs) > 0 {
@@ -54,7 +55,7 @@ func ItemOf(v *model.Vulnerability, sources []model.Source) model.Item {
 type Change struct {
 	ID       string   `json:"id"`
 	Title    string   `json:"title"`
-	Action   string   `json:"action"` // new | closed | reopened
+	Action   string   `json:"action"` // new | closed | reopened | retired
 	Projects []string `json:"projects"`
 }
 
@@ -68,6 +69,7 @@ type Revalidation struct {
 	EnvClosed   int      `json:"env_closed,omitempty"`   // open findings closed because their environment is no longer declared
 	EnvReopened int      `json:"env_reopened,omitempty"` // those that reopened because the environment is declared again
 	Reconciled  int      `json:"reconciled"`             // open findings whose installed version or presence changed
+	Retired     int      `json:"retired,omitempty"`      // of those, findings given up because the advisory no longer matches what is installed
 	Unchanged   int      `json:"unchanged"`              // findings nothing happened to
 	Projects    []string `json:"projects_changed"`
 	Changes     []Change `json:"changes,omitempty"`
@@ -88,6 +90,15 @@ type Revalidation struct {
 // what the findings are now judged against. Without apply nothing is changed.
 // The caller saves the ledger.
 func (r *Runner) Revalidate(apply bool) (Revalidation, error) {
+	return r.RevalidateContext(context.Background(), apply)
+}
+
+// RevalidateContext permits cancellation while evaluating. Once report/audit
+// writes begin the caller must finish saving, even if cancellation arrives.
+func (r *Runner) RevalidateContext(ctx context.Context, apply bool) (Revalidation, error) {
+	if err := ctx.Err(); err != nil {
+		return Revalidation{}, err
+	}
 	run := r
 	if !apply {
 		clone, err := r.Ledger.Clone()
@@ -99,63 +110,94 @@ func (r *Runner) Revalidate(apply bool) (Revalidation, error) {
 		run = &copied
 	}
 	c := newCycle(run)
+	c.holdUnmatched = false // asking for a revalidation is the person's decision to retire what is disproved
 	cur := c.inv.Judging(run.Cfg, c.now)
 	started := time.Now()
 	r.Log.Info("revalidating", "advisories", len(run.Ledger.State().Vulns), "findings", len(run.Ledger.Findings()), "apply", apply)
-	rv := c.revalidate(inventory.Compare(run.Ledger.Judged(), cur, run.Cfg.Horizon, c.now), cur, false)
-	rv.Applied = apply
-	r.Log.Info("revalidated", "elapsed", time.Since(started).Round(time.Millisecond), "new_findings", rv.NewFindings, "closed", rv.Closed+rv.EnvClosed,
+	rv, err := c.revalidate(ctx, inventory.Compare(run.Ledger.Judged(), cur, run.Cfg.Horizon, c.now), cur, false)
+	if err != nil {
+		return rv, err
+	}
+	r.Log.Info("revalidated", "phase", "evaluation", "committed", false, "elapsed", time.Since(started).Round(time.Millisecond), "new_findings", rv.NewFindings, "closed", rv.Closed+rv.EnvClosed,
 		"reopened", rv.Reopened+rv.EnvReopened, "reconciled", rv.Reconciled, "unchanged", rv.Unchanged)
+	if err := ctx.Err(); err != nil {
+		return rv, err
+	}
 	if !apply {
 		return rv, nil
 	}
+	r.Log.Info("writing revalidation reports and audit", "phase", "save")
 	if err := c.writeReports(); err != nil {
 		return rv, err
 	}
-	return rv, run.Audit.Append(c.events...)
+	if err := run.Audit.Append(c.events...); err != nil {
+		return rv, err
+	}
+	rv.Applied = true
+	return rv, nil
 }
 
 // revalidateIfStale is Revalidate for the start of a cycle: it runs only when
 // the recorded judging differs from the configuration, and leaves its reports,
 // audit events and counts to the cycle.
-func (c *cycle) revalidateIfStale() {
+func (c *cycle) revalidateIfStale(ctx context.Context) error {
 	cur := c.inv.Judging(c.r.Cfg, c.now)
 	d := inventory.Compare(c.r.Ledger.Judged(), cur, c.r.Cfg.Horizon, c.now)
 	if !d.Stale() {
-		return
+		return nil
 	}
-	rv := c.revalidate(d, cur, true)
+	rv, err := c.revalidate(ctx, d, cur, true)
+	if err != nil {
+		return err
+	}
 	rv.Applied = true
 	c.res.Revalidation = &rv
 	c.res.Findings += rv.NewFindings
 	c.r.Log.Info("revalidated after a configuration change", "projects", strings.Join(rv.Projects, ","),
 		"new_findings", rv.NewFindings, "closed", rv.Closed, "reopened", rv.Reopened, "reconciled", rv.Reconciled)
+	return nil
 }
 
 // revalidate runs the steps. A quiet run, the automatic one at the start of a
 // cycle, leaves no audit event when it changed nothing.
-func (c *cycle) revalidate(d inventory.Delta, cur model.Judging, quiet bool) Revalidation {
+func (c *cycle) revalidate(ctx context.Context, d inventory.Delta, cur model.Judging, quiet bool) (Revalidation, error) {
 	l := c.r.Ledger
 	rv := Revalidation{Projects: d.Changed, Backfill: d.Backfill}
+	if err := ctx.Err(); err != nil {
+		return rv, err
+	}
 	total := len(l.Findings())
 	c.applyEnvs(&rv, nil)
 	c.applySince(&rv)
-	c.rejudge(&rv, nil)
+	reconciled, retired := c.res.Reconciled, len(c.retired)
+	if err := c.rejudge(ctx, &rv, nil); err != nil {
+		return rv, err
+	}
 	c.markBackfill(d.Backfill, &rv)
-	reconciled := c.res.Reconciled
-	c.reconcile(nil)
-	rv.Reconciled = c.res.Reconciled - reconciled
+	rv.Reconciled, rv.Retired = c.res.Reconciled-reconciled, len(c.retired)-retired
+	for _, f := range c.retired[retired:] { // records are settled in id order, so these are grouped by id
+		if n := len(rv.Changes); n == 0 || rv.Changes[n-1].ID != f.VulnID || rv.Changes[n-1].Action != "retired" {
+			title := ""
+			if v := l.Vuln(f.VulnID); v != nil {
+				title = query.Clip(v.Title, 120)
+			}
+			rv.Changes = append(rv.Changes, Change{ID: f.VulnID, Title: title, Action: "retired"})
+		}
+		if ch := &rv.Changes[len(rv.Changes)-1]; !slices.Contains(ch.Projects, f.Project) {
+			ch.Projects = append(ch.Projects, f.Project)
+		}
+	}
 	rv.Unchanged = max(0, total-rv.Closed-rv.Reopened-rv.EnvClosed-rv.EnvReopened-rv.Reconciled)
 
 	cur.At = c.now
 	l.SetJudged(cur)
 	if quiet && rv.NewFindings+rv.Closed+rv.Reopened+rv.EnvClosed+rv.EnvReopened+rv.Reconciled == 0 {
-		return rv
+		return rv, nil
 	}
 	c.events = append(c.events, audit.Event{Time: c.now, Actor: c.r.actor(), Action: "revalidate", Project: strings.Join(rv.Projects, ","),
 		Note: fmt.Sprintf("%d new findings, %d closed, %d reopened, %d reconciled, %d unchanged",
 			rv.NewFindings, rv.Closed+rv.EnvClosed, rv.Reopened+rv.EnvReopened, rv.Reconciled, rv.Unchanged)})
-	return rv
+	return rv, nil
 }
 
 func (r *Runner) actor() string {
@@ -274,63 +316,62 @@ func (c *cycle) setAuto(key string, st model.Status, auto bool, note, prior stri
 	})
 }
 
-// rejudge judges every stored record again, creating findings where the
-// current configuration matches and none exists. It never removes any. With
-// only (nil: all) it looks at the targets of those projects.
-func (c *cycle) rejudge(rv *Revalidation, only map[string]bool) {
+// rejudge settles every stored record against the current configuration:
+// findings are created where it matches and none exists, follow the
+// inventory, and are retired where the match is disproved. With only (nil:
+// all) it looks at the targets of those projects.
+func (c *cycle) rejudge(ctx context.Context, rv *Revalidation, only map[string]bool) error {
 	l := c.r.Ledger
-	targets := slices.DeleteFunc(slices.Clone(c.inv.Targets()), func(t relevance.Target) bool { return !has(only, t.Project) })
+	m := c.matcher(only)
 	ids := slices.Sorted(maps.Keys(l.State().Vulns))
 	started := time.Now()
-	next := started.Add(heartbeat)
+	beat := c.r.Heartbeat
+	if beat == 0 {
+		beat = heartbeat
+	}
+	next := started.Add(beat)
 	for i, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if now := time.Now(); !now.Before(next) {
 			c.r.Log.Info("still judging stored advisories", "done", i, "of", len(ids), "elapsed", now.Sub(started).Round(time.Second), "new_findings", rv.NewFindings)
-			next = now.Add(heartbeat)
+			next = now.Add(beat)
 		}
 		v := l.Vuln(id)
-		verdict := c.judge.Judge(ItemOf(v, c.r.Cfg.Sources), targets)
-		if len(verdict.Matches) == 0 {
-			continue
-		}
-		made := AddFindings(l, v.ID, verdict.Matches, c.now)
+		made := c.settle(v, m, true)
 		if len(made) == 0 {
 			continue
 		}
 		c.detected(made, "matched an advisory already stored")
 		rv.NewFindings += len(made)
 		ch := Change{ID: v.ID, Title: query.Clip(v.Title, 120), Action: "new"}
-		for _, m := range verdict.Matches {
-			if !slices.Contains(ch.Projects, m.Project) {
-				ch.Projects = append(ch.Projects, m.Project)
-			}
-		}
-		for _, t := range verdict.Techs {
-			if !slices.Contains(v.Techs, t) {
-				v.Techs = append(v.Techs, t)
+		for _, f := range made {
+			if !slices.Contains(ch.Projects, f.Project) {
+				ch.Projects = append(ch.Projects, f.Project)
 			}
 		}
 		rv.Changes = append(rv.Changes, ch)
-		c.dirty[v.ID] = true
 	}
+	return ctx.Err()
 }
 
 // catchUp brings the projects of a restricted run up to date with what the
 // runs that skipped them stored: advisories that match them and affected data
 // that arrived late. A run of every project has nothing to catch up on.
-func (c *cycle) catchUp() {
+func (c *cycle) catchUp(ctx context.Context) error {
 	if c.r.Only == nil {
-		return
+		return nil
 	}
 	var rv Revalidation
-	c.rejudge(&rv, c.r.Only)
+	if err := c.rejudge(ctx, &rv, c.r.Only); err != nil {
+		return err
+	}
 	c.res.Findings += rv.NewFindings
 	for _, ch := range rv.Changes {
 		c.res.Fresh[ch.ID] = true
 	}
-	for _, v := range c.r.Ledger.Relevant() {
-		c.reassess(v)
-	}
+	return nil
 }
 
 // markBackfill asks every source that has not covered back to the date to

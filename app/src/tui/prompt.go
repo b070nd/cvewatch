@@ -10,6 +10,7 @@ import (
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/ops"
 	"github.com/b070nd/cvewatch/app/src/projectfile"
+	"github.com/b070nd/cvewatch/app/src/query"
 )
 
 type promptKind int
@@ -197,22 +198,16 @@ func noteHint(st model.Status) string {
 	return "enter saves now; the note is optional (a merge request or ticket link is a good one)"
 }
 
-// bulkChanges are the changes that give every selected issue the status st:
-// on its open environments, or on the closed ones when reopening.
+// bulkChanges are the changes that give every selected issue of the context
+// the status st; ops decides which environments that touches.
 func (m *app) bulkChanges(st model.Status, note string) []ops.Change {
-	var out []ops.Change
+	var picked []query.Issue
 	for _, is := range m.dataIssues() {
-		if !m.fnd.sel[issueKey(is)] || !m.inContext(rowProject(is)) {
-			continue
-		}
-		for _, t := range is.Targets {
-			if (st == model.StatusOpen) == (t.Status == model.StatusOpen) {
-				continue
-			}
-			out = append(out, ops.Change{ID: is.ID, Project: t.Project, Env: t.Env, Status: st, Note: note})
+		if m.fnd.sel[issueKey(is)] && m.inContext(rowProject(is)) {
+			picked = append(picked, is)
 		}
 	}
-	return out
+	return ops.StatusChanges(picked, st, note)
 }
 
 // startBulk asks for one note for the status change of every selected issue.
