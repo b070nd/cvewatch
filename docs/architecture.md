@@ -9,7 +9,7 @@ One package per concern under `app/src`. The arrows show who depends on whom; th
 | `inventory` | what runs in each project environment; `judging.go` fingerprints the judging inputs (projects, techs per environment, lockfile packages, catalog terms, `since`, horizon) and `Compare` says what changed and how far back the sources must reach | `matrix` adapters |
 | `matrix` | reading lockfiles and SBOMs | one adapter per type (ten today) |
 | `ecosystem` | package names, aliases, normalization | none: pure |
-| `relevance` | what an item is about, which environments run it, version verdict, reasons; skips items published before a project's `since` date or outside the alert horizon (`Window`) | none: pure rules |
+| `relevance` | what an item is about, which environments run it, the basis of each match, version verdict, reasons, matching profiles; `Compile` indexes the inventory once per run and the resulting matcher is immutable; skips items published before a project's `since` date or outside the alert horizon (`Window`) | none: pure rules |
 | `version` | comparing versions and ranges per ecosystem (semver, PEP 440, Maven, Go); kernel build suffixes such as `6.8.0-45-generic` or `+deb12u1` do not order | schemes per ecosystem |
 | `ledger` | domain state and identity: known issues, aliases, merging, findings, status, history, the judging record and each source's back-fill marks | none: in memory |
 | `store` | persisting the ledger's `State`, optimistic revisions, lock-free `Reader` snapshots | `store.Storage`: file, memory, SQLite |
@@ -96,6 +96,8 @@ Rules of thumb kept by the structure:
 - A new project edit kind is one row in `projectfile.OpTable` and its case in `apply`. The parity tests then check its CLI flag (`TestEveryOpKindHasACLIFlag`) and the MCP schema (`TestProjectSchemaCoversTheOpTable`). `setup/opkinds.go` must also list the kind in `OpKinds` or `NotYet`, which a test enforces. The TUI editor's own `OpKinds` list in `fields.go` is kept by hand.
 - A new screen is one row in the screens table (`screens.go`).
 - Front ends hold no behaviour. `cmd/cvewatch`, `mcpserver`, `wizard` and `tui` parse input and draw output; setup rules live in `setup`, operations in `ops`, and the folder-to-flow and flow-to-edits steps in `projectflow`.
+- Access is one decision, taken first. `scope`, `mayRead`, `mayWrite` and `mayPublish` in `ops` are asked before an operation validates input, reads a file or computes anything.
+- Interactive front ends draw `ops.Workspace` and change many findings through `ops.ResolveAll`; filtering, counting and due-ness are `query.Narrow`, `query.Count`, `TimeRange.Keep` and `status.Report.UpdateDue`.
 - Viewers never block the daemon: reads use a snapshot without the lock, and every write is one short session that retries once if another process saved first.
 - Long work reports through callbacks and never blocks a key. `Runner.Progress` and `RefreshWith` only report; the TUI turns the reports into messages, and a fetch that finds the store busy is retried later instead of failing.
 - Stored advisories are judged again only by `pipeline.Revalidate`, on request or at the start of a cycle when `inventory.Compare` finds the judging inputs changed. A new judging input goes into `inventory.Judging`, not into a front end.

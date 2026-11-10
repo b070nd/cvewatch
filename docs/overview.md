@@ -627,6 +627,7 @@ techs: [{name: php, version: "8.2"}]
 
 - A vulnerability published before `since` creates no findings for that project. The day itself counts, from 00:00 UTC. Other projects are not affected.
 - Items with no publish date are still checked.
+- A KEV listing date is not a vulnerability's publication date. KEV-only records keep publication unknown until another source supplies it; `since` cannot exclude an undated record. First seen and the KEV listing date remain separate facts.
 - A later article about an old CVE uses the earliest publish date already known for that CVE. So a new article does not bring an old CVE into a project that starts later.
 - Findings that already exist for older advisories are closed by the next judgement of the configuration (see [Changing the configuration](#changing-the-configuration)): as not affected, with the note `published before this project's since date (2026-01-01); closed automatically`. Moving the date earlier, or removing it, reopens the ones cvewatch closed. A status you set yourself is never changed. To decide one yourself, use `cvewatch ignore ID -project middleware -env prod -note "..."` or `cvewatch not-affected`.
 - `cvewatch why ID` shows each project that skipped the item for this reason:
@@ -784,10 +785,26 @@ An item matches an environment when it is about a technology it runs, or names a
 - **By text, when there is no structured data.** An alias as a whole word in the title or summary (`excludes` veto it; `match_title_only` limits a source to the title; `match_structured` on the NVD source makes technologies with CPE names wait for NVD's product data).
 - **Versions.** When the feed gives affected ranges, the installed version is compared: `affected`, `not affected`, or `unchecked` when no range or version is available, or a declared series such as `8.2` cannot be decided against a patch-level bound. Findings known to be `not affected` are kept but hidden and never alerted (`-all` shows them). News and Hacker News carry no versions, so those findings stay `unchecked`.
 - **Kernel and distribution versions.** `6.12.85+`, `6.8.0-45-generic`, `6.12.85-1ubuntu1` and `6.12.85+deb12u1` order by their numbers (`6.12.85`, `6.8.0`). The build suffix is ignored for ordering and does not make a pre-release, so `6.12.86-generic` is not before a fix at `6.12.86`, and a range below `6.12.86` covers `6.12.85+`.
-- **Late data.** If ranges arrive later (a CVE first seen in the news, then analysed by NVD), existing findings are re-checked. If your inventory changes, open findings are re-checked too, and the finding's history says what changed.
+- **Late data.** If ranges or product names arrive later (a CVE first seen in the news, then analysed by NVD), existing findings are judged again with the same rules as new ones. If your inventory changes, open findings follow it, and the finding's history says what changed.
+- **Why it matched (basis).** Every match records its basis: `cpe`, `package` or `product` (the advisory's own product data), or `title` or `text` (a mention). Reports, `why`, exports and the TUI show it. `cvewatch search basis:weak` lists findings that rest on a mention only.
+- **Retiring a match.** A finding is retired only on proof: what matched is no longer installed, or the advisory's own product data names something else, or the project's `strict` profile no longer accepts a text match. A match the stored record merely does not repeat stays, and so does everything behind a lockfile that cannot be read. A retired finding stays open with nothing installed and counts as not affected, so it is not listed or alerted; status, owner, notes and evidence are never touched. It comes back when the match holds again. `cvewatch revalidate` (without `-apply`) lists what would be retired.
 - **Check the CPE names** in `techs.yaml`. The repository's CI compares them with an independent list of NVD product names, and `cvewatch doctor -online` asks NVD. A wrong name hides real advisories.
 
-`techs.yaml` can change at any time. Saving a change judges the stored advisories again (see [Changing the configuration](#changing-the-configuration)): a new keyword or CPE name creates the findings it now matches, and nothing is removed. `cvewatch why ID` shows the recorded reasons next to what today's config says.
+`techs.yaml` can change at any time. Saving a change judges the stored advisories again (see [Changing the configuration](#changing-the-configuration)): a new keyword or CPE name creates the findings it now matches, and a match that is disproved is retired (see above). `cvewatch why ID` shows the recorded reasons next to what today's config says.
+
+### Matching profiles
+
+`profile` says how much evidence a match needs. Set it for everything in `config.yaml`, or per project in the project file (`cvewatch project NAME -profile strict`; `default` clears it).
+
+| Profile | Creates a finding from | Alerts |
+|---|---|---|
+| `strict` | the advisory's own product data only (`cpe`, `package`, `product`) | all findings |
+| `balanced` (default) | product data; a mention counts only when the advisory names no product | all findings |
+| `discovery` | as balanced, plus mentions still waiting for NVD's product data | not for findings that rest on a mention only |
+
+Changing a profile judges the stored advisories again: `strict` retires text matches, and switching back restores them.
+
+`retire` in `config.yaml` says who retires a disproved match: `auto` (default) lets every update do it; `manual` makes an update only report how many there are, and `cvewatch revalidate -apply` retires them. What is no longer installed is always retired by the update itself.
 
 ## Same issue, one record
 

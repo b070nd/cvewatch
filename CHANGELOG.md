@@ -6,7 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Match basis: every finding records why it matched (`cpe`, `package`, `product`, `title`, `text`). It is shown in reports, `why`, the TUI, JSON and CSV exports (new last column `basis`), and `search basis:weak` finds matches that rest on a mention.
+- Matching profiles `strict`, `balanced` (default) and `discovery`, global (`profile:` in `config.yaml`) or per project (`profile:` in the project file, `cvewatch project NAME -profile P`, MCP `set_profile`).
+- A match that is disproved is retired: the finding stays open, counts as not affected and says why (`retired`: `uninstalled` or `unmatched`). It returns when the match holds again. `revalidate` reports the count and lists them.
+- `retire: auto | manual` in `config.yaml`: with `manual` an update leaves disproved matches as they are and reports how many (`retirable`); `cvewatch revalidate -apply` retires them.
+- `ops.Workspace` (everything an interactive front end shows, scoped to the actor) and `ops.ResolveAll` (many status changes as one operation: one save, one audit record per change).
+
 ### Changed
+- Findings are judged by one rule set at every point: a new item, late data, a changed inventory and a revalidation now give the same result for the same advisory, whatever order the reports arrived in. After this upgrade the first update judges the stored advisories again once.
+- Judging uses an index of the inventory built once per run, so its cost follows the size of the advisory, not the number of installed packages.
+- `why` judges only the projects and environment asked for and visible to the actor; its notes no longer mention other projects.
+- Access is decided before anything else in every operation: a refusal no longer says whether a project exists (`fix`, `ignore`, `assign`, `evidence add`, project edits, lifecycle, `inventory`), and a file-name collision no longer names another actor's project.
+- `dashboard` and `calendar` write their shared page only for an actor that sees every project and may change things; others get a refusal (`dashboard -out FILE` and `calendar -text` still give them their own view).
+- Bulk status changes in the TUI are one operation: the ledger is saved once and each issue's report is rewritten once.
+- The TUI no longer decides what is visible, which environments a bulk change touches, or when an update is due: it asks `ops`, `query` and `status`.
+
+### Fixed
+- When two records of the same issue are merged and both have a finding for the same project and environment, which one is kept no longer depends on chance.
 - `cvewatch revalidate` and the judging at the start of an update are about five times faster on a large store: a technology name is looked up in the text of a stored advisory without a regular expression for plain ASCII text. The answers are the same.
 - `revalidate` writes progress to stderr, so `-json` on stdout stays machine-readable: a start line with the number of stored advisories, a line every five seconds with how many are judged, and a closing line with the time it took and the counts.
 

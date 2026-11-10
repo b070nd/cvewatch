@@ -37,6 +37,8 @@ cvewatch search -- -wordpress
 
 Without `-open`, every status counts: open, fixed, ignored and not affected. Each issue lists its environments with their status.
 
+`-open` filters workflow status only: it includes open findings whose installed version is known `not_affected`. `list` hides those by default, so its count can be smaller. Use `list -all` to include them there, or add `-applies:not_affected` to a search query to exclude them. The `status:open` field has the same workflow-only meaning.
+
 The output starts with `Matches: N` and groups the issues by severity, as `list` does. Every issue lists only the environments that match: a project, vendor or environment filter, or a term of the query, removes the other rows from the issue, so rows of different projects are never mixed. A word that equals an ID or an alias puts that issue first. The other issues keep the order of `list`. If nothing matches, the output says `No issue matches "..."`.
 
 ### A query that starts with a dash
