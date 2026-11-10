@@ -326,7 +326,7 @@ func (c *cycle) rejudge(ctx context.Context, rv *Revalidation, only map[string]b
 	ids := slices.Sorted(maps.Keys(l.State().Vulns))
 	started := time.Now()
 	beat := c.r.Heartbeat
-	if beat <= 0 {
+	if beat == 0 {
 		beat = heartbeat
 	}
 	next := started.Add(beat)

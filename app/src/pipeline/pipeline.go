@@ -52,7 +52,8 @@ type Runner struct {
 	Progress func(Progress) // optional; see Progress
 	Actor    string         // who acts in the audit trail; default "cvewatch"
 	// Heartbeat is how often a long judgement logs that it is still going;
-	// zero means every five seconds.
+	// zero means every five seconds, a negative value every record (which
+	// does not depend on how fine the clock is).
 	Heartbeat time.Duration
 	// BackfillOnly polls just the sources that still owe a back-fill and skips
 	// enrichment, pruning and digests: the quick run after a config change.
