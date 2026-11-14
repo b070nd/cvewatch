@@ -1,8 +1,10 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,6 +34,23 @@ func adapters() []adapter {
 				return st
 			}
 			return open(), open
+		}},
+		{"postgres", func(t *testing.T) (Storage, func() Storage) {
+			dsn := os.Getenv("CVEWATCH_TEST_DSN")
+			if dsn == "" {
+				t.Skip("set CVEWATCH_TEST_DSN to a PostgreSQL database to test the postgres adapter")
+			}
+			schema := fmt.Sprintf("cvewatch_test_%d", time.Now().UnixNano())
+			open := func() Storage {
+				st, err := openPostgres(dsn, schema)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return st
+			}
+			first := open()
+			t.Cleanup(func() { dropSchema(dsn, schema) }) // the adapter may be closed by now: use a new connection
+			return first, open
 		}},
 		{"memory", func(t *testing.T) (Storage, func() Storage) {
 			m := NewMemory()
@@ -253,7 +272,7 @@ func TestOpenFactory(t *testing.T) {
 	dir := t.TempDir()
 	for backend, file := range map[string]string{"": "state.json", "file": "state.json", "sqlite": "state.db"} {
 		sub := filepath.Join(dir, "b-"+backend)
-		st, err := Open(backend, sub)
+		st, err := Open(Place{Backend: backend, Dir: sub})
 		if err != nil {
 			t.Fatalf("backend %q: %v", backend, err)
 		}
@@ -265,7 +284,7 @@ func TestOpenFactory(t *testing.T) {
 			t.Fatalf("backend %q: %v", backend, err)
 		}
 	}
-	_, err := Open("postgres", dir)
+	_, err := Open(Place{Backend: "oracle", Dir: dir})
 	if err == nil || !strings.Contains(err.Error(), `"postgres"`) ||
 		!strings.Contains(err.Error(), "file") || !strings.Contains(err.Error(), "sqlite") {
 		t.Fatalf("error must name the bad backend and the valid ones: %v", err)
@@ -330,7 +349,7 @@ func TestReaderSeesStateWithoutTheLock(t *testing.T) {
 	for _, backend := range []string{"file", "sqlite"} {
 		t.Run(backend, func(t *testing.T) {
 			dir := t.TempDir()
-			w, err := Open(backend, dir) // the writer holds its lock for the whole test
+			w, err := Open(Place{Backend: backend, Dir: dir}) // the writer holds its lock for the whole test
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -341,7 +360,7 @@ func TestReaderSeesStateWithoutTheLock(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			r, err := OpenReader(backend, dir)
+			r, err := OpenReader(Place{Backend: backend, Dir: dir})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -352,11 +371,109 @@ func TestReaderSeesStateWithoutTheLock(t *testing.T) {
 			}
 		})
 	}
-	if _, err := OpenReader("nope", t.TempDir()); err == nil {
+	if _, err := OpenReader(Place{Backend: "nope", Dir: t.TempDir()}); err == nil {
 		t.Fatal("unknown backend")
 	}
-	r, _ := OpenReader("file", t.TempDir())
+	r, _ := OpenReader(Place{Backend: "file", Dir: t.TempDir()})
 	if s, err := r.Load(); err != nil || len(s.Vulns) != 0 {
 		t.Fatalf("a missing state is empty: %v", err)
 	}
+}
+
+// A save writes only the rows that changed, and a stale writer is refused.
+func TestPostgresWritesOnlyWhatChanged(t *testing.T) {
+	dsn := os.Getenv("CVEWATCH_TEST_DSN")
+	if dsn == "" {
+		t.Skip("set CVEWATCH_TEST_DSN to a PostgreSQL database to test the postgres adapter")
+	}
+	schema := fmt.Sprintf("cvewatch_test_%d", time.Now().UnixNano())
+	a, err := openPostgres(dsn, schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { dropSchema(dsn, schema); a.db.Close() }()
+	b, err := openPostgres(dsn, schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+
+	l := ledger.New(load(t, a))
+	for _, id := range []string{"CVE-2026-1", "CVE-2026-2", "CVE-2026-3"} {
+		l.Create(model.Item{Title: "bug " + id, URL: "https://a.test/" + id, IDs: []string{id}}, time.Now(), nil)
+	}
+	if err := a.Save(l.State()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Rows are stamped by the database, so a row that is written again changes its xmin.
+	xmin := func() map[string]string {
+		out := map[string]string{}
+		rows, err := a.db.Query(`SELECT id, xmin::text FROM ` + a.t("vulns"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id, x string
+			rows.Scan(&id, &x)
+			out[id] = x
+		}
+		return out
+	}
+	before := xmin()
+	l = ledger.New(load(t, a))
+	l.Vuln("CVE-2026-2").Title = "changed"
+	if err := a.Save(l.State()); err != nil {
+		t.Fatal(err)
+	}
+	after := xmin()
+	if before["CVE-2026-1"] != after["CVE-2026-1"] || before["CVE-2026-3"] != after["CVE-2026-3"] || before["CVE-2026-2"] == after["CVE-2026-2"] {
+		t.Fatalf("only CVE-2026-2 may be written: %v -> %v", before, after)
+	}
+
+	// b loaded before a's last save: its save is refused, and nothing of it lands.
+	stale := ledger.New(load(t, b))
+	l = ledger.New(load(t, a))
+	l.Vuln("CVE-2026-1").Title = "from a"
+	if err := a.Save(l.State()); err != nil {
+		t.Fatal(err)
+	}
+	stale.Vuln("CVE-2026-3").Title = "from b"
+	if err := b.Save(stale.State()); !errors.Is(err, ErrConflict) {
+		t.Fatalf("a stale writer must conflict: %v", err)
+	}
+	if got := ledger.New(load(t, a)).Vuln("CVE-2026-3").Title; got == "from b" {
+		t.Fatal("a refused save must not land")
+	}
+
+	// A row that left the ledger is deleted.
+	l = ledger.New(load(t, a))
+	delete(l.State().Vulns, "CVE-2026-3")
+	if err := a.Save(l.State()); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(xmin()); n != 2 {
+		t.Fatalf("the removed row must be gone, %d rows left", n)
+	}
+}
+
+func TestPostgresNeverEchoesTheDSN(t *testing.T) {
+	_, err := OpenPostgres("postgresql://botond:hunter2@127.0.0.1:1/cvewatch?connect_timeout=1")
+	if err == nil || strings.Contains(err.Error(), "hunter2") {
+		t.Fatalf("an unreachable database must fail without the password: %v", err)
+	}
+	if _, err := OpenPostgres(""); err == nil || !strings.Contains(err.Error(), "DSN") {
+		t.Fatalf("an empty DSN needs a clear message: %v", err)
+	}
+}
+
+// dropSchema removes a test schema over a connection of its own.
+func dropSchema(dsn, schema string) {
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		return
+	}
+	defer db.Close()
+	db.Exec(`DROP SCHEMA IF EXISTS ` + schema + ` CASCADE`)
 }

@@ -263,7 +263,7 @@ func checkState(r *Report, cfg *config.Bundle) {
 			r.add(gState, d.name, OK, "%s", d.dir)
 		}
 	}
-	st, err := store.Open(cfg.Storage.Backend, cfg.DataDir)
+	st, err := store.Open(cfg.Place())
 	if errors.Is(err, store.ErrBusy) {
 		r.add(gState, "state", Warn, "another cvewatch process holds the data (is the daemon running?)")
 		return
