@@ -89,6 +89,7 @@ Other
   mcp [-allow-write]                           MCP server on stdio; read-only unless -allow-write
   check                                        validate configuration (doctor does more)
   audit                                        verify the audit log chain
+  storage copy -to file|sqlite|postgres [-force]   copy the state to another backend (then set storage.backend)
   version                                      print the version
 
 S is low, medium, high or critical. -all also lists versions known to be unaffected.
@@ -225,6 +226,8 @@ func dispatch(ctx context.Context, root string, log *slog.Logger, args []string)
 		return check(root)
 	case "audit":
 		return verifyAudit(root)
+	case "storage":
+		return storageCmd(root, rest)
 	case "version":
 		fmt.Println("cvewatch", version)
 		return nil
