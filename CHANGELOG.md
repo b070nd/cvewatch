@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-11-17
+
+### Security
+- Built with Go 1.27.4, which fixes GO-2026-6859 in the standard library's `net/http`. The release binaries and the container image use it.
+
+### Changed
+- The README carries the badge of the cvewatch listing on m8ven.ai.
+
 ## [2.1.0] - 2026-11-11
 
 ### Added
