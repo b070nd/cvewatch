@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/b070nd/cvewatch/app/src/projectfile"
 	"github.com/b070nd/cvewatch/app/src/setup"
@@ -114,10 +115,13 @@ func TestFieldEditorEditsEveryKindOfFieldAndKeepsComments(t *testing.T) {
 		t.Fatal("looking wrote something")
 	}
 
-	// since: a text prompt that starts with the current value
+	// since: a range to choose from, with a custom entry that starts with the current value
 	d.toField(4)
 	d.press("enter")
-	d.want("Since date of shop", "> Since", "2026-01-01", "YYYY-MM-DD", "older advisories are ignored", "reopens them")
+	d.want("Since: where the history of shop starts", "Past 24 hours", "Past week", "Past month", "Past year", "Any time", "Custom", "older advisories are ignored", "reopens them")
+	d.pickTo("Custom")
+	d.press("enter")
+	d.want("Since of shop", "> Since", "2026-01-01", "a span back from now")
 	d.press("ctrl+u")
 	d.typ("2026-03-05")
 	d.press("enter")
@@ -128,7 +132,9 @@ func TestFieldEditorEditsEveryKindOfFieldAndKeepsComments(t *testing.T) {
 	save("set since to 2026-03-05", "set_since")
 	d.want("Edit fields of shop", "2026-03-05")
 	d.toField(4)
-	d.press("enter", "ctrl+u", "enter")
+	d.press("enter")
+	d.pickTo("Any time")
+	d.press("enter")
 	d.want("clear since")
 	save("clear since", "set_since")
 	if strings.Contains(fileAt(t, root, "config/projects/shop.yaml"), "since:") {
@@ -402,10 +408,12 @@ func TestEditRejectionKeepsTheTypedText(t *testing.T) {
 	d.screen("projects")
 	d.press("down", "c")
 	d.toField(4)
+	d.press("enter")
+	d.pickTo("Custom")
 	d.press("enter", "ctrl+u")
 	d.typ("next tuesday")
 	d.press("enter")
-	d.want("problem:", "Since date of shop", "next tuesday")
+	d.want("problem:", "Since of shop", "next tuesday")
 	d.wantNot("Save this change?")
 	d.press("ctrl+u")
 	d.typ("2026-02-01")
@@ -631,4 +639,27 @@ func TestFieldEditorFootersAndHelp(t *testing.T) {
 	}
 	d.press("?")
 	d.want("Keys in the list of a field", "environments: rename the selected one")
+}
+
+func TestSinceRangePicksASpanBackFromNow(t *testing.T) {
+	b, root := diskFake(t, nil)
+	d := start(t, b, Options{})
+	d.screen("projects")
+	d.press("down", "c")
+	d.toField(4)
+	d.press("enter")
+	d.pickTo("Past month")
+	want, err := projectfile.ParseSince("1m", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	day := projectfile.FormatSince(want)
+	d.want("from " + day)
+	d.press("enter")
+	d.want("+ since: " + day)
+	d.press("y")
+	d.want("ok: saved shop: set since to " + day)
+	if got := fileAt(t, root, "config/projects/shop.yaml"); !strings.Contains(got, "since: "+day) {
+		t.Fatalf("the span is saved as the day it means:\n%s", got)
+	}
 }

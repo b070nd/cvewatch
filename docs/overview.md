@@ -209,6 +209,7 @@ Below the summary, the list holds every open issue. It is searched and sorted li
 | Up, Down | select a problem or an error |
 | PgUp, PgDn, Home, End | scroll the page |
 | Enter | go to the project the problem or error names, else show it in full |
+| `d` | start the daemon in the background, or stop it when it runs (see [Is it working?](#is-it-working)) |
 | `C` | choose the context |
 
 **Findings**
@@ -458,8 +459,10 @@ On the Projects screen, `c` opens the fields of the selected project. Inside a p
 | Technologies | each generic technology and its version | Enter changes the version; `+` (or `a`) adds a technology from the catalog; `K` adds one of your own; `e` chooses where it runs, in every environment or only in the ones you pick; `-` (or `x`) removes it after a question |
 | Differences per environment | only what differs in an environment, one row each: another version (`prod  php 8.2.30`), a technology that runs only there (`+varnish 7.4`), a technology it leaves out (`-xdebug`) or its image | `+` (or `a`) adds one: pick the environment, then the technology and version, the technology to leave out, or the image; Enter changes one; `-` (or `x`) removes one after a question; `m` rewrites an old `environments:` block as `when@<env>` blocks |
 | Lockfiles | the type, path, environment and dev flag of each lockfile | Enter or `d` toggles dev; `+` (or `a`) adds a lockfile by picking its file with Tab completion: the type comes from the name, then the prompt asks for the environment (empty means every environment) and dev (yes or no); `-` (or `x`) removes it after a question |
-| Since | the first day advisories count from | Enter opens a date prompt (`YYYY-MM-DD`); an empty value clears it |
+| Since | where the history of the project starts | Enter opens a list like the time range of a dashboard: Past 24 hours, week, month, 3 months, 6 months, year, Any time, or Custom. A span is saved as the day or time it means now. Custom takes a day (`2026-01-31`), a time (`2026-01-31T08:30:00Z`, UTC) or a span (`24h`, `7d`, `2w`, `3m`, `1y`); an empty value clears it |
 | Vendor | the customer or organisation that owns the project (see [Vendors and projects](#vendors-and-projects)) | Enter opens a prompt for a lowercase name such as `acme`; an empty value clears it |
+
+`s` on the list of fields adds inputs: give a folder, or a Dockerfile, compose file, manifest or lockfile, and what it names is merged into the project. Technologies already declared stay as they are (a declared technology without a version learns it from the scan), new ones and new lockfiles are added, and you see the change before it is saved. Run it again with another folder to add more. A DDEV project (`.ddev/config.yaml`) gives its PHP, Node.js, database and web server versions.
 
 A lockfile with dev set to yes counts its development-only packages in every environment. By default they count only in development-like environments (`local`, `dev`, `int`, `development` and `test`). The format of the differences is described in [Environments and differences](#environments-and-differences).
 
@@ -510,7 +513,7 @@ cvewatch project shop -set php=8.3 -save                # write it; a backup goe
 | `-unlock TYPE:PATH[:ENV]` | remove a lockfile entry; PATH is the path as the file declares it, or the resolved one the lists show |
 | `-lock-dev TYPE:PATH[:ENV]` | change an existing entry to count its development-only packages in every environment |
 | `-lock-nodev TYPE:PATH[:ENV]` | change an existing entry to stop counting them outside development-like environments |
-| `-since DATE` | advisories count from this day (`YYYY-MM-DD`); `-since ""` clears it |
+| `-since WHEN` | advisories count from this day (`YYYY-MM-DD`), this time (`2026-01-31T08:30:00Z`) or a span back from now (`24h`, `7d`, `2w`, `3m`, `1y`, saved as the day or time it means now); `-since ""` clears it |
 | `-vendor NAME` | the vendor that owns the project (see [Vendors and projects](#vendors-and-projects)); `-vendor ""` clears it |
 | `-update-every SPAN` | how often the project is refreshed, such as `30m`, `1h` or `2d` (at least 5m); `default` removes it (see [Update schedule per project](#update-schedule-per-project)) |
 | `-update-auto BOOL` | `false` leaves the project out of scheduled runs, `true` puts it back |
@@ -730,6 +733,8 @@ The monitor reports its own health the way an Elasticsearch cluster does, as one
 The colour is the worst of the problems. Each problem has a stable key, a title, a detail with the last error, a hint for what to do, and since when it exists. A problem is listed until its cause is gone; there is no way to dismiss it. The causes are a failing or stale feed (one problem per feed), an overdue daemon, no cycle yet, no enabled source, a failing notification channel, a project file that cannot be used or a lockfile that cannot be read (`project:NAME`), and a broken audit chain. The problems are sorted red first, then yellow, then oldest first.
 
 `cvewatch status` prints the colour line and the problems with their hints, then the daemon (running, overdue, or only manual runs), each feed (last success, failures in a row), each channel, the last update and next due time of each project, and the last cycles. It exits non-zero only on RED, so YELLOW exits 0. `cvewatch status -json` has `level` (`green`, `yellow` or `red`) and `problems`; the same levels name the daemon, each feed and each channel. `cvewatch dashboard` writes a static HTML page with the same plus open findings. Set `dashboard: {enabled: true}` in `config.yaml` and the daemon refreshes it every cycle. The page has no scripts and makes no external requests.
+
+The daemon holds a lock in the data folder (`daemon.lock`) while it runs and writes `daemon.pid` next to it, so a second daemon for the same data refuses to start and a daemon that was killed is never reported as running. On the TUI Health screen `d` starts the daemon in the background (`cvewatch daemon` of the same folder, detached, logging to `daemon.log` in the data folder) or, when one runs on this machine, stops it with the same signal as Ctrl+C. The daemon keeps running after the TUI is closed.
 
 ## Vendor records (CVE Program)
 

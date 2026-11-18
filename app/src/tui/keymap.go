@@ -155,6 +155,7 @@ func init() {
 		}}
 	mo.status = pageScreen(scrStatus, "health", "Keys on the health screen", "details",
 		"go to the project the selected error names, else show the error in full", "up/down select an error; pgup/pgdn, home/end scroll the page")
+	mo.status.binds = append([]binding{bindDaemon()}, mo.status.binds...)
 
 	// ---- findings ----
 	mo.findings = &mode{name: "findings", title: "Keys on the findings screen", level: true,

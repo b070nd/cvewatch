@@ -381,23 +381,25 @@ func setSince(root *yaml.Node, since string) error {
 		mapDel(root, "since")
 		return nil
 	}
-	if _, err := time.Parse(SinceLayout, since); err != nil {
-		return fmt.Errorf("since must look like 2026-01-31: %w", err)
+	at, err := ParseSince(since, time.Now())
+	if err != nil {
+		return err
 	}
+	since = FormatSince(at)
 	v := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!timestamp", Value: since}
 	if cur := mapGet(root, "since"); cur != nil {
 		cur.Kind, cur.Tag, cur.Value, cur.Style = yaml.ScalarNode, "!!timestamp", since, 0
 		cur.Content, cur.Alias = nil, nil
 		return nil
 	}
-	at := len(root.Content) // a new date goes after the inventory, before what differs per environment
+	pos := len(root.Content) // a new date goes after the inventory, before what differs per environment
 	for _, k := range []string{"lockfiles", "techs", "envs", "profile", "vendor", "name"} {
 		if i := mapIndex(root, k); i >= 0 {
-			at = i + 2
+			pos = i + 2
 			break
 		}
 	}
-	root.Content = append(root.Content[:at], append([]*yaml.Node{str("since", 0), v}, root.Content[at:]...)...)
+	root.Content = append(root.Content[:pos], append([]*yaml.Node{str("since", 0), v}, root.Content[pos:]...)...)
 	return nil
 }
 

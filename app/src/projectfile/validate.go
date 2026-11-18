@@ -92,7 +92,7 @@ func (f *File) validate(known func(tech string) bool, suggest func(name string) 
 		add("error", "profile", "invalid profile %q (use %s)", p.Profile, profileNames())
 	}
 	if p.Since.After(time.Now()) {
-		add("warning", "since", "since %s is in the future, so every dated vulnerability is skipped for now", p.Since.Format(SinceLayout))
+		add("warning", "since", "since %s is in the future, so every dated vulnerability is skipped for now", FormatSince(p.Since))
 	}
 	if e := p.Update.Every; e != 0 && e < model.MinEvery {
 		shortest := Op{Kind: "set_update", Every: model.Span(model.MinEvery)}
@@ -117,6 +117,9 @@ func (f *File) validate(known func(tech string) bool, suggest func(name string) 
 			add("error", field+".name", "the technology needs a name")
 		case seen[low]:
 			add("error", field+".name", "technology %q is listed more than once", t.Name)
+		case versionAsName(low):
+			seen[low] = true
+			addFix("warning", field, versionNameFixes(p, t.Name), "%q looks like a version, not a technology, so no advisory will match it", t.Name)
 		default:
 			seen[low] = true
 			checkTech(field, t.Name, t.Version, func(to string) []Fix { return renameTech(p, t, to) })
@@ -277,4 +280,28 @@ func dropDifferencesFix(e model.Env, ec model.EnvConfig) Fix {
 		ops = append(ops, Op{Kind: "set_image", Env: e})
 	}
 	return Fix{Label: "drop the differences of " + string(e), Ops: ops}
+}
+
+var versionName = regexp.MustCompile(`^v?\d+([._-]\d+)+$`)
+
+// versionAsName is true for a technology name such as v8-0-31 or 8.0.31: the
+// version of something, typed where a name goes.
+func versionAsName(name string) bool {
+	return versionName.MatchString(strings.ToLower(strings.TrimSpace(name)))
+}
+
+// versionNameFixes offers each technology that has no version yet to take the
+// name as its version, and removing the entry.
+func versionNameFixes(p model.Project, name string) []Fix {
+	version := strings.TrimPrefix(strings.NewReplacer("-", ".", "_", ".").Replace(strings.ToLower(strings.TrimSpace(name))), "v")
+	var fixes []Fix
+	for _, t := range p.Techs {
+		if t.Version == "" && !strings.EqualFold(t.Name, name) && len(fixes) < 4 {
+			fixes = append(fixes, Fix{
+				Label: fmt.Sprintf("use %s as the version of %s and remove %q", version, t.Name, name),
+				Ops:   []Op{{Kind: "remove_tech", Tech: name}, {Kind: "set_tech", Tech: t.Name, Version: version}},
+			})
+		}
+	}
+	return fixes
 }

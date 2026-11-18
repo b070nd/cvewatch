@@ -122,7 +122,7 @@ func ViewOf(p model.Project) ProjectView {
 		v.Lockfiles = append(v.Lockfiles, LockEntry{Type: l.Type, Path: l.Path, DeclaredPath: declared, Env: string(l.Env), Dev: l.Dev})
 	}
 	if !p.Since.IsZero() {
-		v.Since = p.Since.Format(projectfile.SinceLayout)
+		v.Since = projectfile.FormatSince(p.Since)
 	}
 	if p.Update.Auto != nil || p.Update.Every > 0 {
 		v.Update = &UpdateView{Auto: p.AutoUpdate()}

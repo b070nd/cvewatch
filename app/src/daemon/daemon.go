@@ -31,6 +31,15 @@ const (
 // right away, and looks again at when something is due, instead of waiting
 // for the next cycle.
 func Run(ctx context.Context, root string, log *slog.Logger) error {
+	if cfg, err := config.Load(root); err == nil {
+		release, err := Claim(cfg.DataDir)
+		if err != nil {
+			return err
+		}
+		defer release()
+	} else {
+		log.Warn("the daemon cannot be found by other programs until the configuration loads", "err", err)
+	}
 	started := time.Now()
 	w := newWatcher(root)
 	for {

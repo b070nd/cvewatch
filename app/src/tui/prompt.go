@@ -19,6 +19,7 @@ const (
 	pkStatus    promptKind = iota // a note for a status change
 	pkAssign                      // owner, due date, ticket
 	pkPath                        // a folder to scan
+	pkMerge                       // a folder or file whose stack is merged into one project
 	pkBulk                        // a note for a status change of the selected issues
 	pkEvidence                    // a note and a link attached to an environment
 	pkEdit                        // the value of one field of a project file
@@ -373,6 +374,13 @@ func (m *app) promptSubmit() tea.Cmd {
 		return m.previewLife(ops.LifecycleRequest{Verb: verb, Project: p.project, NewName: val(0)}, p)
 	case pkLock:
 		return m.lockPicked(p)
+	case pkMerge:
+		path := p.box.chosen()
+		if path == "" {
+			p.problem = "no folder or file given"
+			return nil
+		}
+		return m.previewMerge(p, path)
 	case pkTech:
 		vals := make([]string, len(p.fields))
 		for i := range vals {

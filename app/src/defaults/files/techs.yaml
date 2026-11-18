@@ -380,7 +380,7 @@ techs:
     category: database
     vendor: Oracle
     source: mixed
-    aliases: [mysql]
+    aliases: [mysql, "mysql server", "mysql cluster"]
     excludes: ["plugin for", "extension for", "connector for"]
     cpe: [oracle:mysql, mysql:mysql]
     detect:
@@ -393,7 +393,7 @@ techs:
     category: database
     vendor: MariaDB Foundation
     source: open
-    aliases: [mariadb]
+    aliases: [mariadb, "mariadb server"]
     cpe: [mariadb:mariadb]
     detect:
       images: [mariadb, bitnami/mariadb]
@@ -402,7 +402,7 @@ techs:
     category: database
     vendor: MongoDB Inc.
     source: mixed
-    aliases: [mongodb]
+    aliases: [mongodb, "mongodb server"]
     excludes: [mongoose, "plugin for", "extension for"]
     cpe: [mongodb:mongodb]
     detect:

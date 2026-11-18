@@ -265,7 +265,7 @@ func (s *scanner) file(f *file) {
 		{"lockfile", s.lockfile}, {"marker", s.marker}, {"version hint", s.versionHints},
 		{"asdf", s.toolVersions}, {"go.mod", s.goMod}, {"package.json", s.packageJSON},
 		{"composer.json", s.composerJSON}, {"dockerfile", s.dockerfile},
-		{"yaml", s.yamlFile}, {"terraform", s.terraform},
+		{"yaml", s.yamlFile}, {"ddev", s.ddevConfig}, {"terraform", s.terraform},
 	}
 	for _, d := range detectors {
 		func() {

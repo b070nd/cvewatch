@@ -206,6 +206,8 @@ func (m *app) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.mouse(msg)
 	case tuiMsg, fetchDueMsg, fetchProgressMsg, fetchDoneMsg:
 		return m, m.fetchUpdate(msg)
+	case daemonDoneMsg:
+		return m, m.daemonDone(msg)
 	case tickMsg:
 		next := tickCmd(m.refreshEvery())
 		if m.loading {

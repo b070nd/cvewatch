@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- The TUI Health screen starts and stops the daemon with `d`. The daemon now takes a lock in the data folder, so a second one refuses to start, and `daemon.pid` says which process holds it.
+- The Since field of a project works like the time range of a dashboard: a list with Past 24 hours, week, month, 3 months, 6 months and year, Any time, or Custom. Custom, `cvewatch project NAME -since` and the MCP `set_since` take a day, a time (`2026-01-31T08:30:00Z`) or a span back from now (`24h`, `7d`, `2w`, `3m`, `1y`).
+- `s` in the fields of a project adds inputs: a folder, Dockerfile, compose file, manifest or lockfile is scanned and merged into the project without duplicates, with the change shown first. A declared technology without a version learns it from the scan.
+- Discovery reads DDEV (`.ddev/config.yaml`): PHP, Node.js, database (MySQL, MariaDB, PostgreSQL) and web server.
+- A technology named like a version (`v8-0-31`) is a problem with a fix that makes it the version of a technology that has none.
+
+### Changed
+- A scan that finds many files disagreeing about a version says so in one note instead of one per file.
+
+### Fixed
+- Advisories from vendors that name the product with a suffix, such as Oracle's `MySQL Server` and `MySQL Cluster`, now match the `mysql`, `mariadb` and `mongodb` technologies. CVE-2026-114952 was stored but never matched for that reason.
+
 ## [2.1.2] - 2026-11-18
 
 ### Changed
