@@ -357,9 +357,8 @@ type Change struct {
 
 func (c Change) validate(cfg *config.Bundle) error {
 	switch c.Status {
-	case model.StatusFixed, model.StatusIgnored, model.StatusOpen:
-	case model.StatusNotAffected:
-		if strings.TrimSpace(c.Note) == "" {
+	case model.StatusFixed, model.StatusIgnored, model.StatusOpen, model.StatusNotAffected:
+		if c.Status.NeedsReason() && strings.TrimSpace(c.Note) == "" {
 			return errors.New("a not-affected statement needs a reason (-note)")
 		}
 	default:

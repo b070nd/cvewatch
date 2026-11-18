@@ -73,6 +73,10 @@ func legacyAutoReason(f Finding) AutoReason {
 	return ""
 }
 
+// NeedsReason reports whether a person setting this status must say why: a
+// not-affected statement is an assertion about the deployment.
+func (s Status) NeedsReason() bool { return s == StatusNotAffected }
+
 // NewFinding is a finding that a match made: open, with what matched.
 func NewFinding(vulnID, project string, env Env, installed []Installed, applies Applicability, reasons []string, now time.Time) Finding {
 	return Finding{VulnID: vulnID, Project: project, Env: env, Status: StatusOpen, Matched: labels(installed),

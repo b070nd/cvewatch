@@ -153,7 +153,7 @@ func (m *app) startStatus(st model.Status) {
 	}
 	c := ops.Change{ID: d.is.ID, Project: t.Project, Env: t.Env, Status: st}
 	label := "Note (optional)"
-	if st == model.StatusNotAffected {
+	if st.NeedsReason() {
 		label = "Reason (required)"
 	}
 	retitle := func(env model.Env) string {
@@ -193,7 +193,7 @@ func canWhole(m *app) bool { return m.prm != nil && m.prm.retitle != nil }
 // noteHint is what the prompt says about the note: enter saves at once unless
 // the status is a human assertion that needs its reason.
 func noteHint(st model.Status) string {
-	if st == model.StatusNotAffected {
+	if st.NeedsReason() {
 		return "say why it does not apply here; enter saves, an empty reason is refused"
 	}
 	return "enter saves now; the note is optional (a merge request or ticket link is a good one)"
@@ -220,7 +220,7 @@ func (m *app) startBulk(st model.Status) {
 		return
 	}
 	label := "Note (optional)"
-	if st == model.StatusNotAffected {
+	if st.NeedsReason() {
 		label = "Reason (required)"
 	}
 	title := fmt.Sprintf("%s, %s: %s", plural(n, "issue", "issues"), plural(len(cs), "finding", "findings"), changeWords[st])

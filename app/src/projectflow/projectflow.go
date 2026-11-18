@@ -54,7 +54,7 @@ func Open(s *ops.Session, req Request) (Opened, error) {
 	if err != nil {
 		return out, err
 	}
-	cat := s.Cfg.Catalog
+	cat := s.Catalog()
 
 	var res *discovery.Result
 	if strings.TrimSpace(req.Folder) != "" {

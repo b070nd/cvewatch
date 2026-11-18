@@ -9,7 +9,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/b070nd/cvewatch/app/src/catalog"
 	"github.com/b070nd/cvewatch/app/src/config"
 	"github.com/b070nd/cvewatch/app/src/discovery"
 	"github.com/b070nd/cvewatch/app/src/model"
@@ -323,14 +322,6 @@ func assignCmd(b Backend, a ops.Assignment) tea.Cmd {
 	}
 }
 
-// catalogOf is the catalog a session offers, never nil.
-func catalogOf(s *ops.Session) *catalog.Catalog {
-	if s.Cfg.Catalog != nil {
-		return s.Cfg.Catalog
-	}
-	return catalog.New(s.Cfg.Techs)
-}
-
 // startFlowCmd builds a setup flow: for a new project when name is empty,
 // otherwise for editing the named one. A folder, or a Dockerfile, compose file
 // or manifest, is scanned first and merged in. The flow is handed to Update
@@ -344,7 +335,7 @@ func startFlowCmd(b Backend, name, dir string) tea.Cmd {
 				if err != nil {
 					return err
 				}
-				res, err := projectflow.ScanSourceWith(src, catalogOf(s), discovery.Options{IncludeIgnored: src.IsFile()})
+				res, err := projectflow.ScanSourceWith(src, s.Catalog(), discovery.Options{IncludeIgnored: src.IsFile()})
 				if err != nil {
 					return err
 				}
@@ -401,7 +392,7 @@ func scanCmd(b Backend, dir string) tea.Cmd {
 			return m
 		}
 		m.err = b.Read(func(s *ops.Session) (e error) {
-			m.res, e = projectflow.ScanSourceWith(src, catalogOf(s), discovery.Options{IncludeIgnored: src.IsFile()})
+			m.res, e = projectflow.ScanSourceWith(src, s.Catalog(), discovery.Options{IncludeIgnored: src.IsFile()})
 			return e
 		})
 		return m

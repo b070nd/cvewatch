@@ -160,10 +160,8 @@ func revalPreviewCmd(b Backend) tea.Cmd {
 				return e
 			}
 			out.sinces = map[string]string{}
-			for _, p := range s.Cfg.Projects {
-				if !p.Since.IsZero() {
-					out.sinces[p.Name] = p.Since.Format("2006-01-02")
-				}
+			for name, since := range s.Sinces() {
+				out.sinces[name] = since.Format("2006-01-02")
 			}
 			out.st, e = s.Stale()
 			return e
