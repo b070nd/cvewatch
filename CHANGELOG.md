@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The Since field of a project works like the time range of a dashboard: a list with Past 24 hours, week, month, 3 months, 6 months and year, Any time, or Custom. Custom, `cvewatch project NAME -since` and the MCP `set_since` take a day, a time (`2026-01-31T08:30:00Z`) or a span back from now (`24h`, `7d`, `2w`, `3m`, `1y`).
 - `s` in the fields of a project adds inputs: a folder, Dockerfile, compose file, manifest or lockfile is scanned and merged into the project without duplicates, with the change shown first. A declared technology without a version learns it from the scan, and a version that differs from the declared one is offered for the environment only or everywhere. A file named on purpose is read even when `.gitignore` lists it.
 - `+` for a lockfile in the fields of a project also takes a Dockerfile, Containerfile or compose file: it is merged like a scan, with the change shown first.
+- The Findings list sorts by severity, CVSS, EPSS, ID, age, project, owner or title (`>`, `<` reverses), with the column marked ▲ or ▼. `=` filters by a field (severity, environment, project, technology, owner, applies, KEV, fix, overdue) from a list of its values with counts, written into the filter text. The `/` filter remembers earlier filters (Up, Down) and says when it reads the text as plain words.
 - Discovery reads DDEV (`.ddev/config.yaml`): PHP, Node.js, database (MySQL, MariaDB, PostgreSQL) and web server. An image with a runtime in its tag (`1.1.7-php-8.2.35`) gives that runtime and version.
 - A technology named like a version (`v8-0-31`) is a problem with a fix that makes it the version of a technology that has none.
 
@@ -18,7 +19,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A scan that finds many files disagreeing about a version says so in one note instead of one per file.
 
 ### Fixed
-- Advisories from vendors that name the product with a suffix, such as Oracle's `MySQL Server` and `MySQL Cluster`, now match the `mysql`, `mariadb` and `mongodb` technologies.  Such advisories were stored but never matched.
+- Advisories from vendors that name the product with a suffix, such as Oracle's `MySQL Server` and `MySQL Cluster`, now match the `mysql`, `mariadb` and `mongodb` technologies. Such advisories were stored but never matched.
+- A fetch that is stopped (quitting the TUI during a fetch, or cancelling it) no longer counts as a failure of the feeds it was reading, so they stay green.
 
 ## [2.1.2] - 2026-11-18
 

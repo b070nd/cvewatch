@@ -12,6 +12,7 @@ type picker struct {
 	crumb string
 	items []pickItem
 	multi bool
+	none  bool            // multi: ticking nothing is an answer too
 	sel   map[string]bool // multi: the ticked values
 	vp    viewport
 	done  func(m *app, vals []string) tea.Cmd
@@ -85,7 +86,7 @@ func (m *app) pickerOf() *picker {
 func (m *app) pickAccept() tea.Cmd {
 	pk := m.pickerOf()
 	vals := pk.values()
-	if len(vals) == 0 {
+	if len(vals) == 0 && !(pk.multi && pk.none) {
 		pk.problem = "tick at least one"
 		return nil
 	}

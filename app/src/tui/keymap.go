@@ -164,6 +164,9 @@ func init() {
 		binds: rootBinds(
 			binding{keys: ks("enter"), help: "open the selected issue: its environments and what to do", short: "open", prio: 1, do: plain((*app).openIssue)},
 			bindFilter(),
+			bindFacets(),
+			bindSort(),
+			bindReverse(),
 			bindSeverity(),
 			bindTime(),
 			binding{keys: ks(" "), disp: "space", help: "mark or unmark the issue for a change of many; the cursor moves on", short: "select", prio: 2, do: plain((*app).toggleSelect)},
@@ -181,6 +184,8 @@ func init() {
 		binds: []binding{
 			{short: "type to filter", help: "type words or fields such as severity:high; the list narrows as you type"},
 			{keys: ks("enter"), help: "keep the filter and go back to the list", short: "keep", do: plain((*app).keepFilter)},
+			{keys: ks("up", "down"), disp: "up/down", help: "the filters kept before, latest first", short: "earlier",
+				do: func(m *app, k tea.KeyMsg) tea.Cmd { m.recallFilter(k.String() == "up"); return nil }},
 			{keys: ks("esc"), help: "clear the filter", short: "clear", do: plain((*app).clearFilter)},
 			bindHelpTyped(),
 		}}
