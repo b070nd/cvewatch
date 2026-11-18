@@ -24,7 +24,7 @@ var sortCols = []sortCol{
 	{name: "priority", up: "as ranked", down: "as ranked"},
 	{name: "severity", head: "SEVERITY", desc: true, up: "lowest first", down: "highest first",
 		cmp: func(a, b query.Issue) int { return cmp.Compare(a.Severity.Rank(), b.Severity.Rank()) }},
-	{name: "CVSS", desc: true, up: "lowest first", down: "highest first",
+	{name: "CVSS", head: "CVSS", desc: true, up: "lowest first", down: "highest first",
 		cmp: func(a, b query.Issue) int { return cmp.Compare(a.CVSS, b.CVSS) }},
 	{name: "EPSS", desc: true, up: "least likely first", down: "most likely first",
 		cmp: func(a, b query.Issue) int { return cmp.Compare(epss(a), epss(b)) }},

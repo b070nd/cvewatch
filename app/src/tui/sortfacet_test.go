@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	"github.com/b070nd/cvewatch/app/src/query"
 )
 
 // listed fails unless the ids appear on the screen in this order.
@@ -47,6 +49,21 @@ func TestFindingsSortByAColumnAndReverse(t *testing.T) {
 	listed(t, d, "CVE-2026-3", "CVE-2026-1", "CVE-2026-4")
 	d.press("<")
 	d.want("the priority order has no reverse")
+
+	d.want("SEVERITY CVSS  ID")
+	d.press(">")
+	d.pickTo("CVSS")
+	d.press("enter")
+	d.want("CVSS▼", "sort: CVSS, highest first")
+}
+
+func TestCVSSCellHasOneDecimalOrADash(t *testing.T) {
+	if got := cvssCell(query.Issue{CVSS: 9.81}); got != "9.8" {
+		t.Errorf("9.81 = %q", got)
+	}
+	if got := cvssCell(query.Issue{}); got != "-" {
+		t.Errorf("unscored = %q", got)
+	}
 }
 
 func TestFindingsFilterByAFieldWithCounts(t *testing.T) {

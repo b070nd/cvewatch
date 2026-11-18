@@ -399,6 +399,14 @@ func (m *app) findingsBody(w, h int) []string {
 	return renderFindings(len(m.dataIssues()), &m.fnd.issueList, m.listView(), m.noneText(), m.data.monitored(), w, h)
 }
 
+// cvssCell is the base score with one decimal, or - when nothing scored it.
+func cvssCell(is query.Issue) string {
+	if is.CVSS <= 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.1f", is.CVSS)
+}
+
 func owners(is query.Issue) string {
 	var out []string
 	for _, t := range is.Targets {
@@ -497,10 +505,10 @@ func renderFindings(total int, st *issueList, lv listView, none string, mon map[
 	for _, is := range rows {
 		idW = max(idW, min(width(oneLine(is.ID)), 20))
 	}
-	const sevW, ageW, ownW = 8, 7, 10
+	const sevW, cvssW, ageW, ownW = 8, 5, 7, 10
 	projW := 22
 	showOwn, showProj := w >= 100, w >= 80
-	fixed := 3 + sevW + 1 + idW + 1 + ageW + 1
+	fixed := 3 + sevW + 1 + cvssW + 1 + idW + 1 + ageW + 1
 	if showProj {
 		fixed += projW + 1
 	}
@@ -511,7 +519,7 @@ func renderFindings(total int, st *issueList, lv listView, none string, mon map[
 
 	row := func(cells ...string) string { return strings.Join(cells, " ") }
 	sh := st.sortHead
-	head := []string{pad(sh("SEVERITY"), sevW), pad(sh("ID"), idW), pad(sh("AGE"), ageW)}
+	head := []string{pad(sh("SEVERITY"), sevW), pad(sh("CVSS"), cvssW), pad(sh("ID"), idW), pad(sh("AGE"), ageW)}
 	if showProj {
 		head = append(head, pad(sh("OPEN IN"), projW))
 	}
@@ -553,7 +561,7 @@ func renderFindings(total int, st *issueList, lv listView, none string, mon map[
 			age = "-"
 		}
 		cells := func(sev string) []string {
-			c := []string{sev, pad(oneLine(is.ID), idW), pad(age, ageW)}
+			c := []string{sev, pad(cvssCell(is), cvssW), pad(oneLine(is.ID), idW), pad(age, ageW)}
 			if showProj {
 				cell := pad(whereOpen(is, mon, projW), projW)
 				if i != st.vp.at() {
