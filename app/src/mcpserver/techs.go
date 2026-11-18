@@ -13,15 +13,14 @@ import (
 // addTechTools registers the tools for technologies of the user's own: a
 // suggestion lookup anyone may use, a preview, and the write tool behind allow-write.
 func addTechTools(srv *mcp.Server, s *server, allowWrite bool) {
-	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
+	ro := readHints()
 	mcp.AddTool(srv, &mcp.Tool{Name: "suggest_tech", Annotations: ro,
 		Description: "Find which catalog technology a typed term means, tolerating typos (rabbitMW finds rabbitmq). When nothing is close, found is false and suggestions is empty: the term is not in the catalog, and edit_tech (action add) can add it as the user's own keyword."}, s.suggestTech)
 	mcp.AddTool(srv, &mcp.Tool{Name: "preview_tech_change", Annotations: ro,
 		Description: "Show what adding, editing or removing one of the user's own technologies would do to techs.yaml (diff and problems) without writing anything. Same input as edit_tech."}, s.previewTech)
 	if allowWrite {
-		no := false
 		mcp.AddTool(srv, &mcp.Tool{Name: "edit_tech",
-			Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no},
+			Annotations: writeHints(true),
 			Description: "Add, edit or remove a technology of the user's own in techs.yaml, for something the catalog does not have. Advisories match it when their title or text names one of its keywords as a whole word (default: the name); cpe names make it match NVD product data too. The change is audited and the old file is backed up. Run preview_tech_change first and show the user the diff. Only the user's own entries can be edited or removed."}, s.editTech)
 	}
 }
