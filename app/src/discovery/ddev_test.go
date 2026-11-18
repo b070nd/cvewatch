@@ -35,3 +35,16 @@ func TestManyDisagreeingFilesGetOneNote(t *testing.T) {
 		t.Errorf("want one summary note, got %q", notes)
 	}
 }
+
+func TestTheTagOfAnUnknownImageCanNameTheRuntime(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "Dockerfile", "FROM public.ecr.aws/acme/magento-base:1.1.7-php-8.2.35 AS code\nFROM node:20-alpine\nFROM acme/tool:v2.1.0\n")
+	res := scan(t, root, Options{})
+	p := want(t, res, "php", "8.2.35", Medium)
+	if !p.Infra {
+		t.Error("what only a container file shows is infrastructure")
+	}
+	if find(res, "tool") != nil {
+		t.Errorf("a tag without a language names nothing: %+v", res.Techs)
+	}
+}

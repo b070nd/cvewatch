@@ -543,6 +543,7 @@ func (s *scanner) image(f *file, ref string) {
 	}
 	t, ok := s.cat.ForImage(ref)
 	if !ok {
+		s.taggedRuntime(f, ref)
 		return
 	}
 	v, c := tagVersion(ref), Medium
@@ -566,4 +567,28 @@ func (s *scanner) yamlFile(f *file) {
 		return
 	}
 	s.kubernetes(f, data)
+}
+
+var runtimeInTag = regexp.MustCompile(`(?i)(?:^|[-_.])(php|nodejs|node|python|ruby|golang|go|openjdk|jdk|java)[-_]?v?(\d+(?:\.\d+){0,2})(?:$|[-_.a-z])`)
+
+var runtimeNames = map[string]string{"node": "nodejs", "golang": "go", "openjdk": "java", "jdk": "java"}
+
+// taggedRuntime reads a language and its version from the tag of an image the
+// catalog does not know, such as acme/base:1.1.7-php-8.2.35.
+func (s *scanner) taggedRuntime(f *file, ref string) {
+	i := strings.LastIndex(ref, ":")
+	if i < 0 || strings.Contains(ref[i:], "/") {
+		return
+	}
+	m := runtimeInTag.FindStringSubmatch(ref[i+1:])
+	if m == nil {
+		return
+	}
+	term := strings.ToLower(m[1])
+	if to, ok := runtimeNames[term]; ok {
+		term = to
+	}
+	if t, ok := s.cat.ForTerm(term); ok {
+		s.add(f, t, m[2], Medium, "image "+ref+" names "+term+" "+m[2]).infra = true
+	}
 }

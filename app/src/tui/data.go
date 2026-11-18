@@ -344,7 +344,7 @@ func startFlowCmd(b Backend, name, dir string) tea.Cmd {
 				if err != nil {
 					return err
 				}
-				res, err := projectflow.ScanSource(src, catalogOf(s))
+				res, err := projectflow.ScanSourceWith(src, catalogOf(s), discovery.Options{IncludeIgnored: src.IsFile()})
 				if err != nil {
 					return err
 				}
@@ -356,7 +356,7 @@ func startFlowCmd(b Backend, name, dir string) tea.Cmd {
 				out.flow, out.creating, out.name, out.note, out.infra = o.Flow, o.Creating, o.Name, scanNote(res), infraOf(res)
 				return nil
 			}
-			o, err := projectflow.Open(s, projectflow.Request{Project: name, Folder: dir})
+			o, err := projectflow.Open(s, projectflow.Request{Project: name, Folder: dir, IncludeIgnored: namesAFile(dir)})
 			if err != nil {
 				return err
 			}
@@ -401,7 +401,7 @@ func scanCmd(b Backend, dir string) tea.Cmd {
 			return m
 		}
 		m.err = b.Read(func(s *ops.Session) (e error) {
-			m.res, e = projectflow.ScanSource(src, catalogOf(s))
+			m.res, e = projectflow.ScanSourceWith(src, catalogOf(s), discovery.Options{IncludeIgnored: src.IsFile()})
 			return e
 		})
 		return m

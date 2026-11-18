@@ -159,6 +159,8 @@ func (m *app) result(msg tea.Msg) outcome {
 		return m.fixSaved(msg)
 	case editCheckedMsg:
 		return m.editChecked(msg)
+	case mergeDiffersMsg:
+		return m.mergeDiffers(msg)
 	case techAddedMsg:
 		return m.techAdded(msg)
 	case techLoadedMsg:
