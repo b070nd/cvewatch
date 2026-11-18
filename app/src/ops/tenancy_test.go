@@ -256,7 +256,7 @@ func TestProjectViewAndSetVendorNeedFullAccess(t *testing.T) {
 		}
 		defer s.Close()
 		s.Actor = actor
-		return s.EditProject(ProjectChange{Project: project, Ops: []projectfile.Op{{Kind: "set_vendor", Vendor: vendor}}, Save: true})
+		return s.EditProject(ProjectChange{Project: project, Ops: []projectfile.Op{{Kind: projectfile.KindSetVendor, Vendor: vendor}}, Save: true})
 	}
 
 	prev, err := set("ann", "shop", "other")

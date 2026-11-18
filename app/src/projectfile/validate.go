@@ -95,8 +95,8 @@ func (f *File) validate(known func(tech string) bool, suggest func(name string) 
 		add("warning", "since", "since %s is in the future, so every dated vulnerability is skipped for now", FormatSince(p.Since))
 	}
 	if e := p.Update.Every; e != 0 && e < model.MinEvery {
-		shortest := Op{Kind: "set_update", Every: model.Span(model.MinEvery)}
-		addFix("error", "update.every", []Fix{{Label: "refresh every " + shortest.Every, Ops: []Op{shortest}}, {Label: "use the interval of config.yaml", Ops: []Op{{Kind: "set_update", Every: "default"}}}},
+		shortest := Op{Kind: KindSetUpdate, Every: model.Span(model.MinEvery)}
+		addFix("error", "update.every", []Fix{{Label: "refresh every " + shortest.Every, Ops: []Op{shortest}}, {Label: "use the interval of config.yaml", Ops: []Op{{Kind: KindSetUpdate, Every: "default"}}}},
 			"update.every %s is shorter than the minimum of %s", model.Span(e), model.Span(model.MinEvery))
 	}
 	enabled := map[model.Env]bool{}
@@ -190,7 +190,7 @@ func (f *File) validate(known func(tech string) bool, suggest func(name string) 
 		for _, n := range names {
 			checkTech(field+".techs."+n, n, ec.Techs[n], func(to string) []Fix { return renameEnvTech(p, e, n, to) })
 			if slices.ContainsFunc(ec.Exclude, func(x string) bool { return strings.EqualFold(x, n) }) {
-				addFix("warning", field+".exclude", []Fix{{Label: "keep " + n + " in " + string(e), Ops: []Op{{Kind: "include_env_tech", Env: e, Tech: n}}}},
+				addFix("warning", field+".exclude", []Fix{{Label: "keep " + n + " in " + string(e), Ops: []Op{{Kind: KindIncludeEnvTech, Env: e, Tech: n}}}},
 					"%s is excluded in %s and also has a version there; the exclusion wins", n, e)
 			}
 		}
@@ -271,13 +271,13 @@ func lineOf(n *yaml.Node, path string, line int) int {
 func dropDifferencesFix(e model.Env, ec model.EnvConfig) Fix {
 	var ops []Op
 	for _, n := range sortedKeys(ec.Techs) {
-		ops = append(ops, Op{Kind: "remove_env_tech", Env: e, Tech: n})
+		ops = append(ops, Op{Kind: KindRemoveEnvTech, Env: e, Tech: n})
 	}
 	for _, x := range ec.Exclude {
-		ops = append(ops, Op{Kind: "include_env_tech", Env: e, Tech: x})
+		ops = append(ops, Op{Kind: KindIncludeEnvTech, Env: e, Tech: x})
 	}
 	if ec.Image != "" {
-		ops = append(ops, Op{Kind: "set_image", Env: e})
+		ops = append(ops, Op{Kind: KindSetImage, Env: e})
 	}
 	return Fix{Label: "drop the differences of " + string(e), Ops: ops}
 }
@@ -299,7 +299,7 @@ func versionNameFixes(p model.Project, name string) []Fix {
 		if t.Version == "" && !strings.EqualFold(t.Name, name) && len(fixes) < 4 {
 			fixes = append(fixes, Fix{
 				Label: fmt.Sprintf("use %s as the version of %s and remove %q", version, t.Name, name),
-				Ops:   []Op{{Kind: "remove_tech", Tech: name}, {Kind: "set_tech", Tech: t.Name, Version: version}},
+				Ops:   []Op{{Kind: KindRemoveTech, Tech: name}, {Kind: KindSetTech, Tech: t.Name, Version: version}},
 			})
 		}
 	}

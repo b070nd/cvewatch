@@ -133,10 +133,10 @@ func (m *app) mergeDiffers(msg mergeDiffersMsg) outcome {
 		case v == "keep":
 			return nil
 		case v == "all":
-			op, label = projectfile.Op{Kind: "set_tech", Tech: d.tech, Version: d.found}, "set "+d.tech+" to "+d.found
+			op, label = projectfile.Op{Kind: projectfile.KindSetTech, Tech: d.tech, Version: d.found}, "set "+d.tech+" to "+d.found
 		default:
 			e := model.Env(strings.TrimPrefix(v, "env:"))
-			op, label = projectfile.Op{Kind: "set_env_tech", Env: e, Tech: d.tech, Version: d.found}, "set "+d.tech+" to "+d.found+" in "+string(e)
+			op, label = projectfile.Op{Kind: projectfile.KindSetEnvTech, Env: e, Tech: d.tech, Version: d.found}, "set "+d.tech+" to "+d.found+" in "+string(e)
 		}
 		return m.previewEdit(msg.project, p.Problems, label, []projectfile.Op{op}, "", nil)
 	}

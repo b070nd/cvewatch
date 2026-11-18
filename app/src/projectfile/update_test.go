@@ -39,7 +39,7 @@ func TestUpdateBlockIsReadInBothSpellings(t *testing.T) {
 
 func TestSetUpdateWritesKeepsAndRemoves(t *testing.T) {
 	src := "# the shop\nname: shop\nenvs: [dev, prod]\ntechs: []\nsince: 2026-01-01 # from then\nlockfiles: []\nwhen@prod:\n  image: shop:1\n"
-	got := mustApply(t, src, Op{Kind: "set_update", Every: "1h", Auto: boolp(false)})
+	got := mustApply(t, src, Op{Kind: KindSetUpdate, Every: "1h", Auto: boolp(false)})
 	for _, want := range []string{"update:\n  every: 1h\n  auto: false\n", "# from then", "# the shop"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q:\n%s", want, got)
@@ -54,7 +54,7 @@ func TestSetUpdateWritesKeepsAndRemoves(t *testing.T) {
 	}
 
 	// one field at a time; days become hours, the file only knows durations
-	got2 := mustApply(t, got, Op{Kind: "set_update", Every: "2d"})
+	got2 := mustApply(t, got, Op{Kind: KindSetUpdate, Every: "2d"})
 	if p := mustParse(t, got2).Project(); p.Update.Every != 48*time.Hour || p.AutoUpdate() {
 		t.Fatalf("every changes, auto stays: %+v\n%s", p.Update, got2)
 	}
@@ -63,26 +63,26 @@ func TestSetUpdateWritesKeepsAndRemoves(t *testing.T) {
 	}
 
 	// the defaults are not written: true removes auto, default removes every, an empty block goes
-	got3 := mustApply(t, got2, Op{Kind: "set_update", Auto: boolp(true)})
+	got3 := mustApply(t, got2, Op{Kind: KindSetUpdate, Auto: boolp(true)})
 	if strings.Contains(got3, "auto:") || !strings.Contains(got3, "every: 48h") {
 		t.Errorf("auto: true is the default and is removed:\n%s", got3)
 	}
-	got4 := mustApply(t, got3, Op{Kind: "set_update", Every: "default"})
+	got4 := mustApply(t, got3, Op{Kind: KindSetUpdate, Every: "default"})
 	if strings.Contains(got4, "update") || got4 != src {
 		t.Errorf("an empty block is removed and the rest is as it was:\n%s", got4)
 	}
-	if again := mustApply(t, src, Op{Kind: "set_update", Every: "default", Auto: boolp(true)}); again != src {
+	if again := mustApply(t, src, Op{Kind: KindSetUpdate, Every: "default", Auto: boolp(true)}); again != src {
 		t.Errorf("setting the defaults on a file without a block changes nothing:\n%s", again)
 	}
 }
 
 func TestSetUpdateKeepsCommentsOfAnExistingBlock(t *testing.T) {
 	src := "name: shop\nupdate:\n  every: 1h # hourly\n  auto: false # paused for the migration\n"
-	got := mustApply(t, src, Op{Kind: "set_update", Every: "30m"})
+	got := mustApply(t, src, Op{Kind: KindSetUpdate, Every: "30m"})
 	if !strings.Contains(got, "every: 30m # hourly") || !strings.Contains(got, "# paused for the migration") {
 		t.Errorf("comments lost:\n%s", got)
 	}
-	empty := mustApply(t, "name: shop\nupdate:\ntechs: []\n", Op{Kind: "set_update", Every: "1h"})
+	empty := mustApply(t, "name: shop\nupdate:\ntechs: []\n", Op{Kind: KindSetUpdate, Every: "1h"})
 	if p := mustParse(t, empty).Project(); p.Update.Every != time.Hour {
 		t.Errorf("an empty update: key is filled in:\n%s", empty)
 	}
@@ -90,12 +90,12 @@ func TestSetUpdateKeepsCommentsOfAnExistingBlock(t *testing.T) {
 
 func TestSetUpdateErrors(t *testing.T) {
 	for name, op := range map[string]Op{
-		"nothing":  {Kind: "set_update"},
-		"too fast": {Kind: "set_update", Every: "4m"},
-		"zero":     {Kind: "set_update", Every: "0s"},
-		"negative": {Kind: "set_update", Every: "-1h"},
-		"words":    {Kind: "set_update", Every: "hourly"},
-		"days":     {Kind: "set_update", Every: "xd"},
+		"nothing":  {Kind: KindSetUpdate},
+		"too fast": {Kind: KindSetUpdate, Every: "4m"},
+		"zero":     {Kind: KindSetUpdate, Every: "0s"},
+		"negative": {Kind: KindSetUpdate, Every: "-1h"},
+		"words":    {Kind: KindSetUpdate, Every: "hourly"},
+		"days":     {Kind: KindSetUpdate, Every: "xd"},
 	} {
 		if err := mustParse(t, opSample).Apply(op); err == nil {
 			t.Errorf("%s must be rejected", name)
@@ -147,7 +147,7 @@ func TestHintsAboutTheSchedule(t *testing.T) {
 
 	hs := hintsOf(t, base+"update: {auto: false}\n", HintOptions{})
 	h, ok := hintAt(hs, "update.auto", "scheduled runs skip this project; run cvewatch update or press u in the TUI")
-	if !ok || h.Level != "info" || len(h.Fix) != 1 || h.Fix[0].Kind != "set_update" || h.Fix[0].Auto == nil || !*h.Fix[0].Auto {
+	if !ok || h.Level != "info" || len(h.Fix) != 1 || h.Fix[0].Kind != KindSetUpdate || h.Fix[0].Auto == nil || !*h.Fix[0].Auto {
 		t.Fatalf("hint = %+v (%+v)", h, hs)
 	}
 

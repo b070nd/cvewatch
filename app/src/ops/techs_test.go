@@ -147,7 +147,7 @@ func TestTechWritesAreGated(t *testing.T) {
 func TestEditProjectWithNewTechs(t *testing.T) {
 	s := editable(t, nil, "alice")
 	writeRoot(t, s, "config/techs.yaml", "techs: []\n")
-	edits := []projectfile.Op{{Kind: "set_tech", Tech: "algolia", Version: "1"}}
+	edits := []projectfile.Op{{Kind: projectfile.KindSetTech, Tech: "algolia", Version: "1"}}
 
 	p, err := s.EditProject(ProjectChange{Project: "shop", Ops: edits})
 	if err != nil || len(p.Hints) == 0 {

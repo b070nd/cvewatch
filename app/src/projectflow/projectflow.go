@@ -136,14 +136,14 @@ func Change(s *ops.Session, f *setup.Flow, save bool) ops.ProjectChange {
 func Edits(s *ops.Session, f *setup.Flow) []projectfile.Op {
 	out := f.Ops()
 	var stored []model.Lockfile
-	if ex := f.Draft().Existing; ex != nil && slices.ContainsFunc(out, func(o projectfile.Op) bool { return o.Kind == "remove_lockfile" }) {
+	if ex := f.Draft().Existing; ex != nil && slices.ContainsFunc(out, func(o projectfile.Op) bool { return o.Kind == projectfile.KindRemoveLockfile }) {
 		stored = storedLockfiles(s, ex.Name)
 	}
 	for i, o := range out {
 		switch o.Kind {
-		case "add_lockfile":
+		case projectfile.KindAddLockfile:
 			out[i].Lockfile.Path = relative(s.Cfg.Root, o.Lockfile.Path)
-		case "remove_lockfile":
+		case projectfile.KindRemoveLockfile:
 			out[i].Lockfile.Path = storedPath(s.Cfg.Root, stored, o.Lockfile.Path)
 		}
 	}

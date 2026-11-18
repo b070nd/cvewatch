@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
-	"slices"
 	"strings"
 	"testing"
 
@@ -126,11 +125,11 @@ func TestCreateFlowEndToEnd(t *testing.T) {
 	}
 
 	wantOps := []projectfile.Op{
-		{Kind: "set_envs", Envs: []model.Env{"local", "prod"}},
-		{Kind: "set_tech", Tech: "php", Version: "8.2"},
-		{Kind: "set_tech", Tech: "nginx", Version: "1.25"},
-		{Kind: "set_tech", Tech: "postgresql", Version: "16"},
-		{Kind: "add_lockfile", Lockfile: model.Lockfile{Type: "composer", Path: filepath.Join(repoDir, "composer.lock")}},
+		{Kind: projectfile.KindSetEnvs, Envs: []model.Env{"local", "prod"}},
+		{Kind: projectfile.KindSetTech, Tech: "php", Version: "8.2"},
+		{Kind: projectfile.KindSetTech, Tech: "nginx", Version: "1.25"},
+		{Kind: projectfile.KindSetTech, Tech: "postgresql", Version: "16"},
+		{Kind: projectfile.KindAddLockfile, Lockfile: model.Lockfile{Type: "composer", Path: filepath.Join(repoDir, "composer.lock")}},
 	}
 	if got := f.Ops(); !reflect.DeepEqual(got, wantOps) {
 		t.Fatalf("ops = %+v\nwant %+v", got, wantOps)
@@ -190,9 +189,9 @@ func TestEditFlowMinimalOps(t *testing.T) {
 	answer(t, f, "review", "yes")
 
 	want := []projectfile.Op{
-		{Kind: "remove_tech", Tech: "redis"},
-		{Kind: "set_tech", Tech: "php", Version: "8.2"},
-		{Kind: "set_tech", Tech: "nginx"},
+		{Kind: projectfile.KindRemoveTech, Tech: "redis"},
+		{Kind: projectfile.KindSetTech, Tech: "php", Version: "8.2"},
+		{Kind: projectfile.KindSetTech, Tech: "nginx"},
 	}
 	if got := f.Ops(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ops = %+v\nwant %+v", got, want)
@@ -205,7 +204,7 @@ func TestEditSameVersionNoOps(t *testing.T) {
 	answer(t, f, "menu", "versions")
 	answer(t, f, "version:php", "")
 	// Clearing a version is remove + set, because set_tech cannot clear one.
-	want := []projectfile.Op{{Kind: "remove_tech", Tech: "php"}, {Kind: "set_tech", Tech: "php"}}
+	want := []projectfile.Op{{Kind: projectfile.KindRemoveTech, Tech: "php"}, {Kind: projectfile.KindSetTech, Tech: "php"}}
 	if got := f.Ops(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ops = %+v", got)
 	}
@@ -236,13 +235,13 @@ func TestEditEnvs(t *testing.T) {
 	}
 	answer(t, f, "menu", "envs")
 	answer(t, f, "envs", "dev,int,staging,prod") // all four are written out
-	want := []projectfile.Op{{Kind: "set_envs", Envs: []model.Env{"dev", "int", "staging", "prod"}}}
+	want := []projectfile.Op{{Kind: projectfile.KindSetEnvs, Envs: []model.Env{"dev", "int", "staging", "prod"}}}
 	if got := f.Ops(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ops = %+v", got)
 	}
 	answer(t, f, "menu", "envs")
 	answer(t, f, "envs", "staging")
-	want = []projectfile.Op{{Kind: "set_envs", Envs: []model.Env{"staging"}}}
+	want = []projectfile.Op{{Kind: projectfile.KindSetEnvs, Envs: []model.Env{"staging"}}}
 	if got := f.Ops(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ops = %+v", got)
 	}
@@ -425,12 +424,12 @@ func TestOpsDeterministic(t *testing.T) {
 		return f.Ops()
 	}
 	want := []projectfile.Op{
-		{Kind: "remove_tech", Tech: "zzz"},
-		{Kind: "remove_tech", Tech: "aaa"},
-		{Kind: "remove_env_tech", Env: "dev", Tech: "aaa"},
-		{Kind: "remove_env_tech", Env: "dev", Tech: "zzz"},
-		{Kind: "remove_env_tech", Env: "prod", Tech: "aaa"},
-		{Kind: "remove_env_tech", Env: "prod", Tech: "zzz"},
+		{Kind: projectfile.KindRemoveTech, Tech: "zzz"},
+		{Kind: projectfile.KindRemoveTech, Tech: "aaa"},
+		{Kind: projectfile.KindRemoveEnvTech, Env: "dev", Tech: "aaa"},
+		{Kind: projectfile.KindRemoveEnvTech, Env: "dev", Tech: "zzz"},
+		{Kind: projectfile.KindRemoveEnvTech, Env: "prod", Tech: "aaa"},
+		{Kind: projectfile.KindRemoveEnvTech, Env: "prod", Tech: "zzz"},
 	}
 	for i := 0; i < 20; i++ {
 		if got := build(); !reflect.DeepEqual(got, want) {
@@ -447,9 +446,9 @@ func TestEnvTechAndImageOps(t *testing.T) {
 	f := NewFlow(testCatalog(), ex)
 	f.draft.Environments["prod"] = model.EnvConfig{Techs: map[string]string{"php": "8.2", "nginx": "1.25"}, Image: ""}
 	want := []projectfile.Op{
-		{Kind: "set_env_tech", Env: "prod", Tech: "nginx", Version: "1.25"},
-		{Kind: "set_env_tech", Env: "prod", Tech: "php", Version: "8.2"},
-		{Kind: "set_image", Env: "prod", Image: ""},
+		{Kind: projectfile.KindSetEnvTech, Env: "prod", Tech: "nginx", Version: "1.25"},
+		{Kind: projectfile.KindSetEnvTech, Env: "prod", Tech: "php", Version: "8.2"},
+		{Kind: projectfile.KindSetImage, Env: "prod", Image: ""},
 	}
 	if got := f.Ops(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ops = %+v", got)
@@ -521,7 +520,7 @@ func TestEditLockfileRemoval(t *testing.T) {
 	}
 	answer(t, f, "lockfiles", "0")
 
-	want := []projectfile.Op{{Kind: "remove_lockfile", Lockfile: model.Lockfile{Type: "npm", Path: "package-lock.json"}}}
+	want := []projectfile.Op{{Kind: projectfile.KindRemoveLockfile, Lockfile: model.Lockfile{Type: "npm", Path: "package-lock.json"}}}
 	if got := f.Ops(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ops = %+v", got)
 	}
@@ -710,37 +709,32 @@ func TestRevisitWhenEditingReturnsToTheReviewNotTheMenu(t *testing.T) {
 	}
 }
 
-func TestOpKindsCoverTheOpTable(t *testing.T) {
-	for _, k := range projectfile.Kinds() {
-		in, pending := slices.Contains(OpKinds, k), slices.Contains(NotYet, k)
-		switch {
-		case in && pending:
-			t.Errorf("%s is in both OpKinds and NotYet: it can only be one", k)
-		case !in && !pending:
-			t.Errorf("%s is a project op kind that no front end declares: add it to OpKinds when the flow or the TUI emits it, else to NotYet", k)
-		}
-	}
-	for _, k := range append(slices.Clone(OpKinds), NotYet...) {
-		if _, ok := projectfile.SpecOf(k); !ok {
-			t.Errorf("%s is declared but is not an op kind", k)
-		}
-	}
-}
-
-func TestFlowEmitsOnlyDeclaredKinds(t *testing.T) {
+func TestFlowEmitsOnlyGuidedKinds(t *testing.T) {
 	src, err := os.ReadFile("setup.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	found := regexp.MustCompile(`projectfile\.Op\{Kind: "(\w+)"`).FindAllStringSubmatch(string(src), -1)
+	found := regexp.MustCompile(`projectfile\.Op\{Kind: projectfile\.(Kind\w+)`).FindAllStringSubmatch(string(src), -1)
 	if len(found) == 0 {
 		t.Fatal("found no op kinds in setup.go: has Flow.Ops changed shape?")
 	}
+	guided := map[string]bool{}
+	for _, k := range projectfile.GuidedKinds() {
+		guided["Kind"+camel(string(k))] = true
+	}
 	for _, m := range found {
-		if !slices.Contains(OpKinds, m[1]) {
-			t.Errorf("Flow.Ops emits %s, which OpKinds does not declare", m[1])
+		if !guided[m[1]] {
+			t.Errorf("Flow.Ops emits %s, which the op table does not mark guided", m[1])
 		}
 	}
+}
+
+func camel(kind string) string {
+	var b strings.Builder
+	for _, p := range strings.Split(kind, "_") {
+		b.WriteString(strings.ToUpper(p[:1]) + p[1:])
+	}
+	return b.String()
 }
 
 func TestEnvsOtherNamesAndLegacyDefault(t *testing.T) {
@@ -771,7 +765,7 @@ func TestEnvsOtherNamesAndLegacyDefault(t *testing.T) {
 		t.Error("an invalid name must be rejected")
 	}
 	answer(t, f, "envs-other", "qa-2, Demo")
-	want := []projectfile.Op{{Kind: "set_envs", Envs: []model.Env{"prod", "demo", "qa-2"}}}
+	want := []projectfile.Op{{Kind: projectfile.KindSetEnvs, Envs: []model.Env{"prod", "demo", "qa-2"}}}
 	if got := f.Ops(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ops = %+v", got)
 	}
@@ -803,7 +797,7 @@ func TestNewProjectStartsWithLocalOnly(t *testing.T) {
 	if len(hints) != 1 || hints[0].Level != "info" || !strings.Contains(hints[0].Message, "prod") {
 		t.Fatalf("hints = %+v", hints)
 	}
-	if len(hints[0].Fix) != 1 || hints[0].Fix[0].Kind != "add_env" {
+	if len(hints[0].Fix) != 1 || hints[0].Fix[0].Kind != projectfile.KindAddEnv {
 		t.Errorf("fix = %+v", hints[0].Fix)
 	}
 }
@@ -818,12 +812,12 @@ func TestDifferencesOps(t *testing.T) {
 	f.draft.Environments["prod"] = model.EnvConfig{Exclude: []string{"php"}}
 	f.draft.Environments["local"] = model.EnvConfig{Exclude: []string{"php"}}
 	want := []projectfile.Op{
-		{Kind: "set_tech", Tech: "nginx"},
-		{Kind: "set_tech_envs", Tech: "redis", Envs: []model.Env{"local", "prod"}},
-		{Kind: "set_tech_envs", Tech: "nginx", Envs: []model.Env{"prod"}},
-		{Kind: "exclude_env_tech", Env: "local", Tech: "php"},
-		{Kind: "include_env_tech", Env: "prod", Tech: "nginx"},
-		{Kind: "exclude_env_tech", Env: "prod", Tech: "php"},
+		{Kind: projectfile.KindSetTech, Tech: "nginx"},
+		{Kind: projectfile.KindSetTechEnvs, Tech: "redis", Envs: []model.Env{"local", "prod"}},
+		{Kind: projectfile.KindSetTechEnvs, Tech: "nginx", Envs: []model.Env{"prod"}},
+		{Kind: projectfile.KindExcludeEnvTech, Env: "local", Tech: "php"},
+		{Kind: projectfile.KindIncludeEnvTech, Env: "prod", Tech: "nginx"},
+		{Kind: projectfile.KindExcludeEnvTech, Env: "prod", Tech: "php"},
 	}
 	got := f.Ops()
 	if !reflect.DeepEqual(got, want) {

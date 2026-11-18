@@ -160,7 +160,7 @@ func TestOpenCreatingFromFolder(t *testing.T) {
 				}
 			}
 			got := Edits(s, o.Flow)
-			want := []projectfile.Op{{Kind: "set_envs", Envs: []model.Env{model.EnvLocal}}, {Kind: "add_lockfile", Lockfile: d.Project.Lockfiles[0]}}
+			want := []projectfile.Op{{Kind: projectfile.KindSetEnvs, Envs: []model.Env{model.EnvLocal}}, {Kind: projectfile.KindAddLockfile, Lockfile: d.Project.Lockfiles[0]}}
 			want[1].Lockfile.Path = "repos/app/composer.lock"
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("edits = %+v, want %+v", got, want)
@@ -279,7 +279,7 @@ func TestEditExistingAndScanOwnFolder(t *testing.T) {
 					t.Fatal(err)
 				}
 				got := Edits(s, o.Flow)
-				if len(got) != 1 || got[0].Kind != "remove_lockfile" || got[0].Lockfile.Path != raw {
+				if len(got) != 1 || got[0].Kind != projectfile.KindRemoveLockfile || got[0].Lockfile.Path != raw {
 					t.Fatalf("edits = %+v", got)
 				}
 				prev, err := s.EditProject(ops.ProjectChange{Project: "shop", Ops: got})
@@ -308,7 +308,7 @@ func TestEditExistingAddsRootRelativePath(t *testing.T) {
 				t.Fatalf("lockfiles = %+v", got)
 			}
 			got := Edits(s, o.Flow)
-			if len(got) != 1 || got[0].Kind != "add_lockfile" || got[0].Lockfile.Path != "repos/app/package-lock.json" {
+			if len(got) != 1 || got[0].Kind != projectfile.KindAddLockfile || got[0].Lockfile.Path != "repos/app/package-lock.json" {
 				t.Fatalf("edits = %+v", got)
 			}
 		})
@@ -406,7 +406,7 @@ func TestOpenEditsAProjectWhoseFileHasAnotherName(t *testing.T) {
 			if ex := o.Flow.Draft().Existing; ex == nil || ex.Name != "shop" || len(ex.Lockfiles) != 1 {
 				t.Fatalf("existing = %+v", ex)
 			}
-			if got := Edits(s, o.Flow); len(got) != 1 || got[0].Kind != "add_lockfile" {
+			if got := Edits(s, o.Flow); len(got) != 1 || got[0].Kind != projectfile.KindAddLockfile {
 				t.Fatalf("edits = %+v", got)
 			}
 			if stored := storedLockfiles(s, "shop"); len(stored) != 1 || stored[0].Path != "repos/app/composer.lock" {

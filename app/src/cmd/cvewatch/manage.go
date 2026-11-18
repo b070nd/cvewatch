@@ -339,12 +339,12 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 	var changes []projectfile.Op
 	for _, v := range set {
 		t, ver, _ := strings.Cut(v, "=")
-		changes = append(changes, projectfile.Op{Kind: "set_tech", Tech: t, Version: ver})
+		changes = append(changes, projectfile.Op{Kind: projectfile.KindSetTech, Tech: t, Version: ver})
 	}
 	for _, t := range remove {
-		changes = append(changes, projectfile.Op{Kind: "remove_tech", Tech: t})
+		changes = append(changes, projectfile.Op{Kind: projectfile.KindRemoveTech, Tech: t})
 	}
-	lockOps := func(list listFlag, kind string, dev *bool) error {
+	lockOps := func(list listFlag, kind projectfile.Kind, dev *bool) error {
 		for _, v := range list {
 			l, err := parseLock(v)
 			if err != nil {
@@ -358,13 +358,13 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 		return nil
 	}
 	yes, no := true, false
-	for _, err := range []error{lockOps(lock, "add_lockfile", nil), lockOps(unlock, "remove_lockfile", nil)} {
+	for _, err := range []error{lockOps(lock, projectfile.KindAddLockfile, nil), lockOps(unlock, projectfile.KindRemoveLockfile, nil)} {
 		if err != nil {
 			return projectEdit{}, err
 		}
 	}
 	if *envs != "" {
-		op := projectfile.Op{Kind: "set_envs"}
+		op := projectfile.Op{Kind: projectfile.KindSetEnvs}
 		if *envs != "all" {
 			for _, e := range strings.Split(*envs, ",") {
 				op.Envs = append(op.Envs, model.Env(strings.TrimSpace(e)))
@@ -372,26 +372,26 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 		}
 		changes = append(changes, op)
 	}
-	for _, err := range []error{lockOps(lockDev, "set_lockfile_dev", &yes), lockOps(lockNoDev, "set_lockfile_dev", &no)} {
+	for _, err := range []error{lockOps(lockDev, projectfile.KindSetLockfileDev, &yes), lockOps(lockNoDev, projectfile.KindSetLockfileDev, &no)} {
 		if err != nil {
 			return projectEdit{}, err
 		}
 	}
 	if since.set {
-		changes = append(changes, projectfile.Op{Kind: "set_since", Since: since.val})
+		changes = append(changes, projectfile.Op{Kind: projectfile.KindSetSince, Since: since.val})
 	}
 	if vendor.set {
-		changes = append(changes, projectfile.Op{Kind: "set_vendor", Vendor: vendor.val})
+		changes = append(changes, projectfile.Op{Kind: projectfile.KindSetVendor, Vendor: vendor.val})
 	}
 	if profile.set {
 		v := profile.val
 		if v == "default" {
 			v = ""
 		}
-		changes = append(changes, projectfile.Op{Kind: "set_profile", Profile: v})
+		changes = append(changes, projectfile.Op{Kind: projectfile.KindSetProfile, Profile: v})
 	}
 	if updateEvery.set || updateAuto.set {
-		op := projectfile.Op{Kind: "set_update", Every: updateEvery.val}
+		op := projectfile.Op{Kind: projectfile.KindSetUpdate, Every: updateEvery.val}
 		if updateAuto.set {
 			on, err := strconv.ParseBool(updateAuto.val)
 			if err != nil {
@@ -410,29 +410,29 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 		if !ok || !ok2 || env == "" || tech == "" {
 			return projectEdit{}, fmt.Errorf("%q must look like env:tech=version, for example prod:php=8.3", v)
 		}
-		changes = append(changes, projectfile.Op{Kind: "set_env_tech", Env: model.Env(env), Tech: tech, Version: ver})
+		changes = append(changes, projectfile.Op{Kind: projectfile.KindSetEnvTech, Env: model.Env(env), Tech: tech, Version: ver})
 	}
 	for _, v := range envUnset {
 		env, tech, ok := strings.Cut(v, ":")
 		if !ok || env == "" || tech == "" {
 			return projectEdit{}, fmt.Errorf("%q must look like env:tech, for example prod:php", v)
 		}
-		changes = append(changes, projectfile.Op{Kind: "remove_env_tech", Env: model.Env(env), Tech: tech})
+		changes = append(changes, projectfile.Op{Kind: projectfile.KindRemoveEnvTech, Env: model.Env(env), Tech: tech})
 	}
 	for _, e := range envAdd {
-		changes = append(changes, projectfile.Op{Kind: "add_env", Env: model.Env(e)})
+		changes = append(changes, projectfile.Op{Kind: projectfile.KindAddEnv, Env: model.Env(e)})
 	}
 	for _, e := range envRemove {
-		changes = append(changes, projectfile.Op{Kind: "remove_env", Env: model.Env(e)})
+		changes = append(changes, projectfile.Op{Kind: projectfile.KindRemoveEnv, Env: model.Env(e)})
 	}
 	for _, v := range envRename {
 		from, to, ok := strings.Cut(v, "=")
 		if !ok || from == "" || to == "" {
 			return projectEdit{}, fmt.Errorf("%q must look like old=new, for example staging=stage", v)
 		}
-		changes = append(changes, projectfile.Op{Kind: "rename_env", Env: model.Env(from), To: model.Env(to)})
+		changes = append(changes, projectfile.Op{Kind: projectfile.KindRenameEnv, Env: model.Env(from), To: model.Env(to)})
 	}
-	for kind, list := range map[string]listFlag{"exclude_env_tech": envExclude, "include_env_tech": envInclude} {
+	for kind, list := range map[projectfile.Kind]listFlag{projectfile.KindExcludeEnvTech: envExclude, projectfile.KindIncludeEnvTech: envInclude} {
 		for _, v := range list {
 			env, tech, ok := strings.Cut(v, ":")
 			if !ok || env == "" || tech == "" {
@@ -446,7 +446,7 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 		if !ok || tech == "" {
 			return projectEdit{}, fmt.Errorf("%q must look like tech=env,env, for example xdebug=local,dev (tech= lifts the limit)", v)
 		}
-		op := projectfile.Op{Kind: "set_tech_envs", Tech: tech}
+		op := projectfile.Op{Kind: projectfile.KindSetTechEnvs, Tech: tech}
 		for _, e := range strings.Split(list, ",") {
 			if e = strings.TrimSpace(e); e != "" {
 				op.Envs = append(op.Envs, model.Env(e))
@@ -455,14 +455,14 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 		changes = append(changes, op)
 	}
 	if *migrate {
-		changes = append(changes, projectfile.Op{Kind: "migrate_envs"})
+		changes = append(changes, projectfile.Op{Kind: projectfile.KindMigrateEnvs})
 	}
 	for _, v := range image {
 		env, img, ok := strings.Cut(v, "=")
 		if !ok || env == "" {
 			return projectEdit{}, fmt.Errorf("%q must look like env=tag, for example prod=shop:1.4.2 (env= clears)", v)
 		}
-		changes = append(changes, projectfile.Op{Kind: "set_image", Env: model.Env(env), Image: img})
+		changes = append(changes, projectfile.Op{Kind: projectfile.KindSetImage, Env: model.Env(env), Image: img})
 	}
 	if len(changes) == 0 {
 		return projectEdit{}, errors.New("nothing to change: use -set, -remove, -env-set, -env-unset, -image, -lock, -unlock, -lock-dev, -lock-nodev, -since, -vendor, -profile, -update-every, -update-auto, -envs, -env-add, -env-remove, -env-rename, -env-exclude, -env-include, -tech-envs or -migrate-envs (cvewatch project NAME -h lists them)")

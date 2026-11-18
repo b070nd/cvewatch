@@ -19,15 +19,6 @@ import (
 	"github.com/b070nd/cvewatch/app/src/setup"
 )
 
-// OpKinds are the kinds of project file edit the TUI's field editor builds,
-// for the test that keeps the front ends in step with projectfile.
-var OpKinds = []string{
-	"set_envs", "set_tech", "remove_tech", "set_env_tech", "remove_env_tech",
-	"set_image", "add_lockfile", "remove_lockfile", "set_lockfile_dev", "set_since", "set_update", "set_vendor",
-	"add_env", "remove_env", "rename_env",
-	"set_tech_envs", "exclude_env_tech", "include_env_tech", "migrate_envs",
-}
-
 // landing is where the Projects screen settles once the snapshot that follows
 // a change is in: on the project the change made or renamed, at the level it
 // was started from.
@@ -577,7 +568,7 @@ func (m *app) fieldScope() tea.Cmd {
 			m.note(oneLine(row.tech) + " already runs everywhere")
 			return nil
 		}
-		return m.previewEdit(p.Name, p.Problems, "run "+oneLine(row.tech)+" in every environment", []projectfile.Op{{Kind: "set_tech_envs", Tech: row.tech}}, "", nil)
+		return m.previewEdit(p.Name, p.Problems, "run "+oneLine(row.tech)+" in every environment", []projectfile.Op{{Kind: projectfile.KindSetTechEnvs, Tech: row.tech}}, "", nil)
 	}
 	m.choose(pk)
 	return nil
@@ -602,7 +593,7 @@ func (m *app) pickScopeEnvs(p projectRow, tech string, now []string) {
 		if len(envs) > 0 {
 			label = "run " + oneLine(tech) + " only in " + strings.Join(vals, ", ")
 		}
-		return m.previewEdit(p.Name, p.Problems, label, []projectfile.Op{{Kind: "set_tech_envs", Tech: tech, Envs: envs}}, "", nil)
+		return m.previewEdit(p.Name, p.Problems, label, []projectfile.Op{{Kind: projectfile.KindSetTechEnvs, Tech: tech, Envs: envs}}, "", nil)
 	}
 	m.choose(pk)
 }
@@ -617,7 +608,7 @@ func (m *app) fieldMigrate() tea.Cmd {
 		m.note("nothing to migrate: the file has no environments: block")
 		return nil
 	}
-	return m.previewEdit(p.Name, p.Problems, "rewrite environments: as when@<env> blocks", []projectfile.Op{{Kind: "migrate_envs"}}, "", nil)
+	return m.previewEdit(p.Name, p.Problems, "rewrite environments: as when@<env> blocks", []projectfile.Op{{Kind: projectfile.KindMigrateEnvs}}, "", nil)
 }
 
 // fieldRename is r on an environment.
@@ -650,7 +641,7 @@ func (m *app) fieldEnvsFix() tea.Cmd {
 		if vals[0] == "local" {
 			envs, label = []model.Env{model.EnvLocal}, "set environments to local"
 		}
-		return m.previewEdit(p.Name, p.Problems, label, []projectfile.Op{{Kind: "set_envs", Envs: envs}}, "", nil)
+		return m.previewEdit(p.Name, p.Problems, label, []projectfile.Op{{Kind: projectfile.KindSetEnvs, Envs: envs}}, "", nil)
 	}
 	m.choose(pk)
 	return nil
@@ -672,7 +663,7 @@ func (m *app) fieldDev() tea.Cmd {
 	if !l.Dev {
 		label = "mark lockfile " + oneLine(l.Path) + " as not dev"
 	}
-	return m.previewEdit(p.Name, p.Problems, label, []projectfile.Op{{Kind: "set_lockfile_dev", Lockfile: l}}, "", nil)
+	return m.previewEdit(p.Name, p.Problems, label, []projectfile.Op{{Kind: projectfile.KindSetLockfileDev, Lockfile: l}}, "", nil)
 }
 
 // fieldRemove removes the selected item.
@@ -694,27 +685,27 @@ func (m *app) fieldRemove() tea.Cmd {
 			m.fail("a project needs at least one environment: add another before removing " + oneLine(row.name))
 			return nil
 		}
-		label, op = "remove environment "+oneLine(row.name), projectfile.Op{Kind: "remove_env", Env: row.env}
+		label, op = "remove environment "+oneLine(row.name), projectfile.Op{Kind: projectfile.KindRemoveEnv, Env: row.env}
 		ask = "Remove environment " + oneLine(row.name) + " from " + oneLine(p.Name) + "? Versions and lockfiles that name it stay and are reported."
 	case fldTechs:
-		label, op = "remove technology "+oneLine(row.tech), projectfile.Op{Kind: "remove_tech", Tech: row.tech}
+		label, op = "remove technology "+oneLine(row.tech), projectfile.Op{Kind: projectfile.KindRemoveTech, Tech: row.tech}
 		ask = "Remove technology " + oneLine(row.tech) + " from " + oneLine(p.Name) + "?"
 	case fldLocks:
-		label, op = "remove lockfile "+oneLine(row.lock.Path), projectfile.Op{Kind: "remove_lockfile", Lockfile: row.lock}
+		label, op = "remove lockfile "+oneLine(row.lock.Path), projectfile.Op{Kind: projectfile.KindRemoveLockfile, Lockfile: row.lock}
 		ask = "Remove lockfile " + oneLine(row.lock.Path) + " from " + oneLine(p.Name) + "?"
 	case fldDiff:
 		switch row.kind {
 		case "version":
-			label, op = fmt.Sprintf("remove the %s version of %s", row.env, oneLine(row.tech)), projectfile.Op{Kind: "remove_env_tech", Env: row.env, Tech: row.tech}
+			label, op = fmt.Sprintf("remove the %s version of %s", row.env, oneLine(row.tech)), projectfile.Op{Kind: projectfile.KindRemoveEnvTech, Env: row.env, Tech: row.tech}
 			ask = fmt.Sprintf("Remove the %s version of %s? The generic one applies in %s again.", row.env, oneLine(row.tech), row.env)
 		case "extra":
-			label, op = fmt.Sprintf("remove %s from %s", oneLine(row.tech), row.env), projectfile.Op{Kind: "remove_env_tech", Env: row.env, Tech: row.tech}
+			label, op = fmt.Sprintf("remove %s from %s", oneLine(row.tech), row.env), projectfile.Op{Kind: projectfile.KindRemoveEnvTech, Env: row.env, Tech: row.tech}
 			ask = fmt.Sprintf("Remove %s from %s? It runs only there, so the project no longer has it.", oneLine(row.tech), row.env)
 		case "exclude":
-			label, op = fmt.Sprintf("run %s in %s again", oneLine(row.tech), row.env), projectfile.Op{Kind: "include_env_tech", Env: row.env, Tech: row.tech}
+			label, op = fmt.Sprintf("run %s in %s again", oneLine(row.tech), row.env), projectfile.Op{Kind: projectfile.KindIncludeEnvTech, Env: row.env, Tech: row.tech}
 			ask = fmt.Sprintf("Run %s in %s again?", oneLine(row.tech), row.env)
 		default:
-			label, op = fmt.Sprintf("clear the %s image", row.env), projectfile.Op{Kind: "set_image", Env: row.env}
+			label, op = fmt.Sprintf("clear the %s image", row.env), projectfile.Op{Kind: projectfile.KindSetImage, Env: row.env}
 			ask = fmt.Sprintf("Clear the %s image of %s?", row.env, oneLine(p.Name))
 		}
 	default:
@@ -758,14 +749,14 @@ func (m *app) promptSince(p projectRow) {
 			m.customSince(p)
 			return nil
 		case "any":
-			return m.previewEdit(p.Name, p.Problems, "clear since", []projectfile.Op{{Kind: "set_since", Since: ""}}, "", nil)
+			return m.previewEdit(p.Name, p.Problems, "clear since", []projectfile.Op{{Kind: projectfile.KindSetSince, Since: ""}}, "", nil)
 		}
 		at, err := projectfile.ParseSince(vals[0], time.Now())
 		if err != nil {
 			m.fail(err.Error())
 			return nil
 		}
-		return m.previewEdit(p.Name, p.Problems, "set since to "+projectfile.FormatSince(at), []projectfile.Op{{Kind: "set_since", Since: vals[0]}}, "", nil)
+		return m.previewEdit(p.Name, p.Problems, "set since to "+projectfile.FormatSince(at), []projectfile.Op{{Kind: projectfile.KindSetSince, Since: vals[0]}}, "", nil)
 	}
 	m.choose(pk)
 }
@@ -776,13 +767,13 @@ func (m *app) customSince(p projectRow) {
 	m.editPrompt(p, "Since of "+p.Name, "a day 2026-01-31, a time 2026-01-31T08:30:00Z (UTC) or a span back from now: 24h, 7d, 2w, 3m, 1y; empty clears", []field{f},
 		func(v []string) (string, []projectfile.Op, error) {
 			if v[0] == "" {
-				return "clear since", []projectfile.Op{{Kind: "set_since", Since: ""}}, nil
+				return "clear since", []projectfile.Op{{Kind: projectfile.KindSetSince, Since: ""}}, nil
 			}
 			at, err := projectfile.ParseSince(v[0], time.Now())
 			if err != nil {
 				return "", nil, err
 			}
-			return "set since to " + projectfile.FormatSince(at), []projectfile.Op{{Kind: "set_since", Since: v[0]}}, nil
+			return "set since to " + projectfile.FormatSince(at), []projectfile.Op{{Kind: projectfile.KindSetSince, Since: v[0]}}, nil
 		})
 }
 
@@ -798,7 +789,7 @@ func (m *app) promptVendor(p projectRow) {
 			if v[0] == "" {
 				label = "clear the vendor"
 			}
-			return label, []projectfile.Op{{Kind: "set_vendor", Vendor: v[0]}}, nil
+			return label, []projectfile.Op{{Kind: projectfile.KindSetVendor, Vendor: v[0]}}, nil
 		})
 }
 
@@ -828,7 +819,7 @@ func (m *app) promptUpdate(p projectRow) {
 			if !on {
 				label += ", not in scheduled runs"
 			}
-			return label, []projectfile.Op{{Kind: "set_update", Every: period, Auto: &on}}, nil
+			return label, []projectfile.Op{{Kind: projectfile.KindSetUpdate, Every: period, Auto: &on}}, nil
 		})
 }
 
@@ -841,7 +832,7 @@ func (m *app) promptTechVersion(p projectRow, tech string) {
 			if v[0] == "" {
 				label = "clear the version of " + tech
 			}
-			return label, []projectfile.Op{{Kind: "set_tech", Tech: tech, Version: v[0]}}, nil
+			return label, []projectfile.Op{{Kind: projectfile.KindSetTech, Tech: tech, Version: v[0]}}, nil
 		})
 }
 
@@ -859,7 +850,7 @@ func (m *app) promptAddTech(p projectRow) {
 			if v[1] != "" {
 				label += " " + v[1]
 			}
-			return label, []projectfile.Op{{Kind: "set_tech", Tech: v[0], Version: v[1]}}, nil
+			return label, []projectfile.Op{{Kind: projectfile.KindSetTech, Tech: v[0], Version: v[1]}}, nil
 		})
 }
 
@@ -875,9 +866,9 @@ func (m *app) promptEnvVersion(p projectRow, row fieldRow) {
 				if !row.set {
 					return "", nil, errors.New("no version is set here; type one")
 				}
-				return fmt.Sprintf("remove the %s version of %s", row.env, row.tech), []projectfile.Op{{Kind: "remove_env_tech", Env: row.env, Tech: row.tech}}, nil
+				return fmt.Sprintf("remove the %s version of %s", row.env, row.tech), []projectfile.Op{{Kind: projectfile.KindRemoveEnvTech, Env: row.env, Tech: row.tech}}, nil
 			}
-			return fmt.Sprintf("set %s in %s to %s", row.tech, row.env, v[0]), []projectfile.Op{{Kind: "set_env_tech", Env: row.env, Tech: row.tech, Version: v[0]}}, nil
+			return fmt.Sprintf("set %s in %s to %s", row.tech, row.env, v[0]), []projectfile.Op{{Kind: projectfile.KindSetEnvTech, Env: row.env, Tech: row.tech, Version: v[0]}}, nil
 		})
 }
 
@@ -890,7 +881,7 @@ func (m *app) promptImage(p projectRow, row fieldRow) {
 			if v[0] == "" {
 				label = fmt.Sprintf("clear the %s image", row.env)
 			}
-			return label, []projectfile.Op{{Kind: "set_image", Env: row.env, Image: v[0]}}, nil
+			return label, []projectfile.Op{{Kind: projectfile.KindSetImage, Env: row.env, Image: v[0]}}, nil
 		})
 }
 
@@ -953,7 +944,7 @@ func (m *app) pickDiffHow(p projectRow, env model.Env, tech string) {
 		m.chs = nil
 		if vals[0] == "exclude" {
 			return m.previewEdit(p.Name, p.Problems, fmt.Sprintf("%s does not run in %s", oneLine(tech), env),
-				[]projectfile.Op{{Kind: "exclude_env_tech", Env: env, Tech: tech}}, "", nil)
+				[]projectfile.Op{{Kind: projectfile.KindExcludeEnvTech, Env: env, Tech: tech}}, "", nil)
 		}
 		m.promptEnvVersion(p, fieldRow{env: env, tech: tech, kind: "version"})
 		return nil
@@ -971,7 +962,7 @@ func (m *app) promptNewEnvTech(p projectRow, env model.Env) {
 			case p.techNamed(v[0]) != "":
 				return "", nil, fmt.Errorf("%s is one of the technologies above: pick it from the list to give it another version in %s", v[0], env)
 			}
-			return fmt.Sprintf("add %s %s to %s only", v[0], v[1], env), []projectfile.Op{{Kind: "set_env_tech", Env: env, Tech: v[0], Version: v[1]}}, nil
+			return fmt.Sprintf("add %s %s to %s only", v[0], v[1], env), []projectfile.Op{{Kind: projectfile.KindSetEnvTech, Env: env, Tech: v[0], Version: v[1]}}, nil
 		})
 }
 
@@ -1010,7 +1001,7 @@ func (m *app) promptAddEnv(p projectRow) {
 					continue
 				}
 				names = append(names, string(e))
-				list = append(list, projectfile.Op{Kind: "add_env", Env: e})
+				list = append(list, projectfile.Op{Kind: projectfile.KindAddEnv, Env: e})
 			}
 			if len(list) == 0 {
 				return "", nil, errors.New("give the name of an environment")
@@ -1033,7 +1024,7 @@ func (m *app) promptRenameEnv(p projectRow, env model.Env) {
 			case slices.Contains(p.Envs, string(to)):
 				return "", nil, fmt.Errorf("%s is already an environment of the project", to)
 			}
-			return fmt.Sprintf("rename environment %s to %s", env, to), []projectfile.Op{{Kind: "rename_env", Env: env, To: to}}, nil
+			return fmt.Sprintf("rename environment %s to %s", env, to), []projectfile.Op{{Kind: projectfile.KindRenameEnv, Env: env, To: to}}, nil
 		})
 }
 
@@ -1103,7 +1094,7 @@ func (m *app) lockTyped(project, abs, typ string) tea.Cmd {
 				return "", nil, errors.New("dev is yes or no")
 			}
 			l := model.Lockfile{Type: typ, Path: path, Env: model.Env(v[0]), Dev: dev}
-			return "add " + typ + " lockfile " + l.Path, []projectfile.Op{{Kind: "add_lockfile", Lockfile: l}}, nil
+			return "add " + typ + " lockfile " + l.Path, []projectfile.Op{{Kind: projectfile.KindAddLockfile, Lockfile: l}}, nil
 		})
 	return nil
 }
@@ -1204,9 +1195,9 @@ func (m *app) submitNew(p *prompt, name, envText string) tea.Cmd {
 			}
 			es = append(es, model.Env(e))
 		}
-		edits = append(edits, projectfile.Op{Kind: "set_envs", Envs: es})
+		edits = append(edits, projectfile.Op{Kind: projectfile.KindSetEnvs, Envs: es})
 	} else {
-		edits = append(edits, projectfile.Op{Kind: "set_envs", Envs: []model.Env{model.EnvLocal}})
+		edits = append(edits, projectfile.Op{Kind: projectfile.KindSetEnvs, Envs: []model.Env{model.EnvLocal}})
 	}
 	return m.previewEdit(name, nil, "create project "+name, edits, name, p)
 }

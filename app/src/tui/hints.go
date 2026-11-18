@@ -218,10 +218,10 @@ func techOfField(field string, names []string) string {
 
 // renameTech previews the project using another catalog name for a technology.
 func (m *app) renameTech(p projectRow, old, to string) tea.Cmd {
-	edits := []projectfile.Op{{Kind: "remove_tech", Tech: old}}
+	edits := []projectfile.Op{{Kind: projectfile.KindRemoveTech, Tech: old}}
 	label := fmt.Sprintf("use technology name %q instead of %q", to, old)
 	if p.techNamed(to) == "" {
-		edits = append(edits, projectfile.Op{Kind: "set_tech", Tech: to, Version: p.techVersion(old)})
+		edits = append(edits, projectfile.Op{Kind: projectfile.KindSetTech, Tech: to, Version: p.techVersion(old)})
 	} else {
 		label = fmt.Sprintf("remove technology %q, %q is already listed", old, to)
 	}
@@ -248,9 +248,9 @@ func envTechField(field string) (env model.Env, tech string, ok bool) {
 // renameEnvTech previews the project using another catalog name for a technology that only an environment names.
 func (m *app) renameEnvTech(p projectRow, env model.Env, old, to string) tea.Cmd {
 	ver := p.Environments[env].Techs[old]
-	edits := []projectfile.Op{{Kind: "remove_env_tech", Env: env, Tech: old}}
+	edits := []projectfile.Op{{Kind: projectfile.KindRemoveEnvTech, Env: env, Tech: old}}
 	if _, has := p.Environments[env].Techs[to]; !has {
-		edits = append(edits, projectfile.Op{Kind: "set_env_tech", Env: env, Tech: to, Version: ver})
+		edits = append(edits, projectfile.Op{Kind: projectfile.KindSetEnvTech, Env: env, Tech: to, Version: ver})
 	}
 	return m.previewEdit(p.Name, p.Problems, fmt.Sprintf("use technology name %q instead of %q in %s", to, old, env), edits, "", nil)
 }

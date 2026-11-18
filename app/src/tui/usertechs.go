@@ -116,9 +116,9 @@ func (m *app) ownTechForProject(p projectRow, term string) {
 		var edits []projectfile.Op
 		label := ""
 		if listed := p.techNamed(term); listed != "" && listed != t.Name {
-			edits = []projectfile.Op{{Kind: "remove_tech", Tech: listed}}
+			edits = []projectfile.Op{{Kind: projectfile.KindRemoveTech, Tech: listed}}
 			if p.techNamed(t.Name) == "" {
-				edits = append(edits, projectfile.Op{Kind: "set_tech", Tech: t.Name, Version: p.techVersion(listed)})
+				edits = append(edits, projectfile.Op{Kind: projectfile.KindSetTech, Tech: t.Name, Version: p.techVersion(listed)})
 			}
 			label = fmt.Sprintf("use technology name %q instead of %q", t.Name, listed)
 		}
@@ -150,7 +150,7 @@ func (m *app) fieldOwnTech() tea.Cmd {
 		if p.techNamed(t.Name) != "" {
 			return nil, fmt.Errorf("%s is already in the project", t.Name)
 		}
-		edits := []projectfile.Op{{Kind: "set_tech", Tech: t.Name}}
+		edits := []projectfile.Op{{Kind: projectfile.KindSetTech, Tech: t.Name}}
 		return m.previewEditTechs(p.Name, p.Problems, "add your own technology "+t.Name, edits, []model.Tech{t}, m.prm), nil
 	})
 	return nil

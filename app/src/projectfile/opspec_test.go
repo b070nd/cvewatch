@@ -20,6 +20,22 @@ func applyKinds(t *testing.T) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	consts, err := parser.ParseFile(token.NewFileSet(), "kinds.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	constants := map[string]string{} // KindSetEnvs: set_envs, as kinds.go declares them
+	for _, d := range consts.Decls {
+		if g, ok := d.(*ast.GenDecl); ok && g.Tok == token.CONST {
+			for _, sp := range g.Specs {
+				vs := sp.(*ast.ValueSpec)
+				if lit, ok := vs.Values[0].(*ast.BasicLit); ok {
+					v, _ := strconv.Unquote(lit.Value)
+					constants[vs.Names[0].Name] = v
+				}
+			}
+		}
+	}
 	var kinds []string
 	for _, d := range file.Decls {
 		fn, ok := d.(*ast.FuncDecl)
@@ -36,9 +52,18 @@ func applyKinds(t *testing.T) []string {
 			}
 			for _, c := range sw.Body.List {
 				for _, e := range c.(*ast.CaseClause).List {
-					if lit, ok := e.(*ast.BasicLit); ok && lit.Kind == token.STRING {
-						s, _ := strconv.Unquote(lit.Value)
-						kinds = append(kinds, s)
+					switch x := e.(type) {
+					case *ast.BasicLit:
+						if x.Kind == token.STRING {
+							s, _ := strconv.Unquote(x.Value)
+							kinds = append(kinds, s)
+						}
+					case *ast.Ident:
+						if k, ok := constants[x.Name]; ok {
+							kinds = append(kinds, k)
+						} else {
+							kinds = append(kinds, x.Name) // not a kind constant: fails the comparison
+						}
 					}
 				}
 			}
@@ -54,7 +79,10 @@ func applyKinds(t *testing.T) []string {
 
 func TestOpTableCoversEveryKindApplyAccepts(t *testing.T) {
 	want := applyKinds(t)
-	got := Kinds()
+	var got []string
+	for _, k := range Kinds() {
+		got = append(got, string(k))
+	}
 	sort.Strings(got)
 	if !slices.Equal(want, got) {
 		t.Fatalf("apply accepts %v but OpTable lists %v: every kind needs a row, and every row a case", want, got)
@@ -76,7 +104,7 @@ when@dev:
 
 func TestOpTableExamplesApplyAndMatchTheirParams(t *testing.T) {
 	for _, s := range OpTable {
-		t.Run(s.Kind, func(t *testing.T) {
+		t.Run(string(s.Kind), func(t *testing.T) {
 			if s.Example.Kind != s.Kind {
 				t.Fatalf("example has kind %q", s.Example.Kind)
 			}

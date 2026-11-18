@@ -20,7 +20,7 @@ lockfiles:
 `
 
 func TestSetSince(t *testing.T) {
-	got := mustApply(t, sinceFile, Op{Kind: "set_since", Since: "2026-01-31"})
+	got := mustApply(t, sinceFile, Op{Kind: KindSetSince, Since: "2026-01-31"})
 	f := mustParse(t, got)
 	if y, m, d := f.Project().Since.Date(); y != 2026 || m != 1 || d != 31 {
 		t.Fatalf("since not set:\n%s", got)
@@ -34,11 +34,11 @@ func TestSetSince(t *testing.T) {
 		t.Errorf("date should be a plain scalar:\n%s", got)
 	}
 	// change in place, then clear
-	got = mustApply(t, got, Op{Kind: "set_since", Since: "2026-02-01"})
+	got = mustApply(t, got, Op{Kind: KindSetSince, Since: "2026-02-01"})
 	if strings.Count(got, "since:") != 1 || !strings.Contains(got, "2026-02-01") {
 		t.Fatalf("not replaced:\n%s", got)
 	}
-	got = mustApply(t, got, Op{Kind: "set_since"})
+	got = mustApply(t, got, Op{Kind: KindSetSince})
 	if strings.Contains(got, "since") || !mustParse(t, got).Project().Since.IsZero() {
 		t.Fatalf("not cleared:\n%s", got)
 	}
@@ -50,7 +50,7 @@ func TestSetSince(t *testing.T) {
 func TestSetSinceRejectsBadDates(t *testing.T) {
 	for _, bad := range []string{"yesterday", "2026-13-01", "31-01-2026", "2026-1-1x"} {
 		f := mustParse(t, sinceFile)
-		err := f.Apply(Op{Kind: "set_since", Since: bad})
+		err := f.Apply(Op{Kind: KindSetSince, Since: bad})
 		if err == nil || !strings.Contains(err.Error(), "since") {
 			t.Errorf("%q: err = %v", bad, err)
 		}
@@ -62,7 +62,7 @@ func TestSetSinceRejectsBadDates(t *testing.T) {
 
 func TestFutureSinceWarns(t *testing.T) {
 	f := mustParse(t, sinceFile)
-	if err := f.Apply(Op{Kind: "set_since", Since: "2999-01-01"}); err != nil {
+	if err := f.Apply(Op{Kind: KindSetSince, Since: "2999-01-01"}); err != nil {
 		t.Fatal(err)
 	}
 	var warned bool
@@ -77,7 +77,7 @@ func TestFutureSinceWarns(t *testing.T) {
 	if !warned {
 		t.Fatal("no future-date warning")
 	}
-	if err := f.Apply(Op{Kind: "set_since", Since: "2020-01-01"}); err != nil {
+	if err := f.Apply(Op{Kind: KindSetSince, Since: "2020-01-01"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, i := range f.Validate(nil) {
@@ -88,7 +88,7 @@ func TestFutureSinceWarns(t *testing.T) {
 }
 
 func TestSetLockfileDev(t *testing.T) {
-	got := mustApply(t, sinceFile, Op{Kind: "set_lockfile_dev", Lockfile: model.Lockfile{Path: "composer.lock", Dev: true}})
+	got := mustApply(t, sinceFile, Op{Kind: KindSetLockfileDev, Lockfile: model.Lockfile{Path: "composer.lock", Dev: true}})
 	ls := mustParse(t, got).Project().Lockfiles
 	if !ls[0].Dev || !ls[1].Dev {
 		t.Fatalf("dev not set: %+v\n%s", ls, got)
@@ -97,22 +97,22 @@ func TestSetLockfileDev(t *testing.T) {
 		t.Errorf("lost comment:\n%s", got)
 	}
 	// clearing drops the key; the env narrows which lockfile is meant
-	got = mustApply(t, got, Op{Kind: "set_lockfile_dev", Lockfile: model.Lockfile{Path: "package-lock.json", Env: "prod"}})
+	got = mustApply(t, got, Op{Kind: KindSetLockfileDev, Lockfile: model.Lockfile{Path: "package-lock.json", Env: "prod"}})
 	ls = mustParse(t, got).Project().Lockfiles
 	if ls[1].Dev || !ls[0].Dev || strings.Count(got, "dev:") != 1 {
 		t.Fatalf("dev not cleared on the npm lockfile only: %+v\n%s", ls, got)
 	}
 	// setting what is already set changes nothing
-	if again := mustApply(t, got, Op{Kind: "set_lockfile_dev", Lockfile: model.Lockfile{Path: "composer.lock", Dev: true}}); again != got {
+	if again := mustApply(t, got, Op{Kind: KindSetLockfileDev, Lockfile: model.Lockfile{Path: "composer.lock", Dev: true}}); again != got {
 		t.Fatalf("not idempotent:\n%s", again)
 	}
 }
 
 func TestSetLockfileDevErrors(t *testing.T) {
 	for name, op := range map[string]Op{
-		"unknown path": {Kind: "set_lockfile_dev", Lockfile: model.Lockfile{Path: "nope.lock", Dev: true}},
-		"wrong env":    {Kind: "set_lockfile_dev", Lockfile: model.Lockfile{Path: "composer.lock", Env: "prod", Dev: true}},
-		"bad env":      {Kind: "set_lockfile_dev", Lockfile: model.Lockfile{Path: "composer.lock", Env: "QA", Dev: true}},
+		"unknown path": {Kind: KindSetLockfileDev, Lockfile: model.Lockfile{Path: "nope.lock", Dev: true}},
+		"wrong env":    {Kind: KindSetLockfileDev, Lockfile: model.Lockfile{Path: "composer.lock", Env: "prod", Dev: true}},
+		"bad env":      {Kind: KindSetLockfileDev, Lockfile: model.Lockfile{Path: "composer.lock", Env: "QA", Dev: true}},
 	} {
 		f := mustParse(t, sinceFile)
 		if err := f.Apply(op); err == nil {
@@ -123,7 +123,7 @@ func TestSetLockfileDevErrors(t *testing.T) {
 		}
 	}
 	f := mustParse(t, "name: bare\n")
-	if err := f.Apply(Op{Kind: "set_lockfile_dev", Lockfile: model.Lockfile{Path: "x", Dev: true}}); err == nil {
+	if err := f.Apply(Op{Kind: KindSetLockfileDev, Lockfile: model.Lockfile{Path: "x", Dev: true}}); err == nil {
 		t.Error("a project without lockfiles accepted a dev flag")
 	}
 }

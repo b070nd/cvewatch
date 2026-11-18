@@ -49,13 +49,13 @@ func TestCreateAsksOnceWhetherAnEnvironmentDiffers(t *testing.T) {
 	}
 
 	want := []projectfile.Op{
-		{Kind: "set_envs", Envs: []model.Env{"local", "prod"}},
-		{Kind: "set_tech", Tech: "php", Version: "8.2"},
-		{Kind: "set_tech", Tech: "nginx", Version: "1.25"},
-		{Kind: "set_env_tech", Env: "prod", Tech: "php", Version: "8.3"},
-		{Kind: "set_env_tech", Env: "prod", Tech: "redis", Version: "7"},
-		{Kind: "exclude_env_tech", Env: "prod", Tech: "nginx"},
-		{Kind: "set_image", Env: "prod", Image: "shop:1.4"},
+		{Kind: projectfile.KindSetEnvs, Envs: []model.Env{"local", "prod"}},
+		{Kind: projectfile.KindSetTech, Tech: "php", Version: "8.2"},
+		{Kind: projectfile.KindSetTech, Tech: "nginx", Version: "1.25"},
+		{Kind: projectfile.KindSetEnvTech, Env: "prod", Tech: "php", Version: "8.3"},
+		{Kind: projectfile.KindSetEnvTech, Env: "prod", Tech: "redis", Version: "7"},
+		{Kind: projectfile.KindExcludeEnvTech, Env: "prod", Tech: "nginx"},
+		{Kind: projectfile.KindSetImage, Env: "prod", Image: "shop:1.4"},
 	}
 	if got := f.Ops(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ops = %+v", got)
@@ -124,9 +124,9 @@ func TestAnsweringNoToDifferencesKeepsNoneAndYesKeepsTheExisting(t *testing.T) {
 	answer(t, f, "menu", "differ")
 	answer(t, f, "differ", "no")
 	want := []projectfile.Op{
-		{Kind: "remove_env_tech", Env: "prod", Tech: "php"},
-		{Kind: "include_env_tech", Env: "prod", Tech: "nginx"},
-		{Kind: "set_image", Env: "prod"},
+		{Kind: projectfile.KindRemoveEnvTech, Env: "prod", Tech: "php"},
+		{Kind: projectfile.KindIncludeEnvTech, Env: "prod", Tech: "nginx"},
+		{Kind: projectfile.KindSetImage, Env: "prod"},
 	}
 	if got := f.Ops(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ops = %+v", got)

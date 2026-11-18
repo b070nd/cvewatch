@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/b070nd/cvewatch/app/src/ops"
+	"github.com/b070nd/cvewatch/app/src/projectfile"
 )
 
 func runStatus(t *testing.T, root string) string {
@@ -58,7 +59,7 @@ func TestProjectUpdateFlagsErrors(t *testing.T) {
 		t.Error("a period under 5m must be an error")
 	}
 	e, err := parseProjectEdit([]string{"shop", "-update-auto", "true"})
-	if err != nil || len(e.ops) != 1 || e.ops[0].Kind != "set_update" || e.ops[0].Every != "" || e.ops[0].Auto == nil || !*e.ops[0].Auto {
+	if err != nil || len(e.ops) != 1 || e.ops[0].Kind != projectfile.KindSetUpdate || e.ops[0].Every != "" || e.ops[0].Auto == nil || !*e.ops[0].Auto {
 		t.Fatalf("auto alone: %+v %v", e, err)
 	}
 }
