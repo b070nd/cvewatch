@@ -181,6 +181,13 @@ func (r *Runner) Run(ctx context.Context) (Result, error) {
 
 	for i, src := range srcs {
 		f := results[i]
+		if f.err != nil && ctx.Err() != nil {
+			r.Log.Info("source stopped", "source", src.ID)
+			if !f.resume.IsZero() {
+				r.keepFinished(c, src, f)
+			}
+			continue
+		}
 		if f.err != nil {
 			c.res.Failed = append(c.res.Failed, src.ID+": "+f.err.Error())
 			r.Log.Warn("source failed", "source", src.ID, "err", f.err)

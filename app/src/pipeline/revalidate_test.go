@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/b070nd/cvewatch/app/src/httpx"
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/pipeline"
 	"github.com/b070nd/cvewatch/app/src/testkit"
@@ -321,6 +322,40 @@ func TestFailedBackfillStaysOwed(t *testing.T) {
 	if !g.Ledger.Feed("kev").Backfill.IsZero() {
 		t.Error("the retry clears it")
 	}
+}
+
+func TestAStoppedFetchIsNotAFeedFailure(t *testing.T) {
+	g := testkit.NewRig(t, map[string]string{
+		"config/techs.yaml": redisTechs, "sources/s.yaml": nvdWindowed, "config/projects/shop.yaml": phpSince2024,
+	}, map[string]string{feedURL: rss})
+	ctx, cancel := context.WithCancel(context.Background())
+	g.Runner.Getter = stopAt{g.Getter, kevURL, cancel}
+	res, err := g.Runner.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Failed) != 0 {
+		t.Errorf("stopping is not a failure: %v", res.Failed)
+	}
+	_, sources, _, _ := g.Ledger.Health()
+	if h := sources["kev"]; h.Failures != 0 || h.LastError != "" {
+		t.Errorf("the feed's health is untouched: %+v", h)
+	}
+}
+
+// stopAt stops the run when the URL is asked, as quitting the TUI does mid-fetch.
+type stopAt struct {
+	*testkit.Getter
+	url  string
+	stop context.CancelFunc
+}
+
+func (s stopAt) Get(ctx context.Context, u string, v model.Validators, h map[string]string) (*httpx.Response, error) {
+	if u == s.url {
+		s.stop()
+		return nil, ctx.Err()
+	}
+	return s.Getter.Get(ctx, u, v, h)
 }
 
 func TestStoppedBackfillKeepsFinishedWindowsAndResumes(t *testing.T) {
