@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A technology named like a version (`v8-0-31`) is a problem with a fix that makes it the version of a technology that has none.
 
 ### Changed
+- Every MCP tool writes its four hints inline and has a description of at most 380 characters, so directories that read the source see them. `server.json` declares how to run the MCP server from the container image, and the image carries the `io.modelcontextprotocol.server.name` label.
 - A scan that finds many files disagreeing about a version says so in one note instead of one per file.
 
 ### Fixed
