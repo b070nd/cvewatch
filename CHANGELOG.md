@@ -17,7 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A scan that finds many files disagreeing about a version says so in one note instead of one per file.
 
 ### Fixed
-- Advisories from vendors that name the product with a suffix, such as Oracle's `MySQL Server` and `MySQL Cluster`, now match the `mysql`, `mariadb` and `mongodb` technologies. CVE-2026-114952 was stored but never matched for that reason.
+- Advisories from vendors that name the product with a suffix, such as Oracle's `MySQL Server` and `MySQL Cluster`, now match the `mysql`, `mariadb` and `mongodb` technologies.  Such advisories were stored but never matched.
 
 ## [2.1.2] - 2026-11-18
 
