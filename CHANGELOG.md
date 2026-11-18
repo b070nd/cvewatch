@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-11-18
+
 ### Upgrading from 2.2
 - The state moves to schema version 4: a finding cvewatch closed itself now stores why (`auto_reason`: `since` or `env_removed`), read from the old status and note on the first load. A 2.2 build reads the new state, but its `doctor` reports the newer schema version as an error.
 
