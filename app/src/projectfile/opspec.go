@@ -167,7 +167,7 @@ var OpTable = []OpSpec{
 	},
 	{
 		Kind: "set_since", Summary: "set the date from which advisories count for the project",
-		Params:  []Param{{"since", "date", false, "YYYY-MM-DD; empty clears"}},
+		Params:  []Param{{"since", "date", false, "YYYY-MM-DD, a time such as 2026-01-31T08:30:00Z, or a span back from now such as 24h, 7d, 3m or 1y (days and more start at midnight UTC); empty clears"}},
 		Example: Op{Kind: "set_since", Since: "2026-01-31"},
 		Flag:    "-since DATE", Args: []string{"-since", "2026-01-31"},
 	},

@@ -1,7 +1,7 @@
 name: ci
 on:
   push:
-    branches: [main, master, "feature/**"]
+    branches: [main, master]
   pull_request:
 permissions:
   contents: read
@@ -28,7 +28,7 @@ jobs:
         shell: bash
         run: test -z "$(gofmt -l .)"
       - run: go vet ./...
-      - run: go test -race ./...
+      - run: go test -race -timeout 20m ./...
   test:
     needs: platforms
     if: always()

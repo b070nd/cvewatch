@@ -528,3 +528,33 @@ func (f *fakeDesktop) Copy(text string) (string, error) {
 	}
 	return f.copyTool, nil
 }
+
+// timed wraps a real backend so the driver waits for its slow calls (the race
+// detector on a small runner) instead of dropping them as timers.
+type timed struct {
+	Backend
+	active  atomic.Int32
+	lastEnd atomic.Int64
+}
+
+func (b *timed) busy() bool {
+	return b.active.Load() > 0 || time.Since(time.Unix(0, b.lastEnd.Load())) < 300*time.Millisecond
+}
+
+func (b *timed) call(fn func() error) error {
+	b.active.Add(1)
+	defer func() { b.lastEnd.Store(time.Now().UnixNano()); b.active.Add(-1) }()
+	return fn()
+}
+
+func (b *timed) Read(fn func(*ops.Session) error) error {
+	return b.call(func() error { return b.Backend.Read(fn) })
+}
+
+func (b *timed) Write(fn func(*ops.Session) error) error {
+	return b.call(func() error { return b.Backend.Write(fn) })
+}
+
+func (b *timed) Settings(fn func(*ops.SettingsSession) error) error {
+	return b.call(func() error { return b.Backend.Settings(fn) })
+}

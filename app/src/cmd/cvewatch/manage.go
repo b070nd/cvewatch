@@ -321,7 +321,7 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 	fs.Var(&envInclude, "env-include", "undo -env-exclude as env:tech, repeatable")
 	fs.Var(&techEnvs, "tech-envs", "limit a generic tech to some environments as tech=env,env (tech= lifts the limit), repeatable")
 	fs.Var(&image, "image", "set the image of an environment as env=tag (empty tag clears), repeatable")
-	fs.Var(&since, "since", "date advisories count from, YYYY-MM-DD (empty clears)")
+	fs.Var(&since, "since", "when advisories count from: a day YYYY-MM-DD, a time such as 2026-01-31T08:30:00Z, or a span back from now such as 7d, 3m, 1y (empty clears)")
 	fs.Var(&vendor, "vendor", "the vendor (customer or organisation) that owns the project, a lowercase name (empty clears)")
 	fs.Var(&profile, "profile", "how much evidence a match needs: strict, balanced or discovery (default or empty clears: the profile of config.yaml applies)")
 	fs.Var(&updateEvery, "update-every", "how often the project is refreshed, such as 30m, 1h or 2d, at least 5m (default removes it: the interval of config.yaml applies)")

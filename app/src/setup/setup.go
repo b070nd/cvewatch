@@ -137,8 +137,13 @@ func (f *Flow) UseDiscovery(dir string, res discovery.Result) {
 		}
 	}
 	for _, p := range f.props {
-		if rank(p.Confidence) >= 2 && techIndex(f.draft.Techs, p.Tech) < 0 {
+		if rank(p.Confidence) < 2 {
+			continue
+		}
+		if i := techIndex(f.draft.Techs, p.Tech); i < 0 {
 			f.draft.Techs = append(f.draft.Techs, model.ProjectTech{Name: p.Tech, Version: p.Version})
+		} else if f.draft.Techs[i].Version == "" && p.Version != "" {
+			f.draft.Techs[i].Version = p.Version // a declared technology without a version learns it from the scan
 		}
 	}
 	for _, l := range res.Lockfiles {

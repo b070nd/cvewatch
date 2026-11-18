@@ -68,6 +68,7 @@ func init() {
 		click:     func(m *app, x, y int) tea.Cmd { return m.clickField(y) },
 		binds: []binding{
 			{keys: ks("enter", "right", "l"), disp: "enter", help: "change the field: since opens an editor, the others open their list", short: "edit", prio: 1, do: plain((*app).fieldOpen)},
+			{keys: ks("s"), help: "add inputs: scan a folder, or a Dockerfile, compose file, manifest or lockfile, and merge what it finds into the project; the stack is de-duplicated and you see the change before it is saved", short: "scan inputs", prio: 2, do: plain((*app).fieldScan)},
 			bindBack("back to the problems of the project", (*app).closeFields),
 			bindJump(), bindContext(), bindRefresh(), bindTabs(), bindHelp(),
 		},

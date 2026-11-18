@@ -7,9 +7,11 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/b070nd/cvewatch/app/src/discovery"
 	"github.com/b070nd/cvewatch/app/src/matrix"
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/ops"
@@ -731,16 +733,56 @@ func (m *app) editPrompt(p projectRow, title, hint string, fields []field, build
 	m.prm = &prompt{kind: pkEdit, title: oneLine(title), hint: hint, fields: fields, project: p.Name, known: p.Problems, build: build}
 }
 
+// sinceChoices are the ready-made starts of the Since picker, like the time
+// range of a dashboard: a span back from now, resolved when it is saved.
+var sinceChoices = []struct{ spec, label string }{
+	{"24h", "Past 24 hours"}, {"7d", "Past week"}, {"1m", "Past month"}, {"3m", "Past 3 months"},
+	{"6m", "Past 6 months"}, {"1y", "Past year"},
+}
+
 func (m *app) promptSince(p projectRow) {
+	now := time.Now()
+	pk := &picker{title: "Since: where the history of " + oneLine(p.Name) + " starts", crumb: "since",
+		hint: "enter chooses; older advisories are ignored and their open findings close, an earlier start fetches and reopens them; now: " + orDash(p.Since)}
+	for _, c := range sinceChoices {
+		at, _ := projectfile.ParseSince(c.spec, now)
+		pk.items = append(pk.items, pickItem{value: c.spec, label: c.label, detail: "from " + projectfile.FormatSince(at)})
+	}
+	pk.items = append(pk.items,
+		pickItem{value: "any", label: "Any time", detail: "no start: every advisory the sources hold counts"},
+		pickItem{value: "custom", label: "Custom", detail: "a day, a time or a span such as 2026-01-31, 2026-01-31T08:30:00Z or 45d"})
+	pk.done = func(m *app, vals []string) tea.Cmd {
+		m.chs = nil
+		switch vals[0] {
+		case "custom":
+			m.customSince(p)
+			return nil
+		case "any":
+			return m.previewEdit(p.Name, p.Problems, "clear since", []projectfile.Op{{Kind: "set_since", Since: ""}}, "", nil)
+		}
+		at, err := projectfile.ParseSince(vals[0], time.Now())
+		if err != nil {
+			m.fail(err.Error())
+			return nil
+		}
+		return m.previewEdit(p.Name, p.Problems, "set since to "+projectfile.FormatSince(at), []projectfile.Op{{Kind: "set_since", Since: vals[0]}}, "", nil)
+	}
+	m.choose(pk)
+}
+
+func (m *app) customSince(p projectRow) {
 	f := field{label: "Since"}
 	f.in.set(p.Since)
-	m.editPrompt(p, "Since date of "+p.Name, "a day, YYYY-MM-DD: older advisories are ignored and their open findings close; an earlier day fetches and reopens them", []field{f},
+	m.editPrompt(p, "Since of "+p.Name, "a day 2026-01-31, a time 2026-01-31T08:30:00Z (UTC) or a span back from now: 24h, 7d, 2w, 3m, 1y; empty clears", []field{f},
 		func(v []string) (string, []projectfile.Op, error) {
-			label := "set since to " + v[0]
 			if v[0] == "" {
-				label = "clear since"
+				return "clear since", []projectfile.Op{{Kind: "set_since", Since: ""}}, nil
 			}
-			return label, []projectfile.Op{{Kind: "set_since", Since: v[0]}}, nil
+			at, err := projectfile.ParseSince(v[0], time.Now())
+			if err != nil {
+				return "", nil, err
+			}
+			return "set since to " + projectfile.FormatSince(at), []projectfile.Op{{Kind: "set_since", Since: v[0]}}, nil
 		})
 }
 
@@ -1014,6 +1056,12 @@ func (m *app) lockPicked(p *prompt) tea.Cmd {
 		return refuse("that is a folder, not a lockfile: tab opens it, then pick a lockfile")
 	case !fi.Mode().IsRegular():
 		return refuse("that is not a file")
+	}
+	if discovery.IsContainerFile(abs) {
+		if p.project == "" {
+			return refuse("a Dockerfile or compose file names images, not packages: scan its folder with Ctrl+D to take its technologies")
+		}
+		return m.previewMerge(p, abs)
 	}
 	m.prm = nil
 	if typ, ok := matrix.DetectType(filepath.Base(abs)); ok {

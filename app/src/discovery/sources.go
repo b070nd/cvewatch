@@ -118,6 +118,9 @@ func (s *scanner) terraform(f *file) {
 
 // ---- merging ----
 
+// maxVersionNotes is how many files that disagree with the chosen version get a note each; more are summed up in one.
+const maxVersionNotes = 3
+
 // better says whether a beats b: higher confidence, then the more specific version.
 func better(a, b hit) bool {
 	if a.conf != b.conf {
@@ -170,10 +173,18 @@ func (s *scanner) result(root string) Result {
 			w := hits[win]
 			p.Version, p.Confidence = w.version, w.conf
 			order = append([]hit{w}, slices.Delete(slices.Clone(hits), win, win+1)...)
+			var apart []hit
 			for _, h := range hits {
 				if h.version != "" && !h.quiet && !compatible(h.version, w.version) {
+					apart = append(apart, h)
+				}
+			}
+			if len(apart) <= maxVersionNotes {
+				for _, h := range apart {
 					s.note("%s: %s %s but %s %s", name, w.file, w.says(), h.file, h.says())
 				}
+			} else {
+				s.note("%s: %s %s but %d other files differ, for example %s %s and %s %s", name, w.file, w.says(), len(apart), apart[0].file, apart[0].says(), apart[1].file, apart[1].says())
 			}
 		} else {
 			for _, h := range hits {

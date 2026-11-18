@@ -51,6 +51,7 @@ func renderStatus(rep status.Report, now time.Time, w int, projects []string, ho
 	add("")
 	add("  daemon  " + levelText(rep.Daemon.Level) + "  " + orDash(oneLine(rep.Daemon.Mode)))
 	add(indentWrap("          ", orDash(oneLine(rep.Daemon.Message)), w)...)
+	add(stMuted.Render("          d starts the daemon in the background, or stops it"))
 	if !rep.Daemon.LastCycle.IsZero() {
 		add("          last cycle " + when(rep.Daemon.LastCycle, now))
 	}

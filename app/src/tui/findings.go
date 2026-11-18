@@ -24,6 +24,11 @@ type issueList struct {
 	text      string
 	filtering bool
 	in        input
+	hist      []string // the filters kept with enter, latest last
+	back      int      // while typing: how far up/down went into hist; 0 is the text being typed
+	typed     string   // what was typed before going up into hist
+	sortBy    int      // index in sortCols; 0 is the priority order
+	desc      bool
 	sel       map[string]bool // issues marked for a change of many, by issueKey; always among vis
 
 	lead    []status.Problem        // rows before the issues: the problems that wait for a person (Overview)
@@ -52,6 +57,7 @@ func minLabel(s model.Severity) string {
 // the cursor back on its issue.
 func (l *issueList) refit(all []query.Issue) {
 	l.vis = query.Narrow(all, l.min, l.text)
+	sortIssues(l.vis, l.sortBy, l.desc, l.grouped)
 	l.secs = nil
 	if l.grouped {
 		l.secs = map[string]query.Counts{}
@@ -271,7 +277,7 @@ func (m *app) cycleSeverity() tea.Cmd {
 
 func (m *app) startFilter() tea.Cmd {
 	l := m.list()
-	l.filtering = true
+	l.filtering, l.back = true, 0
 	l.in.set(l.text)
 	return nil
 }
@@ -284,8 +290,38 @@ func (m *app) clearFilter() tea.Cmd {
 }
 
 func (m *app) keepFilter() tea.Cmd {
-	m.list().filtering = false
+	l := m.list()
+	l.filtering = false
+	if t := strings.TrimSpace(l.text); t != "" {
+		l.hist = append(slices.DeleteFunc(l.hist, func(h string) bool { return h == t }), t)
+		if len(l.hist) > 20 {
+			l.hist = l.hist[len(l.hist)-20:]
+		}
+	}
 	return nil
+}
+
+// recallFilter steps up (older) or down (newer) through the filters kept before.
+func (m *app) recallFilter(older bool) {
+	l := m.list()
+	if l.back == 0 {
+		l.typed = l.in.String()
+	}
+	switch {
+	case older && l.back < len(l.hist):
+		l.back++
+	case !older && l.back > 0:
+		l.back--
+	default:
+		return
+	}
+	if l.back == 0 {
+		l.in.set(l.typed)
+	} else {
+		l.in.set(l.hist[len(l.hist)-l.back])
+	}
+	l.text = l.in.String()
+	m.refitLists()
 }
 
 func bindFilter() binding {
@@ -361,6 +397,14 @@ func (m *app) findingsBody(w, h int) []string {
 		return d.view(w, h)
 	}
 	return renderFindings(len(m.dataIssues()), &m.fnd.issueList, m.listView(), m.noneText(), m.data.monitored(), w, h)
+}
+
+// cvssCell is the base score with one decimal, or - when nothing scored it.
+func cvssCell(is query.Issue) string {
+	if is.CVSS <= 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.1f", is.CVSS)
 }
 
 func owners(is query.Issue) string {
@@ -441,11 +485,19 @@ func renderFindings(total int, st *issueList, lv listView, none string, mon map[
 	if n := len(st.sel); n > 0 {
 		info += fmt.Sprintf("   %d selected", n)
 	}
+	if s := st.sortLabel(); s != "" {
+		info += "   sort: " + s
+	}
 	switch {
 	case st.filtering:
 		info += "   filter: " + st.in.view(30, true)
 	case st.text != "":
 		info += "   filter: " + oneLine(st.text)
+	}
+	if st.text != "" {
+		if _, err := query.ParseSearch(st.text); err != nil {
+			info += "   read as plain words: " + oneLine(err.Error())
+		}
 	}
 	lines := []string{stMuted.Render(trunc(info, w))}
 
@@ -453,10 +505,10 @@ func renderFindings(total int, st *issueList, lv listView, none string, mon map[
 	for _, is := range rows {
 		idW = max(idW, min(width(oneLine(is.ID)), 20))
 	}
-	const sevW, ageW, ownW = 8, 7, 10
+	const sevW, cvssW, ageW, ownW = 8, 5, 7, 10
 	projW := 22
 	showOwn, showProj := w >= 100, w >= 80
-	fixed := 3 + sevW + 1 + idW + 1 + ageW + 1
+	fixed := 3 + sevW + 1 + cvssW + 1 + idW + 1 + ageW + 1
 	if showProj {
 		fixed += projW + 1
 	}
@@ -466,14 +518,15 @@ func renderFindings(total int, st *issueList, lv listView, none string, mon map[
 	titleW := max(w-fixed, 8)
 
 	row := func(cells ...string) string { return strings.Join(cells, " ") }
-	head := []string{pad("SEVERITY", sevW), pad("ID", idW), pad("AGE", ageW)}
+	sh := st.sortHead
+	head := []string{pad(sh("SEVERITY"), sevW), pad(sh("CVSS"), cvssW), pad(sh("ID"), idW), pad(sh("AGE"), ageW)}
 	if showProj {
-		head = append(head, pad("OPEN IN", projW))
+		head = append(head, pad(sh("OPEN IN"), projW))
 	}
 	if showOwn {
-		head = append(head, pad("OWNER", ownW))
+		head = append(head, pad(sh("OWNER"), ownW))
 	}
-	head = append(head, "TITLE")
+	head = append(head, sh("TITLE"))
 
 	plan, _ := st.plan(findingsRoom(h))
 	for _, pl := range plan {
@@ -508,7 +561,7 @@ func renderFindings(total int, st *issueList, lv listView, none string, mon map[
 			age = "-"
 		}
 		cells := func(sev string) []string {
-			c := []string{sev, pad(oneLine(is.ID), idW), pad(age, ageW)}
+			c := []string{sev, pad(cvssCell(is), cvssW), pad(oneLine(is.ID), idW), pad(age, ageW)}
 			if showProj {
 				cell := pad(whereOpen(is, mon, projW), projW)
 				if i != st.vp.at() {
@@ -534,7 +587,7 @@ func renderFindings(total int, st *issueList, lv listView, none string, mon map[
 	if len(rows) == 0 {
 		msg := none
 		if total > 0 {
-			msg = "No issue matches the filter. Press s to lower the severity, / to change the text."
+			msg = "No issue matches the filter. Press s to lower the severity, / to change the text, = to change a field, esc to clear it."
 		}
 		lines = append(lines, "", msg)
 	}

@@ -293,7 +293,7 @@ func TestHintsOpenTheEditorThatSettlesThem(t *testing.T) {
 	d.press("w")
 	d.pickTo("since")
 	d.press("enter")
-	d.want("Since date of web")
+	d.want("Since: where the history of web starts")
 	d.press("esc")
 
 	// the review of a project being set up sends the hint to its step
