@@ -814,16 +814,18 @@ func (v *Vulnerability) Keys() []string { return append([]string{v.ID}, v.Aliase
 
 // Finding is one vulnerability affecting one project in one environment.
 type Finding struct {
-	VulnID    string        `json:"vuln_id"`
-	Project   string        `json:"project"`
-	Env       Env           `json:"env"`
-	Status    Status        `json:"status"`
-	Note      string        `json:"note,omitempty"`
-	Auto      bool          `json:"auto,omitempty"` // the status was set by cvewatch itself (project since date); a person's change clears it
-	Matched   []string      `json:"matched"`        // "php@8.2", "symfony/http-kernel@6.4.1"
-	Installed []Installed   `json:"installed,omitempty"`
-	Applies   Applicability `json:"applies,omitempty"` // whether the installed version is in the affected range
-	Reasons   []string      `json:"reasons,omitempty"` // why this finding exists, in plain words
+	VulnID  string `json:"vuln_id"`
+	Project string `json:"project"`
+	Env     Env    `json:"env"`
+	Status  Status `json:"status"`
+	Note    string `json:"note,omitempty"`
+	Auto    bool   `json:"auto,omitempty"` // the status was set by cvewatch itself (project since date); a person's change clears it
+	// AutoReason is why cvewatch closed it, while Auto is set; see verdict.go.
+	AutoReason AutoReason    `json:"auto_reason,omitempty"`
+	Matched    []string      `json:"matched"` // "php@8.2", "symfony/http-kernel@6.4.1"
+	Installed  []Installed   `json:"installed,omitempty"`
+	Applies    Applicability `json:"applies,omitempty"` // whether the installed version is in the affected range
+	Reasons    []string      `json:"reasons,omitempty"` // why this finding exists, in plain words
 	// Retired says why cvewatch itself gave up on the match while the finding
 	// stayed open: it then has nothing installed and counts as not affected.
 	// A match that returns clears it.

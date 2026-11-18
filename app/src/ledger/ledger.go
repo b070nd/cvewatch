@@ -47,7 +47,7 @@ type State struct {
 //	1  per-channel delivery records (Finding.Alerted) replace Finding.AlertedAt
 //	2  health records: cycles, per-source and per-channel outcomes, heartbeat
 //	3  Finding.Retired says why a match was given up; matches carry their basis
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 // maxCycles is how many cycle records are kept.
 const maxCycles = 50
@@ -330,11 +330,7 @@ func (l *Ledger) Update(vulnID, project string, env model.Env, u Update, now tim
 		n++
 		f.Updated = now
 		if u.Status != nil {
-			f.Status, f.Auto = *u.Status, false
-			if u.Note != nil {
-				f.Note = *u.Note
-			}
-			f.History = append(f.History, model.Disposition{Time: now, Actor: u.Actor, Action: "status", Status: *u.Status, Note: f.Note})
+			f.Resolve(u.Actor, *u.Status, u.Note, now)
 		} else if u.Note != nil {
 			f.Note = *u.Note
 		}
@@ -472,6 +468,15 @@ func migrate(s *State) {
 			if f.Retired == "" && len(f.Installed) == 0 && f.Applies == model.AppNotAffected &&
 				len(f.Reasons) > 0 && strings.HasPrefix(f.Reasons[0], "no longer installed") {
 				f.Retired = model.RetiredUninstalled
+			}
+		}
+	}
+	if s.SchemaVersion < 4 {
+		for _, f := range s.Findings {
+			// Why cvewatch closed a finding used to be told only by its status
+			// and note; it is stored now.
+			if f.Auto && f.AutoReason == "" {
+				f.AutoReason = f.ClosedBy()
 			}
 		}
 	}

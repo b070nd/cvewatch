@@ -520,14 +520,7 @@ func (c *cycle) detected(made []model.Finding, note string) {
 func AddFindings(l *ledger.Ledger, vulnID string, ms []relevance.Match, now time.Time) []model.Finding {
 	var made []model.Finding
 	for _, m := range ms {
-		labels := make([]string, len(m.Installed))
-		for k, in := range m.Installed {
-			labels[k] = in.Label()
-		}
-		f := model.Finding{
-			VulnID: vulnID, Project: m.Project, Env: m.Env, Status: model.StatusOpen, Matched: labels,
-			Installed: m.Installed, Applies: m.Applies, Reasons: m.Reasons, Updated: now,
-		}
+		f := model.NewFinding(vulnID, m.Project, m.Env, m.Installed, m.Applies, m.Reasons, now)
 		if l.AddFinding(f) {
 			made = append(made, f)
 		}
@@ -574,8 +567,8 @@ func (r *Runner) alert(ctx context.Context, now time.Time) int {
 		var batch []notify.Alert
 		for _, f := range r.Ledger.Findings() {
 			v := r.Ledger.Vuln(f.VulnID)
-			if f.Status != model.StatusOpen || f.Delivered(name) || v == nil || !has(r.Only, f.Project) ||
-				f.Applies == model.AppNotAffected || !v.Severity.AtLeast(d.Min) || !r.Cfg.Horizon.Contains(v.Published, now) ||
+			if !f.Actionable() || f.Delivered(name) || v == nil || !has(r.Only, f.Project) ||
+				!v.Severity.AtLeast(d.Min) || !r.Cfg.Horizon.Contains(v.Published, now) ||
 				discovery[f.Project] && f.WeakOnly() { // the discovery profile records text matches, it does not page for them
 				continue
 			}

@@ -82,10 +82,7 @@ func (c *cycle) follow(v *model.Vulnerability, f model.Finding, tg relevance.Tar
 			return
 		}
 		c.r.Ledger.Mutate(f.Key(), func(g *model.Finding) {
-			g.Installed = mt.Installed // the basis may be new: older findings carry none
-			if verdictChanged {
-				g.Applies, g.Reasons, g.Updated = mt.Applies, mt.Reasons, c.now
-			}
+			g.Refresh(mt.Installed, mt.Applies, mt.Reasons, c.now) // the basis may be new: older findings carry none
 		})
 		if verdictChanged {
 			c.dirty[v.ID] = true
@@ -104,7 +101,7 @@ func (c *cycle) follow(v *model.Vulnerability, f model.Finding, tg relevance.Tar
 			word = "matches again: "
 		}
 		labels := labelsOf(mt.Installed)
-		c.inventoryChange(f, mt.Installed, mt.Applies, mt.Reasons, "", word+strings.Join(labels, ", ")+"; now "+string(mt.Applies))
+		c.inventoryChange(f, mt.Installed, mt.Applies, mt.Reasons, word+strings.Join(labels, ", ")+"; now "+string(mt.Applies))
 		return
 	}
 
@@ -146,7 +143,7 @@ func (c *cycle) follow(v *model.Vulnerability, f model.Finding, tg relevance.Tar
 	if len(parts) == 0 {
 		return
 	}
-	c.inventoryChange(f, now, applies, reasons, "", strings.Join(parts, "; ")+"; now "+string(applies))
+	c.inventoryChange(f, now, applies, reasons, strings.Join(parts, "; ")+"; now "+string(applies))
 }
 
 // retire gives up on a finding whose match is gone, when that is proven.
@@ -181,7 +178,8 @@ func (c *cycle) retire(v *model.Vulnerability, f model.Finding, tg relevance.Tar
 		}
 	}
 	note := strings.Join(slices.Concat(prefixed("removed ", gone), prefixed("no longer matched ", unmatched)), "; ") + "; now " + string(model.AppNotAffected)
-	c.inventoryChange(f, nil, model.AppNotAffected, reasons, why, note)
+	c.r.Ledger.Mutate(f.Key(), func(m *model.Finding) { m.Retire(why, reasons, note, c.now) })
+	c.inventoryEvent(f, note)
 	if why == model.RetiredUnmatched {
 		c.res.Retired++
 		c.retired = append(c.retired, f)
@@ -224,11 +222,13 @@ func labelsOf(in []model.Installed) []string {
 }
 
 // inventoryChange records a new installed state on a finding, in its history and in the audit trail.
-func (c *cycle) inventoryChange(f model.Finding, now []model.Installed, applies model.Applicability, reasons []string, retired model.Retirement, note string) {
-	c.r.Ledger.Mutate(f.Key(), func(m *model.Finding) {
-		m.Installed, m.Matched, m.Applies, m.Reasons, m.Retired, m.Updated = now, labelsOf(now), applies, reasons, retired, c.now
-		m.History = append(m.History, model.Disposition{Time: c.now, Actor: "cvewatch", Action: "inventory", Note: note})
-	})
+func (c *cycle) inventoryChange(f model.Finding, now []model.Installed, applies model.Applicability, reasons []string, note string) {
+	c.r.Ledger.Mutate(f.Key(), func(m *model.Finding) { m.Reinventory(now, applies, reasons, note, c.now) })
+	c.inventoryEvent(f, note)
+}
+
+// inventoryEvent puts an inventory change of a finding in the audit trail.
+func (c *cycle) inventoryEvent(f model.Finding, note string) {
 	c.events = append(c.events, audit.Event{Time: c.now, Actor: "cvewatch", Action: "inventory", Vuln: f.VulnID,
 		Project: f.Project, Env: string(f.Env), Note: note})
 	c.dirty[f.VulnID] = true

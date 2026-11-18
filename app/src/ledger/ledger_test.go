@@ -412,3 +412,16 @@ func TestFailureStreakRemembersWhereItBegan(t *testing.T) {
 		t.Error("a success ends the streak")
 	}
 }
+
+func TestMigrationStoresWhyCvewatchClosedAFinding(t *testing.T) {
+	since := &model.Finding{VulnID: "CVE-1", Project: "shop", Env: model.EnvProd, Status: model.StatusNotAffected, Auto: true}
+	env := &model.Finding{VulnID: "CVE-2", Project: "shop", Env: model.EnvDev, Status: model.StatusIgnored, Auto: true, Note: model.EnvRemovedNote}
+	person := &model.Finding{VulnID: "CVE-3", Project: "shop", Env: model.EnvProd, Status: model.StatusIgnored, Note: model.EnvRemovedNote}
+	l := New(State{SchemaVersion: 3, Findings: map[string]*model.Finding{since.Key(): since, env.Key(): env, person.Key(): person}})
+	if l.State().SchemaVersion != SchemaVersion {
+		t.Fatalf("version %d", l.State().SchemaVersion)
+	}
+	if since.AutoReason != model.AutoSince || env.AutoReason != model.AutoEnvRemoved || person.AutoReason != "" {
+		t.Errorf("since %q env %q person %q", since.AutoReason, env.AutoReason, person.AutoReason)
+	}
+}

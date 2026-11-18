@@ -770,8 +770,7 @@ func (s *Session) closeFindings(pl *lifecyclePlan, now time.Time) {
 			if f.Status != model.StatusOpen {
 				return
 			}
-			f.Status, f.Note, f.Updated = model.StatusIgnored, note, now
-			f.History = append(f.History, model.Disposition{Time: now, Actor: s.Actor, Action: "status", Status: f.Status, Note: note})
+			f.Resolve(s.Actor, model.StatusIgnored, &note, now)
 		})
 	}
 }

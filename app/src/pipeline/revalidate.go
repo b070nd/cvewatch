@@ -234,12 +234,11 @@ func (c *cycle) applySince(rv *Revalidation) {
 		switch {
 		case f.Status == model.StatusOpen && before:
 			note := fmt.Sprintf("published before this project's since date (%s); closed automatically", tg.Since.UTC().Format(time.DateOnly))
-			c.setAuto(f.Key(), model.StatusNotAffected, true, note, f.Note)
+			c.autoClose(f.Key(), model.StatusNotAffected, model.AutoSince, note)
 			rv.Closed++
 			record(f, v, "closed")
-		case f.Status == model.StatusNotAffected && f.Auto && !before:
-			note := "this project's since date no longer excludes it; reopened automatically"
-			c.setAuto(f.Key(), model.StatusOpen, false, note, "")
+		case f.ClosedBy() == model.AutoSince && !before:
+			c.autoReopen(f.Key(), "this project's since date no longer excludes it; reopened automatically")
 			rv.Reopened++
 			record(f, v, "reopened")
 		default:
@@ -251,9 +250,6 @@ func (c *cycle) applySince(rv *Revalidation) {
 		rv.Changes = append(rv.Changes, *changes[key])
 	}
 }
-
-// envRemoved is the note of a finding closed because its environment is gone.
-const envRemoved = "environment removed from project"
 
 // applyEnvs closes open findings of environments the project no longer
 // declares, marking them Auto, and reopens those it closed when the
@@ -275,11 +271,11 @@ func (c *cycle) applyEnvs(rv *Revalidation, only map[string]bool) {
 		var action string
 		switch {
 		case f.Status == model.StatusOpen && !slices.Contains(envs, f.Env):
-			c.setAuto(f.Key(), model.StatusIgnored, true, envRemoved, f.Note)
+			c.autoClose(f.Key(), model.StatusIgnored, model.AutoEnvRemoved, model.EnvRemovedNote)
 			rv.EnvClosed++
 			action = "closed"
-		case f.Status == model.StatusIgnored && f.Auto && f.Note == envRemoved && slices.Contains(envs, f.Env):
-			c.setAuto(f.Key(), model.StatusOpen, false, "this environment is declared again; reopened automatically", "")
+		case f.ClosedBy() == model.AutoEnvRemoved && slices.Contains(envs, f.Env):
+			c.autoReopen(f.Key(), "this environment is declared again; reopened automatically")
 			rv.EnvReopened++
 			action = "reopened"
 		default:
@@ -297,23 +293,26 @@ func (c *cycle) applyEnvs(rv *Revalidation, only map[string]bool) {
 	}
 }
 
-// setAuto changes a finding's status on cvewatch's own account and records it
-// in the audit trail. A note a person wrote stays in the history.
-func (c *cycle) setAuto(key string, st model.Status, auto bool, note, prior string) {
+// autoClose closes a finding on cvewatch's own account and records it in the
+// audit trail. A note a person wrote stays in the history.
+func (c *cycle) autoClose(key string, st model.Status, why model.AutoReason, note string) {
 	c.r.Ledger.Mutate(key, func(m *model.Finding) {
-		m.Status, m.Auto, m.Updated = st, auto, c.now
-		m.Note = ""
-		if auto {
-			m.Note = note
-		}
-		event := note
-		if prior != "" {
-			note += " (previous note: " + prior + ")"
-		}
-		m.History = append(m.History, model.Disposition{Time: c.now, Actor: "cvewatch", Action: "status", Status: st, Note: note})
-		c.events = append(c.events, audit.Event{Time: c.now, Actor: "cvewatch", Action: "status", Vuln: m.VulnID,
-			Project: m.Project, Env: string(m.Env), Status: string(st), Note: event})
+		m.AutoClose(st, why, note, c.now)
+		c.statusEvent(m, st, note)
 	})
+}
+
+// autoReopen opens a finding cvewatch closed, once its reason is gone.
+func (c *cycle) autoReopen(key, note string) {
+	c.r.Ledger.Mutate(key, func(m *model.Finding) {
+		m.AutoReopen(note, c.now)
+		c.statusEvent(m, model.StatusOpen, note)
+	})
+}
+
+func (c *cycle) statusEvent(m *model.Finding, st model.Status, note string) {
+	c.events = append(c.events, audit.Event{Time: c.now, Actor: "cvewatch", Action: "status", Vuln: m.VulnID,
+		Project: m.Project, Env: string(m.Env), Status: string(st), Note: note})
 }
 
 // rejudge settles every stored record against the current configuration:

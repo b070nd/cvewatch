@@ -588,7 +588,7 @@ func (s *Session) Violations() ([]priority.Violation, error) {
 	var subjects []priority.Subject
 	for _, fd := range s.Ledger.Findings() {
 		v := s.Ledger.Vuln(fd.VulnID)
-		if fd.Status != model.StatusOpen || fd.Applies == model.AppNotAffected || v == nil ||
+		if !fd.Actionable() || v == nil ||
 			(len(f.Projects) > 0 && !slices.Contains(f.Projects, fd.Project)) {
 			continue
 		}
