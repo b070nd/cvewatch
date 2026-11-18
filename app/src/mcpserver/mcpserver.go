@@ -49,7 +49,7 @@ var Version = "dev"
 func build(root string, log *slog.Logger, allowWrite bool) *mcp.Server {
 	s := &server{root: root, log: log}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "cvewatch", Version: Version}, &mcp.ServerOptions{Instructions: instructions})
-	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
+	ro := readHints()
 
 	mcp.AddTool(srv, &mcp.Tool{Name: "list_findings", Annotations: ro,
 		Description: "List open vulnerabilities that affect our projects, most severe first, with age since publication, article count and whether an official fix is known. Optional filters: minimum severity (low, medium, high, critical), vendor, project, and include_unaffected for versions known to be outside the affected range."}, s.list)
@@ -70,17 +70,16 @@ func build(root string, log *slog.Logger, allowWrite bool) *mcp.Server {
 	addSetupTools(srv, s, allowWrite)
 
 	if allowWrite {
-		no := false
 		mcp.AddTool(srv, &mcp.Tool{Name: "assign",
-			Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no},
+			Annotations: writeHints(true),
 			Description: "Set owner, due date or ticket for a vulnerability in a project, optionally one environment."}, s.assign)
 		mcp.AddTool(srv, &mcp.Tool{Name: "attach_evidence",
-			Annotations: &mcp.ToolAnnotations{DestructiveHint: &no},
+			Annotations: writeHints(false),
 			Description: "Attach a note and link (merge request, deployment, advisory) as evidence to a vulnerability in a project."}, s.attach)
 		mcp.AddTool(srv, &mcp.Tool{Name: "set_status",
-			Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no},
+			Annotations: writeHints(true),
 			Description: "Set the fix status (fixed, ignored, not_affected or open) of a vulnerability for a project, optionally one environment. Use fixed only after the fix is deployed there; not_affected needs a note giving the reason."}, s.setStatus)
-		mcp.AddTool(srv, &mcp.Tool{Name: "refresh", Annotations: &mcp.ToolAnnotations{DestructiveHint: &no},
+		mcp.AddTool(srv, &mcp.Tool{Name: "refresh", Annotations: hints(false, false, false, true),
 			Description: "Fetch all sources now, record new findings and send Slack alerts for them. Takes about a minute."}, s.refresh)
 	}
 	return srv
