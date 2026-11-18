@@ -4,6 +4,7 @@
 
 [![ci](https://github.com/b070nd/cvewatch/actions/workflows/ci.yml/badge.svg)](https://github.com/b070nd/cvewatch/actions/workflows/ci.yml)
 [![M8ven Score](https://m8ven.ai/badge/mcp/b070nd-cvewatch-wot564?v=8ead5ddfad42d02dfdd1067dc0991759)](https://m8ven.ai/mcp/b070nd-cvewatch-wot564?s=readme)
+[![XERJ Corpus Hub contributor](https://hub.xerj.org/contributors/b070nd/badge.svg)](https://hub.xerj.org/contributors/b070nd)
 
 Security feeds tell you *that* something is vulnerable. Scanners tell you *where* a version is bad at one moment. Neither answers the question a lead actually asks on Monday morning: **"Is it still open in prod, and who is on it?"** cvewatch watches the feeds that matter to your stack, matches them to what every environment really runs, and keeps the open, fixed and ignored status per project and environment, with the evidence, on your own machine.
 
