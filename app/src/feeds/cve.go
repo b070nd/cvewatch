@@ -60,7 +60,10 @@ func fetchCVE(ctx context.Context, g Getter, src model.Source, st model.FeedStat
 	dir.Path = path.Dir(base.Path) + "/"
 	headers := mergeHeaders(acceptJSON, src)
 
-	cursor := cveCursor(st.Validators.ETag)
+	cursor := st.Validators.Cursor
+	if cursor.IsZero() {
+		cursor = cveCursor(st.Validators.ETag) // where older versions kept it
+	}
 	deltas, err := cveDeltas(ctx, g, base, headers, cursor)
 	if err != nil {
 		return nil, st.Validators, err
@@ -83,7 +86,7 @@ func fetchCVE(ctx context.Context, g Getter, src model.Source, st model.FeedStat
 			items = append(items, it)
 		}
 	}
-	return items, model.Validators{ETag: cveCursorPrefix + next.UTC().Format(time.RFC3339Nano)}, nil
+	return items, model.Validators{Cursor: next.UTC()}, nil
 }
 
 func cveCursor(s string) time.Time {

@@ -2,15 +2,12 @@ package tui
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/b070nd/cvewatch/app/src/config"
 	"github.com/b070nd/cvewatch/app/src/ledger"
-	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/ops"
 	"github.com/b070nd/cvewatch/app/src/pipeline"
 	"github.com/b070nd/cvewatch/app/src/store"
@@ -91,7 +88,7 @@ func TestTheBackfillTriesOnceForTheSameFilesAndAgainWhenTheyChange(t *testing.T)
 	if b.backfilled() != 1 {
 		t.Fatalf("%d back-fills for the same files", b.backfilled())
 	}
-	d.m.(*app).stl.invalidate()
+	d.m.(*app).stl.Invalidate()
 	d.m.(*app).tried = "" // what an operation that saved a file does
 	d.press("r")
 	if b.backfilled() != 2 {
@@ -217,43 +214,6 @@ func TestVIsInTheHelpOfTheRootScreensAndOfAProject(t *testing.T) {
 	d.want("revalidate now")
 }
 
-func TestInputStampFollowsTheFilesTheJudgementDependsOn(t *testing.T) {
-	root := t.TempDir()
-	dir := config.ProjectsDir(root)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	file := filepath.Join(dir, "shop.yaml")
-	write := func(s string) {
-		if err := os.WriteFile(file, []byte(s), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	lock := filepath.Join(root, "composer.lock")
-	if err := os.WriteFile(lock, []byte("{}"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg := &config.Bundle{Root: root}
-	cfg.Projects = append(cfg.Projects, model.Project{Name: "shop", Lockfiles: []model.Lockfile{{Type: "composer", Path: lock}}})
-
-	write("name: shop\n")
-	one := inputStamp(cfg)
-	if one != inputStamp(cfg) {
-		t.Fatal("the stamp of unchanged files differs")
-	}
-	write("name: shop\nsince: 2024-01-01\n")
-	two := inputStamp(cfg)
-	if two == one {
-		t.Fatal("an edited project file keeps the stamp")
-	}
-	if err := os.WriteFile(lock, []byte(`{"packages":[]}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if inputStamp(cfg) == two {
-		t.Fatal("an edited lockfile keeps the stamp")
-	}
-}
-
 func TestEditingTheFileOutsideStartsTheRevalidation(t *testing.T) {
 	b := newFake(t, nil)
 	b.disk = b.cfg.Root
@@ -272,7 +232,7 @@ func TestEditingTheFileOutsideStartsTheRevalidation(t *testing.T) {
 		t.Fatal("judged files start nothing")
 	}
 	writeProjectFile(t, b.cfg.Root, "shop", "name: shop\nsince: 2026-10-15\ntechs:\n  - {name: php, version: \"8.2\"}\n  - {name: nginx}\n")
-	d.m.(*app).stl.invalidate() // the files are read again at once, not after the minutes the memo trusts them
+	d.m.(*app).stl.Invalidate() // the files are read again at once, not after the minutes the memo trusts them
 	d.press("r")
 	d.want("revalidated shop: 1 new")
 	if b.backfilled() != 1 {

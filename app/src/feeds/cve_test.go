@@ -169,8 +169,8 @@ func TestCVEFirstRunTakesTheNewestAndKeepsACursor(t *testing.T) {
 	if len(items) != 2 || items[0].SourceType != "cve" || items[0].IDs[0] != "CVE-2026-1002" {
 		t.Fatalf("items = %+v", items)
 	}
-	if !strings.HasPrefix(v.ETag, "cve:2026-10-29T08:00:00") {
-		t.Fatalf("cursor = %q", v.ETag)
+	if v.Cursor.Format(time.RFC3339) != "2026-10-29T08:00:00Z" || v.ETag != "" {
+		t.Fatalf("cursor = %v, etag %q", v.Cursor, v.ETag)
 	}
 	// The record published in July is kept although the window starts later: the cursor decides.
 	if items[1].Published.Year() != 2026 || items[1].Published.Month() != time.July {
@@ -180,8 +180,8 @@ func TestCVEFirstRunTakesTheNewestAndKeepsACursor(t *testing.T) {
 	// Next run: nothing newer than the cursor, so no record is requested and the cursor stays.
 	g.asked = nil
 	items, v2, err := Fetch(context.Background(), g, cveSource(), model.FeedState{Validators: v, LastRun: now}, now, time.Hour)
-	if err != nil || len(items) != 0 || v2.ETag != v.ETag {
-		t.Fatalf("idle run: %v %v %q", err, items, v2.ETag)
+	if err != nil || len(items) != 0 || !v2.Cursor.Equal(v.Cursor) {
+		t.Fatalf("idle run: %v %v %v", err, items, v2.Cursor)
 	}
 	for _, u := range g.asked {
 		if u != cveLogURL {
@@ -198,7 +198,7 @@ func TestCVEContinuesFromTheCursorOldestFirst(t *testing.T) {
 	for _, n := range []string{"1011", "1012", "1013"} {
 		g.records[recURL("CVE-2026-"+n)] = `{"cveMetadata":{"cveId":"CVE-2026-` + n + `","state":"PUBLISHED"},"containers":{"cna":{"title":"Bug ` + n + `","descriptions":[{"lang":"en","value":"d"}]}}}`
 	}
-	st := model.FeedState{Validators: model.Validators{ETag: "cve:2026-10-29T08:00:00Z"}, LastRun: now}
+	st := model.FeedState{Validators: model.Validators{Cursor: parseTime("2026-10-29T08:00:00Z")}, LastRun: now}
 	items, v, err := Fetch(context.Background(), g, cveSource(), st, now, time.Hour)
 	if err != nil {
 		t.Fatal(err)
@@ -206,8 +206,15 @@ func TestCVEContinuesFromTheCursorOldestFirst(t *testing.T) {
 	if len(items) != 2 || items[0].IDs[0] != "CVE-2026-1012" || items[1].IDs[0] != "CVE-2026-1013" {
 		t.Fatalf("items = %+v", items)
 	}
-	if !strings.HasPrefix(v.ETag, "cve:2026-10-29T08:10:00") {
-		t.Errorf("cursor = %q", v.ETag)
+	if v.Cursor.Format(time.RFC3339) != "2026-10-29T08:10:00Z" {
+		t.Errorf("cursor = %v", v.Cursor)
+	}
+
+	// A cursor that an older version kept in the ETag is read the same way.
+	legacy := model.FeedState{Validators: model.Validators{ETag: "cve:2026-10-29T08:00:00Z"}, LastRun: now}
+	items, v, err = Fetch(context.Background(), g, cveSource(), legacy, now, time.Hour)
+	if err != nil || len(items) != 2 || v.Cursor.Format(time.RFC3339) != "2026-10-29T08:10:00Z" || v.ETag != "" {
+		t.Fatalf("legacy cursor: %v %d %+v", err, len(items), v)
 	}
 }
 
@@ -281,12 +288,12 @@ func TestCVEFailuresKeepTheCursorButMissingRecordsAreSkipped(t *testing.T) {
 	}
 	// CVE-2026-5 is gone (404): skipped, the rest is kept.
 	items, v, err := Fetch(context.Background(), g, cveSource(), model.FeedState{}, now, time.Hour)
-	if err != nil || len(items) != 1 || v.ETag == "" {
-		t.Fatalf("404: %v %v %q", err, items, v.ETag)
+	if err != nil || len(items) != 1 || v.Cursor.IsZero() {
+		t.Fatalf("404: %v %v %v", err, items, v.Cursor)
 	}
 	// A server error ends the run and hands back the old cursor, so it is repeated.
 	g.fail = map[string]error{recURL("CVE-2026-1006"): &httpx.StatusError{Code: 503, URL: "x"}}
-	old := model.Validators{ETag: "cve:2026-10-29T07:00:00Z"}
+	old := model.Validators{Cursor: parseTime("2026-10-29T07:00:00Z")}
 	items, v, err = Fetch(context.Background(), g, cveSource(), model.FeedState{Validators: old, LastRun: now}, now, time.Hour)
 	if err == nil || len(items) != 0 || v != old {
 		t.Fatalf("503: %v %v %+v", err, items, v)

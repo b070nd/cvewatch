@@ -33,7 +33,7 @@ type snapshot struct {
 	Warnings   []string       // parts that could not be read; the rest is still shown
 	Horizon    config.Horizon // which publication dates the daemon judges and alerts
 
-	Stamp      string        // the files the findings are judged from, as they were when read (see inputStamp)
+	Stamp      string        // the files the findings are judged from, as they were when read (see inventory.FilesStamp)
 	Stale      ops.Staleness // whether the findings were judged against something else
 	StaleKnown bool          // Stale was read; false when it could not be
 }
@@ -63,20 +63,19 @@ func loadSnapshot(s *ops.Session) (*snapshot, error) { return loadSnapshotMemo(s
 // loadSnapshotMemo is loadSnapshot that asks the memo for the staleness, which
 // reads lockfiles, so it is only worked out again when the files changed.
 // What is in the workspace, and who may see it, is decided by ops.
-func loadSnapshotMemo(s *ops.Session, memo *staleMemo) (*snapshot, error) {
+func loadSnapshotMemo(s *ops.Session, memo *ops.StaleCache) (*snapshot, error) {
 	w, err := s.Workspace()
 	if err != nil {
 		return nil, err // access denied shows here
 	}
-	sn := &snapshot{At: w.At, Root: w.Root, ByProject: w.Issues, Status: w.Status, Violations: w.Violations, Horizon: w.Horizon,
-		Stamp: inputStamp(s.Cfg)}
+	sn := &snapshot{At: w.At, Root: w.Root, ByProject: w.Issues, Status: w.Status, Violations: w.Violations, Horizon: w.Horizon}
 	for _, warning := range w.Warnings {
 		sn.Warnings = append(sn.Warnings, oneLine(warning))
 	}
 	for _, p := range w.Projects {
 		sn.Projects = append(sn.Projects, projectRow{WorkspaceProject: p})
 	}
-	sn.Stale, sn.StaleKnown = memo.staleness(s, sn.Stamp)
+	sn.Stale, sn.Stamp, sn.StaleKnown = memo.Stale(s)
 	sn.markUnjudged()
 	sn.markUpdates()
 	return sn, nil
@@ -158,7 +157,7 @@ func loadCmd(b Backend) tea.Cmd { return loadLandCmd(b, nil, nil) }
 
 // loadLandCmd reads the snapshot and, once it is in, puts the Projects screen
 // on a project (see landing).
-func loadLandCmd(b Backend, memo *staleMemo, land *landing) tea.Cmd {
+func loadLandCmd(b Backend, memo *ops.StaleCache, land *landing) tea.Cmd {
 	return func() tea.Msg {
 		var sn *snapshot
 		err := b.Read(func(s *ops.Session) (e error) { sn, e = loadSnapshotMemo(s, memo); return e })

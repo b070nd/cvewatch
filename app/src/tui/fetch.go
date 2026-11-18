@@ -259,7 +259,7 @@ func (m *app) fetchDone(msg fetchDoneMsg) tea.Cmd {
 	if msg.job.kind == jobBackfill {
 		return m.backfillDone(msg)
 	}
-	m.stl.invalidate() // the cycle judged the findings again first
+	m.stl.Invalidate() // the cycle judged the findings again first
 	switch {
 	case errors.Is(msg.err, ErrBusy):
 		if msg.job.kind == jobUpdate {

@@ -2,99 +2,16 @@ package tui
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"hash/fnv"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/b070nd/cvewatch/app/src/config"
 	"github.com/b070nd/cvewatch/app/src/ops"
 	"github.com/b070nd/cvewatch/app/src/pipeline"
 )
-
-// staleTTL is how long a worked-out staleness is trusted when the files have
-// not changed: another process (the daemon) may have revalidated meanwhile.
-const staleTTL = 2 * time.Minute
-
-// staleMemo keeps the staleness of the last snapshot, which reads the
-// lockfiles and so is not worked out on every re-read. A nil memo works out
-// the staleness every time.
-type staleMemo struct {
-	mu    sync.Mutex
-	stamp string
-	st    ops.Staleness
-	at    time.Time
-	ok    bool
-}
-
-func (c *staleMemo) invalidate() {
-	if c != nil {
-		c.mu.Lock()
-		c.ok = false
-		c.mu.Unlock()
-	}
-}
-
-func (c *staleMemo) staleness(s *ops.Session, stamp string) (ops.Staleness, bool) {
-	if c != nil {
-		c.mu.Lock()
-		if c.ok && c.stamp == stamp && time.Since(c.at) < staleTTL {
-			st := c.st
-			c.mu.Unlock()
-			return st, true
-		}
-		c.mu.Unlock()
-	}
-	st, err := s.Stale()
-	if err != nil {
-		return ops.Staleness{}, false
-	}
-	if c != nil {
-		c.mu.Lock()
-		c.stamp, c.st, c.at, c.ok = stamp, st, time.Now(), true
-		c.mu.Unlock()
-	}
-	return st, true
-}
-
-// inputStamp names the state of the files the judgement depends on: the
-// settings, the technologies, the project files and their lockfiles. It only
-// looks at sizes and times, so it is cheap on every re-read.
-func inputStamp(cfg *config.Bundle) string {
-	paths := []string{config.SettingsPath(cfg.Root), config.TechsPath(cfg.Root)}
-	dir := config.ProjectsDir(cfg.Root)
-	if ents, err := os.ReadDir(dir); err == nil {
-		for _, e := range ents {
-			if !e.IsDir() {
-				paths = append(paths, filepath.Join(dir, e.Name()))
-			}
-		}
-	}
-	for _, p := range cfg.Projects {
-		for _, l := range p.Lockfiles {
-			paths = append(paths, l.Path)
-		}
-	}
-	slices.Sort(paths)
-	paths = slices.Compact(paths)
-	h := fnv.New64a()
-	for _, p := range paths {
-		fmt.Fprintf(h, "%s|", p)
-		if fi, err := os.Stat(p); err == nil {
-			fmt.Fprintf(h, "%d|%d", fi.Size(), fi.ModTime().UnixNano())
-		}
-		fmt.Fprint(h, "\n")
-	}
-	return hex.EncodeToString(h.Sum(nil))
-}
 
 // markUnjudged flags the project rows whose changes the findings were not
 // judged against yet; a changed horizon concerns all of them.
@@ -193,7 +110,7 @@ func revalWho(projects []string) string {
 // the change needs. It reports like fetchDone: a busy store is tried again by
 // the next re-read, a cancel is silent.
 func (m *app) backfillDone(msg fetchDoneMsg) tea.Cmd {
-	m.stl.invalidate()
+	m.stl.Invalidate()
 	defer func() { m.sinces = nil }()
 	switch {
 	case errors.Is(msg.err, ErrBusy):

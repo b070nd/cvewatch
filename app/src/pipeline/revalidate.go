@@ -381,13 +381,10 @@ func (c *cycle) markBackfill(from time.Time, rv *Revalidation) {
 	}
 	for _, src := range c.r.activeSources() {
 		st := c.r.Ledger.Feed(src.ID)
-		if !st.Covered.IsZero() && !from.Before(st.Covered) {
+		if !st.Owe(from) {
 			continue
 		}
-		if st.Backfill.IsZero() || from.Before(st.Backfill) {
-			st.Backfill = from
-			c.r.Ledger.SetFeed(src.ID, st)
-		}
+		c.r.Ledger.SetFeed(src.ID, st)
 		rv.BackfillSources = append(rv.BackfillSources, src.ID)
 	}
 }

@@ -732,6 +732,9 @@ func StripIDs(s string) string { return idPattern.ReplaceAllString(s, " ") }
 type Validators struct {
 	ETag         string `json:"etag,omitempty"`
 	LastModified string `json:"last_modified,omitempty"`
+	// Cursor is where a source that reads a change log stopped (the CVE
+	// delta log); it is not sent as an HTTP validator.
+	Cursor time.Time `json:"cursor,omitzero"`
 }
 
 // FeedState is what we remember about a source between runs.

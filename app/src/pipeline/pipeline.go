@@ -197,12 +197,7 @@ func (r *Runner) Run(ctx context.Context) (Result, error) {
 			}
 			continue
 		}
-		prior := r.Ledger.Feed(src.ID)
-		covered := f.from
-		if !prior.Covered.IsZero() && prior.Covered.Before(covered) {
-			covered = prior.Covered
-		}
-		r.Ledger.SetFeed(src.ID, model.FeedState{Validators: f.val, LastRun: c.now, Covered: covered})
+		r.Ledger.SetFeed(src.ID, r.Ledger.Feed(src.ID).Fetched(f.val, f.from, c.now))
 		r.Ledger.SourceOutcome(src.ID, src.Type, c.now, len(f.items), nil)
 		if f.back {
 			c.res.Backfilled = append(c.res.Backfilled, src.ID)
@@ -295,7 +290,7 @@ func (r *Runner) activeSources() []model.Source {
 // BackfillOnly just those that owe a back-fill.
 func (r *Runner) polled() []model.Source {
 	return slices.DeleteFunc(r.activeSources(), func(s model.Source) bool {
-		return r.BackfillOnly && r.Ledger.Feed(s.ID).Backfill.IsZero()
+		return r.BackfillOnly && !r.Ledger.Feed(s.ID).Owes()
 	})
 }
 
@@ -401,16 +396,7 @@ func (c *cycle) process(it model.Item) {
 // failed or was stopped and moves the source's cursor to where it broke off,
 // so the next run goes on from there instead of from the start.
 func (r *Runner) keepFinished(c *cycle, src model.Source, f fetched) {
-	st := r.Ledger.Feed(src.ID)
-	if !st.Backfill.IsZero() && f.resume.Before(st.LastRun) {
-		st.Backfill = f.resume
-	} else {
-		st.LastRun, st.Backfill = f.resume, time.Time{}
-	}
-	if st.Covered.IsZero() || f.from.Before(st.Covered) && !f.resume.Before(st.Covered) {
-		st.Covered = f.from
-	}
-	r.Ledger.SetFeed(src.ID, st)
+	r.Ledger.SetFeed(src.ID, r.Ledger.Feed(src.ID).Stopped(f.from, f.resume))
 	r.Log.Info("kept what was fetched; the next run goes on from there", "source", src.ID, "items", len(f.items), "resume", f.resume.Format("2006-01-02"))
 	for _, it := range f.items {
 		c.res.Items++
