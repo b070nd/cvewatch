@@ -114,6 +114,9 @@ func (s *Session) Commit() error {
 	if s.readOnly {
 		return ErrReadOnly
 	}
+	if err := s.Ledger.Changed(); err != nil {
+		return fmt.Errorf("not saved: %w", err)
+	}
 	return s.store.Save(s.Ledger.State())
 }
 

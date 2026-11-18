@@ -670,3 +670,16 @@ func TestSinceAndLockfileDevThroughEditProject(t *testing.T) {
 		t.Fatalf("%+v %v", p, err)
 	}
 }
+
+func TestCommitRefusesAFindingMadeIllegal(t *testing.T) {
+	s, st := lcSession(t, "root", true)
+	f := findingsOf(s.Ledger, "shop")[0]
+	s.Ledger.Mutate(f.Key(), func(m *model.Finding) { m.Auto = true }) // open and closed by cvewatch at once
+	err := s.Commit()
+	if !errors.Is(err, model.ErrIllegalFinding) {
+		t.Fatalf("err = %v", err)
+	}
+	if got := findingsOf(stored(t, st), "shop")[0]; got.Auto {
+		t.Fatal("the illegal finding was stored")
+	}
+}

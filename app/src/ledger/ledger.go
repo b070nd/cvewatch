@@ -9,6 +9,7 @@ package ledger
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -58,6 +59,9 @@ type Ledger struct {
 	// ofVuln lists the findings of each vulnerability. It is built on first
 	// use and dropped whenever a finding is added, moved or removed.
 	ofVuln map[string][]*model.Finding
+	// inherited are the findings that were already illegal when the state
+	// was loaded; Changed refuses only new ones, so old data never blocks a save.
+	inherited map[string]bool
 }
 
 // New wraps loaded state, filling in empty maps and building the id index.
@@ -84,11 +88,47 @@ func New(s State) *Ledger {
 		s.Channels = map[string]model.ChannelHealth{}
 	}
 	migrate(&s)
-	l := &Ledger{d: s, byKey: map[string]string{}}
+	l := &Ledger{d: s, byKey: map[string]string{}, inherited: map[string]bool{}}
 	for _, v := range s.Vulns {
 		l.index(v)
 	}
+	for _, err := range l.Check() {
+		var key illegalKey
+		if errors.As(err, &key) {
+			l.inherited[string(key)] = true
+		}
+	}
 	return l
+}
+
+// illegalKey carries the key of the finding a Check error is about.
+type illegalKey string
+
+func (k illegalKey) Error() string { return string(k) }
+
+// Check lists every stored finding whose fields disagree (model.Finding.Check),
+// in key order.
+func (l *Ledger) Check() []error {
+	var out []error
+	for _, key := range slices.Sorted(maps.Keys(l.d.Findings)) {
+		if err := l.d.Findings[key].Check(); err != nil {
+			out = append(out, errors.Join(err, illegalKey(key)))
+		}
+	}
+	return out
+}
+
+// Changed is the gate before a save: it refuses a finding that became
+// illegal since the state was loaded. Findings that were already illegal are
+// left to doctor, so a save never fails on data it did not touch.
+func (l *Ledger) Changed() error {
+	for _, err := range l.Check() {
+		var key illegalKey
+		if errors.As(err, &key) && !l.inherited[string(key)] {
+			return err
+		}
+	}
+	return nil
 }
 
 // State returns what should be persisted.

@@ -526,3 +526,22 @@ func TestSourcesCheckSaysWhetherTheTokenVariableIsSetNeverItsValue(t *testing.T)
 		t.Errorf("a disabled source says nothing about its token: %q", c.Detail)
 	}
 }
+
+func TestIllegalFindingsWarn(t *testing.T) {
+	root := newRoot(t, nil)
+	st, err := store.OpenFile(filepath.Join(root, "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, _ := st.Load()
+	f := &model.Finding{VulnID: "CVE-1", Project: "shop", Env: model.EnvProd, Status: model.StatusOpen, Retired: model.RetiredUnmatched, Applies: model.AppAffected}
+	s.Findings = map[string]*model.Finding{f.Key(): f}
+	if err := st.Save(s); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	r := Run(context.Background(), root, Options{})
+	if c := want(t, r, "state", "findings", Warn); !strings.Contains(c.Detail, "1 findings") || !strings.Contains(c.Detail, "CVE-1|shop|prod") {
+		t.Errorf("detail = %q", c.Detail)
+	}
+}

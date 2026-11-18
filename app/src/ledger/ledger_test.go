@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -423,5 +424,22 @@ func TestMigrationStoresWhyCvewatchClosedAFinding(t *testing.T) {
 	}
 	if since.AutoReason != model.AutoSince || env.AutoReason != model.AutoEnvRemoved || person.AutoReason != "" {
 		t.Errorf("since %q env %q person %q", since.AutoReason, env.AutoReason, person.AutoReason)
+	}
+}
+
+func TestASaveIsRefusedOnlyForAFindingMadeIllegalSinceTheLoad(t *testing.T) {
+	old := &model.Finding{VulnID: "CVE-1", Project: "shop", Env: model.EnvProd, Status: model.StatusOpen, Auto: true}
+	ok := &model.Finding{VulnID: "CVE-2", Project: "shop", Env: model.EnvProd, Status: model.StatusOpen}
+	l := New(State{SchemaVersion: SchemaVersion, Findings: map[string]*model.Finding{old.Key(): old, ok.Key(): ok}})
+	if len(l.Check()) != 1 {
+		t.Fatalf("one illegal finding: %v", l.Check())
+	}
+	if err := l.Changed(); err != nil {
+		t.Fatalf("an illegal finding that came with the state does not block a save: %v", err)
+	}
+	l.Mutate(ok.Key(), func(f *model.Finding) { f.Retired = model.RetiredUnmatched })
+	err := l.Changed()
+	if !errors.Is(err, model.ErrIllegalFinding) || !strings.Contains(err.Error(), "CVE-2") {
+		t.Fatalf("the finding made illegal is refused: %v", err)
 	}
 }

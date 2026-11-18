@@ -288,6 +288,12 @@ func checkState(r *Report, cfg *config.Bundle) {
 	default:
 		r.add(gState, "state", OK, "%d vulnerabilities, %d findings, schema version %d", len(s.Vulns), len(s.Findings), version)
 	}
+	switch bad := ledger.New(s).Check(); {
+	case len(bad) == 0:
+		r.add(gState, "findings", OK, "every finding is a legal state")
+	default:
+		r.add(gState, "findings", Warn, "%d findings have fields that disagree, the first: %s", len(bad), strings.SplitN(bad[0].Error(), "\n", 2)[0])
+	}
 }
 
 // writable creates dir if needed and proves a file can be written there.
