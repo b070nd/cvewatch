@@ -9,6 +9,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}"
 RUN mkdir /out/data /out/alerts
 
 FROM gcr.io/distroless/static-debian12:nonroot
+LABEL io.modelcontextprotocol.server.name="io.github.b070nd/cvewatch"
 COPY --from=build /out/cvewatch /cvewatch
 COPY --from=build --chown=65532:65532 /out/data /data
 COPY --from=build --chown=65532:65532 /out/alerts /alerts

@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -52,6 +53,22 @@ func TestManageProjectIsMarkedDestructiveAndRefreshOpenWorld(t *testing.T) {
 			if a != nil && a.OpenWorldHint != nil && *a.OpenWorldHint {
 				t.Errorf("%s works on local files only: %+v", tool.Name, a)
 			}
+		}
+	}
+}
+
+// Directories and graders cut long descriptions, so each says its point in
+// at most 380 characters; the list of change kinds after it is extra.
+func TestToolDescriptionsStayShort(t *testing.T) {
+	cs := connect(t, fixture(t), true)
+	res, err := cs.ListTools(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range res.Tools {
+		lead, _, _ := strings.Cut(tool.Description, "The kinds of change:")
+		if n := len([]rune(lead)); n > 380 || n == 0 {
+			t.Errorf("%s: description is %d characters", tool.Name, n)
 		}
 	}
 }

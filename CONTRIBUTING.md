@@ -49,11 +49,12 @@ Tests must not reach the network. Use fixtures stored with the tests instead. `s
 
 ## Releasing
 
-1. Move the `[Unreleased]` entries of `CHANGELOG.md` into a new `## [X.Y.Z] - YYYY-MM-DD` section, with an upgrade list for anything an existing setup can notice, and leave an empty `[Unreleased]` above it.
-2. Open a pull request and merge it into `master` once the `test` check passes.
-3. Tag the merge commit on `master` as `vX.Y.Z` and push the tag.
-4. The release workflow builds the binaries for Linux, macOS and Windows (amd64 and arm64), publishes the archives and checksums, and pushes the container image `ghcr.io/b070nd/cvewatch:vX.Y.Z`.
-5. The `CHANGELOG.md` section for that version becomes the release notes, and the workflow fails when the section is missing.
+1. Set the version in `server.json` (`version` and the image tag in `packages`) to the new one.
+2. Move the `[Unreleased]` entries of `CHANGELOG.md` into a new `## [X.Y.Z] - YYYY-MM-DD` section, with an upgrade list for anything an existing setup can notice, and leave an empty `[Unreleased]` above it.
+3. Open a pull request and merge it into `master` once the `test` check passes.
+4. Tag the merge commit on `master` as `vX.Y.Z` and push the tag.
+5. The release workflow builds the binaries for Linux, macOS and Windows (amd64 and arm64), publishes the archives and checksums, and pushes the container image `ghcr.io/b070nd/cvewatch:vX.Y.Z`.
+6. The `CHANGELOG.md` section for that version becomes the release notes, and the workflow fails when the section is missing.
 
 ## Reporting bugs and security issues
 

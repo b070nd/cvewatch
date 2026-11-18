@@ -22,34 +22,33 @@ import (
 // files and settings. Only edit_project, edit_settings and manage_project
 // write, so only they need allow-write.
 func addSetupTools(srv *mcp.Server, s *server, allowWrite bool) {
-	ro := readHints()
-	mcp.AddTool(srv, &mcp.Tool{Name: "search_catalog", Annotations: ro,
+	mcp.AddTool(srv, &mcp.Tool{Name: "search_catalog", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: new(false), IdempotentHint: true, OpenWorldHint: new(false)},
 		Description: "Search the technology catalog (open and closed source: runtimes, frameworks, databases, servers, platforms and so on) by name, vendor or alias, optionally within one category. Use the returned name in a project's techs."}, s.searchCatalog)
-	mcp.AddTool(srv, &mcp.Tool{Name: "discover_stack", Annotations: ro,
-		Description: "Look at a repository folder, or a single Dockerfile, compose file or Kubernetes manifest, on this machine and propose the technologies, versions and lockfiles it uses, each with evidence and a confidence. Technologies that only appear in container files are marked infra, with their catalog category. Reads files only; nothing is executed or changed. Treat low-confidence proposals as questions for the user."}, s.discover)
-	mcp.AddTool(srv, &mcp.Tool{Name: "get_status", Annotations: ro,
+	mcp.AddTool(srv, &mcp.Tool{Name: "discover_stack", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: new(false), IdempotentHint: true, OpenWorldHint: new(false)},
+		Description: "Look at a repository folder, or one Dockerfile, compose file or Kubernetes manifest, on this machine and propose its technologies, versions and lockfiles, each with evidence and a confidence. Technologies only seen in container files are marked infra. Reads files only and runs nothing. Treat low-confidence proposals as questions for the user."}, s.discover)
+	mcp.AddTool(srv, &mcp.Tool{Name: "get_status", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: new(false), IdempotentHint: true, OpenWorldHint: new(false)},
 		Description: "Health of the monitor itself: whether the daemon is running, whether each feed and notification channel works, and what the last cycles did. The level is green (nothing needs attention), yellow (something does) or red (the monitor cannot be relied on), the worst of the problems; problems lists each cause, red first, with a detail, a hint and since when."}, s.status)
-	mcp.AddTool(srv, &mcp.Tool{Name: "list_projects", Annotations: ro,
+	mcp.AddTool(srv, &mcp.Tool{Name: "list_projects", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: new(false), IdempotentHint: true, OpenWorldHint: new(false)},
 		Description: "List the monitored projects with their vendor, environments, declared technologies and lockfiles. A lockfile shows its resolved path and, when the file spells it differently, declared_path; remove_lockfile accepts either."}, s.projects)
-	mcp.AddTool(srv, &mcp.Tool{Name: "check_projects", Annotations: ro,
+	mcp.AddTool(srv, &mcp.Tool{Name: "check_projects", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: new(false), IdempotentHint: true, OpenWorldHint: new(false)},
 		Description: "Find problems in project files: unknown or misspelled technologies, lockfiles that are missing, unreadable or of the wrong type, environments that are not monitored. Each problem names its project and field and may list fixes, each a label and the changes to pass to preview_project_change and edit_project. Without a project, every project you may see is checked."}, s.checkProjects)
-	mcp.AddTool(srv, &mcp.Tool{Name: "preview_project_change", Annotations: ro, InputSchema: projectInSchema(),
+	mcp.AddTool(srv, &mcp.Tool{Name: "preview_project_change", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: new(false), IdempotentHint: true, OpenWorldHint: new(false)}, InputSchema: projectInSchema(),
 		Description: "Show what a change to a project file would do (diff and problems) without writing anything. A project that does not exist yet is created by its first change. The kinds of change:\n" + projectfile.KindHelp()}, s.previewProject)
-	mcp.AddTool(srv, &mcp.Tool{Name: "get_settings", Annotations: ro,
-		Description: "Read the configuration the user edits: config.yaml (interval, http, notify, policy rules, access), techs.yaml and the sources/*.yaml feeds, as the values that are set (defaults are not listed). Secret values read (set). Works when a file is broken: that file reports its error. With include_schema, also every setting with its path, type, allowed values and help, which is what edit paths are built from."}, s.getSettings)
-	mcp.AddTool(srv, &mcp.Tool{Name: "preview_settings_change", Annotations: ro,
+	mcp.AddTool(srv, &mcp.Tool{Name: "get_settings", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: new(false), IdempotentHint: true, OpenWorldHint: new(false)},
+		Description: "Read the configuration the user edits: config.yaml (interval, http, notify, policy, access), techs.yaml and sources/*.yaml, as the values that are set. Secrets read (set). A broken file reports its error. include_schema adds the path, type, allowed values and help of every setting, which edit paths are built from."}, s.getSettings)
+	mcp.AddTool(srv, &mcp.Tool{Name: "preview_settings_change", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: new(false), IdempotentHint: true, OpenWorldHint: new(false)},
 		Description: "Show what changes to the settings would do (diff and problems) without writing anything. Each edit is set, unset or append on a path from the schema, for example set http.timeout 45s, unset http.retries or append policy.rules {name, ...}. All edits apply or none do."}, s.previewSettings)
 	addTechTools(srv, s, allowWrite)
 	if allowWrite {
 		mcp.AddTool(srv, &mcp.Tool{Name: "edit_project", InputSchema: projectInSchema(),
-			Annotations: writeHints(true),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: new(false), IdempotentHint: true, OpenWorldHint: new(false)},
 			Description: "Apply changes to a project file (created if new): technologies, versions, environments, lockfiles, the since date, the vendor, the matching profile, how often it is refreshed. Comments in the file are kept, the old file is backed up and the change is audited. Run preview_project_change first and show the user the diff. Only declare what the user confirmed. The kinds of change:\n" + projectfile.KindHelp()}, s.editProject)
 		mcp.AddTool(srv, &mcp.Tool{Name: "edit_settings",
-			Annotations: writeHints(true),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: new(false), IdempotentHint: true, OpenWorldHint: new(false)},
 			Description: "Apply changes to the settings (config.yaml, techs.yaml, sources/*.yaml). Comments are kept, the old file is backed up, the change is audited, and a change that would not validate is refused. Run preview_settings_change first and show the user the diff. The daemon uses the new settings from its next cycle."}, s.editSettings)
 		mcp.AddTool(srv, &mcp.Tool{Name: "manage_project",
-			Annotations: hints(false, true, false, false),
-			Description: "Rename, duplicate, delete, disable or enable a whole project. Without confirm it only returns the consequences: findings affected, access rules rewritten, files moved. Show them to the user and call again with confirm true only after they agreed. Rename moves the findings to the new name, delete moves the file to the backups (close_findings also marks its open findings ignored), disable renames the file to .disabled and enable reverses that."}, s.manageProject)
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: new(true), IdempotentHint: false, OpenWorldHint: new(false)},
+			Description: "Rename, duplicate, delete, disable or enable a whole project. Without confirm it only returns the consequences (findings affected, access rules rewritten, files moved): show them to the user and call again with confirm true once they agree. Delete moves the file to the backups, and close_findings also marks its open findings ignored."}, s.manageProject)
 	}
 }
 

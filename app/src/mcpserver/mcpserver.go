@@ -49,37 +49,36 @@ var Version = "dev"
 func build(root string, log *slog.Logger, allowWrite bool) *mcp.Server {
 	s := &server{root: root, log: log}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "cvewatch", Version: Version}, &mcp.ServerOptions{Instructions: instructions})
-	ro := readHints()
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "list_findings", Annotations: ro,
+	mcp.AddTool(srv, &mcp.Tool{Name: "list_findings", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: new(false), IdempotentHint: true, OpenWorldHint: new(false)},
 		Description: "List open vulnerabilities that affect our projects, most severe first, with age since publication, article count and whether an official fix is known. Optional filters: minimum severity (low, medium, high, critical), vendor, project, and include_unaffected for versions known to be outside the affected range."}, s.list)
-	mcp.AddTool(srv, &mcp.Tool{Name: "search_findings", Annotations: ro,
-		Description: "Search findings by a query: words are ANDed and match ids, titles, techs, projects, owners and packages; use a phrase in quotes, -word to exclude, A OR B, and fields such as severity:high+, vendor:acme, project:shop, status:open or kev:yes. Terms that name a project, vendor, environment, status or owner must hold on the same target, and only those targets are listed. Closed findings are included unless open_only is set, and every target shows its status."}, s.searchFindings)
-	mcp.AddTool(srv, &mcp.Tool{Name: "get_vulnerability", Annotations: ro,
+	mcp.AddTool(srv, &mcp.Tool{Name: "search_findings", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: new(false), IdempotentHint: true, OpenWorldHint: new(false)},
+		Description: "Search findings with a query: words are ANDed over ids, titles, techs, projects, owners and packages; \"phrases\", -word, A OR B, and fields such as severity:high+, vendor:acme, project:shop, status:open or kev:yes. Project, vendor, env, status and owner terms must hold on the same target. Closed findings are included unless open_only is set."}, s.searchFindings)
+	mcp.AddTool(srv, &mcp.Tool{Name: "get_vulnerability", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: new(false), IdempotentHint: true, OpenWorldHint: new(false)},
 		Description: "Show one vulnerability by id or alias: description, articles in chronological order, fix evidence, status per project and environment, and the path of the markdown report holding the fix plan."}, s.get)
-	mcp.AddTool(srv, &mcp.Tool{Name: "explain", Annotations: ro,
+	mcp.AddTool(srv, &mcp.Tool{Name: "explain", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: new(false), IdempotentHint: true, OpenWorldHint: new(false)},
 		Description: "Explain why a vulnerability matched: the reasons recorded when it was first seen, and what today's configuration says about it."}, s.explain)
-	mcp.AddTool(srv, &mcp.Tool{Name: "get_calendar", Annotations: ro,
+	mcp.AddTool(srv, &mcp.Tool{Name: "get_calendar", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: new(false), IdempotentHint: true, OpenWorldHint: new(false)},
 		Description: "List vulnerabilities published in a month (default: this month) for a calendar view, with severity, techs, article count and fix availability."}, s.calendar)
 
-	mcp.AddTool(srv, &mcp.Tool{Name: "get_evidence", Annotations: ro,
-		Description: "Evidence pack for one vulnerability: facts, per-environment status, and the timeline of detection (also of projects added later), alerts, status changes (automatic ones by cvewatch included), owners and attached evidence. For an actor limited to some projects the timeline holds only those projects' records. audit_intact is true when the audit chain verified, even if audit_note says no records are visible to you; it is false when the chain is broken or there are no audit records at all."}, s.evidence)
-	mcp.AddTool(srv, &mcp.Tool{Name: "policy_violations", Annotations: ro,
+	mcp.AddTool(srv, &mcp.Tool{Name: "get_evidence", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: new(false), IdempotentHint: true, OpenWorldHint: new(false)},
+		Description: "Evidence pack for one vulnerability: facts, status per environment, and the timeline of detection, alerts, status changes, owners and attached evidence, limited to the projects the actor may see. audit_intact is true when the audit chain verified and false when it is broken or has no records; audit_note says why."}, s.evidence)
+	mcp.AddTool(srv, &mcp.Tool{Name: "policy_violations", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: new(false), IdempotentHint: true, OpenWorldHint: new(false)},
 		Description: "List open findings that break a configured policy rule (for example no owner within 24h for a KEV issue in prod) or their own due date."}, s.violations)
 
 	addSetupTools(srv, s, allowWrite)
 
 	if allowWrite {
 		mcp.AddTool(srv, &mcp.Tool{Name: "assign",
-			Annotations: writeHints(true),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: new(false), IdempotentHint: true, OpenWorldHint: new(false)},
 			Description: "Set owner, due date or ticket for a vulnerability in a project, optionally one environment."}, s.assign)
 		mcp.AddTool(srv, &mcp.Tool{Name: "attach_evidence",
-			Annotations: writeHints(false),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: new(false), IdempotentHint: false, OpenWorldHint: new(false)},
 			Description: "Attach a note and link (merge request, deployment, advisory) as evidence to a vulnerability in a project."}, s.attach)
 		mcp.AddTool(srv, &mcp.Tool{Name: "set_status",
-			Annotations: writeHints(true),
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: new(false), IdempotentHint: true, OpenWorldHint: new(false)},
 			Description: "Set the fix status (fixed, ignored, not_affected or open) of a vulnerability for a project, optionally one environment. Use fixed only after the fix is deployed there; not_affected needs a note giving the reason."}, s.setStatus)
-		mcp.AddTool(srv, &mcp.Tool{Name: "refresh", Annotations: hints(false, false, false, true),
+		mcp.AddTool(srv, &mcp.Tool{Name: "refresh", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: new(false), IdempotentHint: false, OpenWorldHint: new(true)},
 			Description: "Fetch all sources now, record new findings and send Slack alerts for them. Takes about a minute."}, s.refresh)
 	}
 	return srv
