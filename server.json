@@ -1,0 +1,47 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "io.github.b070nd/cvewatch",
+  "title": "cvewatch",
+  "description": "Which of your projects and environments are exposed to which CVE, who owns the fix, what happened",
+  "repository": {
+    "url": "https://github.com/b070nd/cvewatch",
+    "source": "github"
+  },
+  "version": "2.2.0",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/b070nd/cvewatch:v2.2.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp",
+          "description": "runs the MCP server on stdin and stdout; it is read-only unless -allow-write is added"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "GITHUB_TOKEN",
+          "description": "token for the GitHub advisory feed, no scopes needed; without it GitHub allows 60 requests an hour",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "SLACK_WEBHOOK_URL",
+          "description": "Slack webhook that refresh sends alerts to; without it no alert is sent",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "CVEWATCH_ACTOR",
+          "description": "the name recorded in the audit log for changes made through the server",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}
