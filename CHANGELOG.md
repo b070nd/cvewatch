@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.1.2] - 2026-11-18
+
 ### Changed
 - MCP tools declare all four hints (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`). Read-only and local-file tools no longer claim to reach the outside world, `refresh` says it does, and `manage_project` is marked destructive.
 
