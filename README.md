@@ -139,7 +139,7 @@ flowchart TB
 ### Install
 
 - **Release archive.** Download the archive for your system from the [releases page](https://github.com/b070nd/cvewatch/releases): Linux and macOS (`.tar.gz`) and Windows (`.zip`), each for amd64 and arm64, with `checksums.txt`. It holds `cvewatch`, `cvewatch-tui` (the full-screen interface, started by `cvewatch tui`), the docs and the agent skills. Put both binaries in one folder on your `PATH`.
-- **Container image.** `ghcr.io/b070nd/cvewatch:v2.0.0` runs `cvewatch daemon` as an unprivileged user. Mount your project files, `/data` and `/alerts`; [compose.yaml](compose.yaml) is an example. `docker run -i --rm ghcr.io/b070nd/cvewatch:v2.2.0 mcp` starts the MCP server on stdin and stdout instead, as [server.json](server.json) declares for MCP registries.
+- **Container image.** `ghcr.io/b070nd/cvewatch:v2.0.0` runs `cvewatch daemon` as an unprivileged user. Mount your project files, `/data` and `/alerts`; [compose.yaml](compose.yaml) is an example. `docker run -i --rm ghcr.io/b070nd/cvewatch:v2.3.0 mcp` starts the MCP server on stdin and stdout instead, as [server.json](server.json) declares for MCP registries.
 - **From source.** `go install github.com/b070nd/cvewatch/app/src/cmd/cvewatch@latest` (and `.../cvewatch-tui@latest`) builds the default branch, not a release, and `cvewatch version` then says `dev`.
 
 ### Five minutes to a useful list
