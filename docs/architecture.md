@@ -12,7 +12,7 @@ One package per concern under `app/src`. The arrows show who depends on whom; th
 | `relevance` | what an item is about, which environments run it, the basis of each match, version verdict, reasons, matching profiles; `Compile` indexes the inventory once per run and the resulting matcher is immutable; skips items published before a project's `since` date or outside the alert horizon (`Window`) | none: pure rules |
 | `version` | comparing versions and ranges per ecosystem (semver, PEP 440, Maven, Go); kernel build suffixes such as `6.8.0-45-generic` or `+deb12u1` do not order | schemes per ecosystem |
 | `ledger` | domain state and identity: known issues, aliases, merging, findings, status, history, the judging record and each source's back-fill marks | none: in memory |
-| `store` | persisting the ledger's `State`, optimistic revisions, lock-free `Reader` snapshots | `store.Storage`: file, memory, SQLite |
+| `store` | persisting the ledger's `State`, optimistic revisions, lock-free `Reader` snapshots | `store.Storage`: file (the default), memory, SQLite, PostgreSQL; `store.Place` names the backend, the data directory and the DSN |
 | `priority` | ordering and policy deadlines | none: pure |
 | `feeds` | each source type into items with ranges, fixes, KEV data and CVSS ratings; `paged.go` follows NVD windows and pages and GitHub's `Link` header for a back-fill; `rating.go` picks the best rating of a record | `parsers` map: one adapter per type |
 | `epss` | exploit probability lookup | `Getter` |
@@ -104,5 +104,5 @@ Rules of thumb kept by the structure:
 - A source's coverage is one set of methods on `model.FeedState` (`model/coverage.go`): `Window` is where the next fetch starts and whether it is an owed back-fill, `Fetched` and `Stopped` record a finished and a stopped fetch, and `Owe` marks a back-fill a configuration change needs. A source that reads a change log keeps its place in `Validators.Cursor`, never in an HTTP validator. Which files the judgement depends on is `inventory.FilesStamp`, and a viewer that re-reads often asks `ops.StaleCache` instead of working out the staleness itself.
 - Stored advisories are judged again only by `pipeline.Revalidate`, on request or at the start of a cycle when `inventory.Compare` finds the judging inputs changed. A new judging input goes into `inventory.Judging`, not into a front end.
 - Only technologies a project declares are judged, so a large catalog costs nothing in noise.
-- Persistence is replaceable (three adapters share one contract test). `ledger` never touches files; `store` never makes domain decisions.
+- Persistence is replaceable (four adapters share one contract test; the PostgreSQL one runs when `CVEWATCH_TEST_DSN` names a database). An empty `storage.backend` is the file store, and a DSN in the environment alone never switches it. `ledger` never touches files; `store` never makes domain decisions.
 - Feed text is untrusted at every step: cleaned on the way in, escaped on the way out.

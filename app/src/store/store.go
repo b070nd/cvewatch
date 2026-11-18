@@ -48,15 +48,32 @@ type Reader interface {
 	Close() error
 }
 
+// Place says where the state is kept: a backend name, the data directory the
+// file and SQLite backends use, and the connection string of the postgres one.
+type Place struct {
+	Backend string // "" or file, sqlite, postgres
+	Dir     string
+	DSN     string
+}
+
+// Backends lists the backend names Open accepts.
+func Backends() []string { return []string{"file", "sqlite", "postgres"} }
+
+func unknown(backend string) error {
+	return fmt.Errorf("unknown storage backend %q: valid backends are \"file\", \"sqlite\" and \"postgres\"", backend)
+}
+
 // OpenReader returns a lock-free reader for a backend.
-func OpenReader(backend, dir string) (Reader, error) {
-	switch backend {
+func OpenReader(p Place) (Reader, error) {
+	switch p.Backend {
 	case "", "file":
-		return &fileReader{path: filepath.Join(dir, "state.json")}, nil
+		return &fileReader{path: filepath.Join(p.Dir, "state.json")}, nil
 	case "sqlite":
-		return OpenSQLite(filepath.Join(dir, "state.db")) // WAL readers do not block the writer
+		return OpenSQLite(filepath.Join(p.Dir, "state.db")) // WAL readers do not block the writer
+	case "postgres":
+		return OpenPostgres(p.DSN) // readers see a snapshot and never block the writer
 	}
-	return nil, fmt.Errorf("unknown storage backend %q: valid backends are \"file\" and \"sqlite\"", backend)
+	return nil, unknown(p.Backend)
 }
 
 type fileReader struct{ path string }
@@ -85,16 +102,18 @@ var ErrConflict = errors.New("state changed since it was loaded")
 // ErrBusy means another cvewatch process holds the data.
 var ErrBusy = errors.New("another cvewatch process is using the data directory")
 
-// Open returns the adapter for a backend name: "" or "file" keeps
-// dir/state.json, "sqlite" keeps dir/state.db.
-func Open(backend, dir string) (Storage, error) {
-	switch backend {
+// Open returns the adapter for a place: "" or "file" keeps Dir/state.json,
+// "sqlite" keeps Dir/state.db, "postgres" the database of the DSN.
+func Open(p Place) (Storage, error) {
+	switch p.Backend {
 	case "", "file":
-		return OpenFile(dir)
+		return OpenFile(p.Dir)
 	case "sqlite":
-		return OpenSQLite(filepath.Join(dir, "state.db"))
+		return OpenSQLite(filepath.Join(p.Dir, "state.db"))
+	case "postgres":
+		return OpenPostgres(p.DSN)
 	}
-	return nil, fmt.Errorf("unknown storage backend %q: valid backends are \"file\" and \"sqlite\"", backend)
+	return nil, unknown(p.Backend)
 }
 
 // storedRev reads just the rev out of serialized state; empty means a new

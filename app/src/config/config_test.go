@@ -599,3 +599,20 @@ func TestProfilesLoadGloballyAndPerProjectAndBadOnesAreRefused(t *testing.T) {
 		}
 	}
 }
+
+func TestTheFileStoreIsTheDefault(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, "config/techs.yaml", "techs: [{name: php}]\n")
+	t.Setenv(DefaultDSNEnv, "postgresql://somewhere/db") // a DSN in the environment alone does not switch the backend
+	b, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := b.Place(); p.Backend != "" || p.Dir != b.DataDir {
+		t.Fatalf("without storage.backend the state is the file in the data directory: %+v", p)
+	}
+	put(t, root, "config/config.yaml", "storage: {backend: postgres}\n")
+	if b, err = Load(root); err != nil || b.Place().Backend != "postgres" || b.Place().DSN != "postgresql://somewhere/db" {
+		t.Fatalf("postgres only when asked for: %+v %v", b.Place(), err)
+	}
+}

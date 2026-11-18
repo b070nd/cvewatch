@@ -186,7 +186,7 @@ func TestEditRejectsBadValues(t *testing.T) {
 		"int":       {Op: OpSet, Path: "http.retries", Value: "many"},
 		"range":     {Op: OpSet, Path: "notify.email.port", Value: 70000},
 		"bool":      {Op: OpSet, Path: "http.allow_private", Value: "maybe"},
-		"enum":      {Op: OpSet, Path: "storage.backend", Value: "postgres"},
+		"enum":      {Op: OpSet, Path: "storage.backend", Value: "oracle"},
 		"envref":    {Op: OpSet, Path: "slack.webhook_env", Value: "https://hooks.slack.com/services/T/B/x"},
 		"unknown":   {Op: OpSet, Path: "http.timeoutt", Value: "5s"},
 		"no value":  {Op: OpSet, Path: "interval"},

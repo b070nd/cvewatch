@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The state moves to schema version 4: a finding cvewatch closed itself now stores why (`auto_reason`: `since` or `env_removed`), read from the old status and note on the first load. A 2.2 build reads the new state, but its `doctor` reports the newer schema version as an error.
 
 ### Added
+- PostgreSQL storage backend, next to the file and SQLite ones; the file store stays the default. `storage: {backend: postgres}` keeps the state in the `cvewatch` schema of the database whose connection string is in the environment variable named by `storage.dsn_env` (default `CVEWATCH_DSN`), never in the file. A save writes only the rows that changed, and a writer whose view is stale is refused, as with SQLite.
+- `cvewatch storage copy -to BACKEND` copies the state to another backend and verifies the copy.
 - A save is refused when it would store a finding whose fields disagree, for example a retired match that still lists installed versions, or an open finding marked as closed by cvewatch. Findings that were already like that never block a save, and `cvewatch doctor` reports how many there are and the first one.
 - The TUI `/` filter answers `status:` and `applies:` the way `cvewatch search` and the MCP `search_findings` do, so `status:fixed` lists the fixed findings instead of nothing.
 

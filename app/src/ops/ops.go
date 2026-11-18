@@ -69,7 +69,7 @@ func openLoaded(root string, log *slog.Logger, loader func(string) (*config.Bund
 		return nil, err
 	}
 	logLoaded(cfg, log)
-	st, err := store.Open(cfg.Storage.Backend, cfg.DataDir)
+	st, err := store.Open(cfg.Place())
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +133,7 @@ func openReadOnlyLoaded(root string, log *slog.Logger, loader func(string) (*con
 		return nil, err
 	}
 	logLoaded(cfg, log)
-	rd, err := store.OpenReader(cfg.Storage.Backend, cfg.DataDir)
+	rd, err := store.OpenReader(cfg.Place())
 	if err != nil {
 		return nil, err
 	}
