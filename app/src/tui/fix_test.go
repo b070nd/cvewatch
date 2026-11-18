@@ -105,7 +105,7 @@ func TestBrokenProjectFileDoesNotBlockTheTUI(t *testing.T) {
 		t.Fatal(err)
 	}
 	noEditor(t)
-	d := start(t, NewBackend(root, nil), Options{})
+	d := start(t, &timed{Backend: NewBackend(root, nil)}, Options{})
 	d.want("[O]verview")
 	d.wantNot("refresh failed")
 	d.screen("projects")
