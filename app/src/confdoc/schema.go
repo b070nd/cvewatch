@@ -112,8 +112,9 @@ func fields() []Field {
 	add(core("enrich.epss", "EPSS lookups", TypeBool, "Ask FIRST's EPSS service about the CVEs you track. Reveals your stack to that service."))
 	add(core("enrich.cvss", "CVSS lookups", TypeBool, "Rate tracked CVEs that no source gave a score, from NVD's public data (a few per cycle, no key needed). Only the CVE id is sent. Default on."))
 	f = core("storage.backend", "Storage backend", TypeEnum, "Where state is kept.")
-	f.Enum = []string{"file", "sqlite"}
+	f.Enum = []string{"file", "sqlite", "postgres"}
 	add(f)
+	add(core("storage.dsn_env", "Database DSN variable", TypeString, "For the postgres backend: the name of the environment variable that holds the connection string (default CVEWATCH_DSN). The string itself stays out of the file."))
 	add(core("dashboard.enabled", "Dashboard", TypeBool, "Rewrite a static status page after every cycle."))
 	add(core("dashboard.file", "Dashboard file", TypeString, "Default: dashboard.html inside the alerts directory."))
 	f = core("tui.refresh", "TUI refresh", TypeDuration, "How often the full-screen interface re-reads the state. At least 1s.")

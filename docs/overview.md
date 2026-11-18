@@ -882,7 +882,12 @@ Channels switch on when their secret is in the environment, so one config file i
 
 ## Storage
 
-State is one JSON file by default (diffable; one process at a time, enforced by a lock). Set `storage: {backend: sqlite}` for a SQLite file: several processes can use it, and a stale write is refused instead of overwriting newer data. Both sit behind the same `store.Storage` interface.
+State is one JSON file by default (diffable; one process at a time, enforced by a lock). Two other backends sit behind the same `store.Storage` interface, and several processes can use either:
+
+- `storage: {backend: sqlite}`: a SQLite file in the data directory.
+- `storage: {backend: postgres}`: a PostgreSQL database. The connection string is read from the environment variable named by `storage.dsn_env` (default `CVEWATCH_DSN`), for example `CVEWATCH_DSN=postgresql://user@localhost:5432/cvewatch`; it may hold a password, so it never goes in `config.yaml` (an `.env` file next to the root works, see environment files). cvewatch keeps its tables in its own schema `cvewatch`, so a database shared with other applications stays tidy, and a save writes only the rows that changed.
+
+In both, a stale write is refused instead of overwriting newer data. `cvewatch storage copy -to postgres` copies the current state to another backend and checks the copy; then set `storage.backend`. The old state stays where it is until you delete it. The audit log stays a file in the data directory with every backend.
 
 ## CVSS scores
 

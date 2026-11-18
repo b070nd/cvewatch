@@ -27,6 +27,7 @@ import (
 	"github.com/b070nd/cvewatch/app/src/httpx"
 	"github.com/b070nd/cvewatch/app/src/matrix"
 	"github.com/b070nd/cvewatch/app/src/model"
+	"github.com/b070nd/cvewatch/app/src/store"
 )
 
 type Settings struct {
@@ -139,7 +140,23 @@ type TUI struct {
 
 // Storage selects the state backend.
 type Storage struct {
-	Backend string `yaml:"backend"` // file (default) or sqlite
+	Backend string `yaml:"backend"` // file (default), sqlite or postgres
+	// DSNEnv names the environment variable that holds the PostgreSQL
+	// connection string (default CVEWATCH_DSN). The string itself may carry a
+	// password, so it never goes in the file.
+	DSNEnv string `yaml:"dsn_env"`
+}
+
+// DefaultDSNEnv is the variable the postgres backend reads its DSN from.
+const DefaultDSNEnv = "CVEWATCH_DSN"
+
+// Place is where the state is kept, with the DSN read from the environment.
+func (b *Bundle) Place() store.Place {
+	env := b.Storage.DSNEnv
+	if env == "" {
+		env = DefaultDSNEnv
+	}
+	return store.Place{Backend: b.Storage.Backend, Dir: b.DataDir, DSN: os.Getenv(env)}
 }
 
 // Grant is what one actor may do. "*" in Projects means every project, and
@@ -594,8 +611,11 @@ func (b *Bundle) validate(decoded map[string]bool, og origins) []Issue {
 		b.Warnings = append(b.Warnings, fmt.Sprintf("horizon reaches back %s but lookback is %s: sources are only fetched back to the lookback on their first run, so older items are not seen; raise lookback",
 			formatSpan(reach), formatSpan(b.Lookback)))
 	}
-	if !slices.Contains([]string{"", "file", "sqlite"}, b.Storage.Backend) {
-		fail(og.settings, "storage.backend", "storage.backend must be file or sqlite")
+	if b.Storage.Backend != "" && !slices.Contains(store.Backends(), b.Storage.Backend) {
+		fail(og.settings, "storage.backend", "storage.backend must be file, sqlite or postgres")
+	}
+	if b.Storage.DSNEnv != "" && !envName.MatchString(b.Storage.DSNEnv) {
+		fail(og.settings, "storage.dsn_env", "storage.dsn_env must be the name of an environment variable, not the connection string itself")
 	}
 	if b.Retention > 0 && b.Retention < 2*b.Lookback {
 		fail(og.settings, "retention", "retention must be at least twice the lookback, or old items could be judged again")

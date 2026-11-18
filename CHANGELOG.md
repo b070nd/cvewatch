@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- PostgreSQL storage backend, next to the file and SQLite ones; the file store stays the default. `storage: {backend: postgres}` keeps the state in the `cvewatch` schema of the database whose connection string is in the environment variable named by `storage.dsn_env` (default `CVEWATCH_DSN`), never in the file. A save writes only the rows that changed, and a writer whose view is stale is refused, as with SQLite.
+- `cvewatch storage copy -to BACKEND` copies the state to another backend and verifies the copy.
+
 ## [2.2.0] - 2026-11-18
 
 ### Upgrading from 2.1
