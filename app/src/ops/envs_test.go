@@ -14,7 +14,7 @@ import (
 func TestRenameEnvMovesTheFindings(t *testing.T) {
 	s, st := lcSession(t, "root", false)
 	s.Cfg.Policy.Rules = []config.PolicyRule{{Name: "fast", Env: model.EnvProd, FixWithin: 1}}
-	change := ProjectChange{Project: "shop", Ops: []projectfile.Op{{Kind: "rename_env", Env: "prod", To: "production"}}}
+	change := ProjectChange{Project: "shop", Ops: []projectfile.Op{{Kind: projectfile.KindRenameEnv, Env: "prod", To: "production"}}}
 
 	p, err := s.EditProject(change)
 	if err != nil {
@@ -61,14 +61,14 @@ func TestRenameEnvRefusesToMerge(t *testing.T) {
 	v := s.Ledger.Relevant()[0]
 	s.Ledger.AddFinding(model.Finding{VulnID: v.ID, Project: "shop", Env: model.EnvDev, Status: model.StatusOpen})
 	before := readRoot(t, s, "config/projects/shop.yaml")
-	_, err := s.EditProject(ProjectChange{Project: "shop", Save: true, Ops: []projectfile.Op{{Kind: "rename_env", Env: "dev", To: "prod"}}})
+	_, err := s.EditProject(ProjectChange{Project: "shop", Save: true, Ops: []projectfile.Op{{Kind: projectfile.KindRenameEnv, Env: "dev", To: "prod"}}})
 	if err == nil {
 		t.Fatal("renaming onto an environment that has findings must fail")
 	}
 	if readRoot(t, s, "config/projects/shop.yaml") != before {
 		t.Error("the file changed")
 	}
-	_, err = s.EditProject(ProjectChange{Project: "shop", Save: true, Ops: []projectfile.Op{{Kind: "rename_env", Env: "staging", To: "stage"}}})
+	_, err = s.EditProject(ProjectChange{Project: "shop", Save: true, Ops: []projectfile.Op{{Kind: projectfile.KindRenameEnv, Env: "staging", To: "stage"}}})
 	if err != nil {
 		t.Fatalf("a finding-free target is fine: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestRenameEnvRefusesToMerge(t *testing.T) {
 
 func TestRenameEnvNeedsWriteAccess(t *testing.T) {
 	s, st := lcSession(t, "bob", true)
-	_, err := s.EditProject(ProjectChange{Project: "shop", Save: true, Ops: []projectfile.Op{{Kind: "rename_env", Env: "prod", To: "production"}}})
+	_, err := s.EditProject(ProjectChange{Project: "shop", Save: true, Ops: []projectfile.Op{{Kind: projectfile.KindRenameEnv, Env: "prod", To: "production"}}})
 	if !errors.Is(err, ErrDenied) {
 		t.Fatalf("err = %v", err)
 	}

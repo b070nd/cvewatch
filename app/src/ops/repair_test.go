@@ -34,7 +34,7 @@ func repairRoot(t *testing.T) string {
 	return root
 }
 
-var bumpPHP = []projectfile.Op{{Kind: "set_tech", Tech: "php", Version: "8.3"}}
+var bumpPHP = []projectfile.Op{{Kind: projectfile.KindSetTech, Tech: "php", Version: "8.3"}}
 
 func TestOpenRepairKeepsGoodProjectsEditable(t *testing.T) {
 	root := repairRoot(t)

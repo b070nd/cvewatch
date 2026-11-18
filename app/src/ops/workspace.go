@@ -23,6 +23,7 @@ type Workspace struct {
 	Root       string
 	Horizon    config.Horizon           // which publication dates are judged and alerted
 	Issues     map[string][]query.Issue // the open issues of each project, most urgent first; no row mixes projects
+	Wide       map[string][]query.Issue // the same with targets in any status, not-affected ones included, for a search that names a status or an applicability
 	Status     status.Report
 	Violations []priority.Violation
 	Projects   []WorkspaceProject // by vendor when any project has one, else in configuration order
@@ -52,7 +53,7 @@ func (s *Session) Workspace() (Workspace, error) {
 	if _, err := s.scope(query.Filter{}); err != nil {
 		return Workspace{}, err
 	}
-	w := Workspace{At: s.Now(), Root: s.Cfg.Root, Horizon: s.Cfg.Horizon, Issues: map[string][]query.Issue{}}
+	w := Workspace{At: s.Now(), Root: s.Cfg.Root, Horizon: s.Cfg.Horizon, Issues: map[string][]query.Issue{}, Wide: map[string][]query.Issue{}}
 	warn := func(what string, err error) { w.Warnings = append(w.Warnings, what+": "+query.Clip(err.Error(), 300)) }
 	var err error
 	if w.Status, err = s.Status(); err != nil {
@@ -130,6 +131,13 @@ func (s *Session) Workspace() (Workspace, error) {
 		}
 		if len(issues) > 0 {
 			w.Issues[p.Name] = issues
+		}
+		wide, err := s.List(query.Filter{Project: p.Name, All: true, AnyStatus: true})
+		if err != nil {
+			return Workspace{}, err
+		}
+		if len(wide) > 0 {
+			w.Wide[p.Name] = wide
 		}
 	}
 	return w, nil

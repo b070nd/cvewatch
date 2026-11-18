@@ -19,7 +19,7 @@ func TestSetProfile(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := mustParse(t, tt.src)
-			err := f.Apply(Op{Kind: "set_profile", Profile: tt.profile})
+			err := f.Apply(Op{Kind: KindSetProfile, Profile: tt.profile})
 			if tt.err != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.err) {
 					t.Fatalf("err = %v, want it to list %q", err, tt.err)
@@ -29,7 +29,7 @@ func TestSetProfile(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := mustApply(t, tt.src, Op{Kind: "set_profile", Profile: tt.profile}); got != tt.want {
+			if got := mustApply(t, tt.src, Op{Kind: KindSetProfile, Profile: tt.profile}); got != tt.want {
 				t.Errorf("got:\n%s\nwant:\n%s", got, tt.want)
 			}
 		})

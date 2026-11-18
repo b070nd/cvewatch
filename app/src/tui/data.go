@@ -9,7 +9,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/b070nd/cvewatch/app/src/catalog"
 	"github.com/b070nd/cvewatch/app/src/config"
 	"github.com/b070nd/cvewatch/app/src/discovery"
 	"github.com/b070nd/cvewatch/app/src/model"
@@ -27,13 +26,14 @@ type snapshot struct {
 	At         time.Time
 	Root       string
 	ByProject  map[string][]query.Issue // the open issues of each project, most urgent first, read project by project so that no row mixes projects
+	Wide       map[string][]query.Issue // the same in any status, for a search that names a status or an applicability (ops.Workspace.Wide)
 	Status     status.Report
 	Violations []priority.Violation
 	Projects   []projectRow
 	Warnings   []string       // parts that could not be read; the rest is still shown
 	Horizon    config.Horizon // which publication dates the daemon judges and alerts
 
-	Stamp      string        // the files the findings are judged from, as they were when read (see inputStamp)
+	Stamp      string        // the files the findings are judged from, as they were when read (see inventory.FilesStamp)
 	Stale      ops.Staleness // whether the findings were judged against something else
 	StaleKnown bool          // Stale was read; false when it could not be
 }
@@ -63,20 +63,19 @@ func loadSnapshot(s *ops.Session) (*snapshot, error) { return loadSnapshotMemo(s
 // loadSnapshotMemo is loadSnapshot that asks the memo for the staleness, which
 // reads lockfiles, so it is only worked out again when the files changed.
 // What is in the workspace, and who may see it, is decided by ops.
-func loadSnapshotMemo(s *ops.Session, memo *staleMemo) (*snapshot, error) {
+func loadSnapshotMemo(s *ops.Session, memo *ops.StaleCache) (*snapshot, error) {
 	w, err := s.Workspace()
 	if err != nil {
 		return nil, err // access denied shows here
 	}
-	sn := &snapshot{At: w.At, Root: w.Root, ByProject: w.Issues, Status: w.Status, Violations: w.Violations, Horizon: w.Horizon,
-		Stamp: inputStamp(s.Cfg)}
+	sn := &snapshot{At: w.At, Root: w.Root, ByProject: w.Issues, Wide: w.Wide, Status: w.Status, Violations: w.Violations, Horizon: w.Horizon}
 	for _, warning := range w.Warnings {
 		sn.Warnings = append(sn.Warnings, oneLine(warning))
 	}
 	for _, p := range w.Projects {
 		sn.Projects = append(sn.Projects, projectRow{WorkspaceProject: p})
 	}
-	sn.Stale, sn.StaleKnown = memo.staleness(s, sn.Stamp)
+	sn.Stale, sn.Stamp, sn.StaleKnown = memo.Stale(s)
 	sn.markUnjudged()
 	sn.markUpdates()
 	return sn, nil
@@ -158,7 +157,7 @@ func loadCmd(b Backend) tea.Cmd { return loadLandCmd(b, nil, nil) }
 
 // loadLandCmd reads the snapshot and, once it is in, puts the Projects screen
 // on a project (see landing).
-func loadLandCmd(b Backend, memo *staleMemo, land *landing) tea.Cmd {
+func loadLandCmd(b Backend, memo *ops.StaleCache, land *landing) tea.Cmd {
 	return func() tea.Msg {
 		var sn *snapshot
 		err := b.Read(func(s *ops.Session) (e error) { sn, e = loadSnapshotMemo(s, memo); return e })
@@ -323,14 +322,6 @@ func assignCmd(b Backend, a ops.Assignment) tea.Cmd {
 	}
 }
 
-// catalogOf is the catalog a session offers, never nil.
-func catalogOf(s *ops.Session) *catalog.Catalog {
-	if s.Cfg.Catalog != nil {
-		return s.Cfg.Catalog
-	}
-	return catalog.New(s.Cfg.Techs)
-}
-
 // startFlowCmd builds a setup flow: for a new project when name is empty,
 // otherwise for editing the named one. A folder, or a Dockerfile, compose file
 // or manifest, is scanned first and merged in. The flow is handed to Update
@@ -344,7 +335,7 @@ func startFlowCmd(b Backend, name, dir string) tea.Cmd {
 				if err != nil {
 					return err
 				}
-				res, err := projectflow.ScanSourceWith(src, catalogOf(s), discovery.Options{IncludeIgnored: src.IsFile()})
+				res, err := projectflow.ScanSourceWith(src, s.Catalog(), discovery.Options{IncludeIgnored: src.IsFile()})
 				if err != nil {
 					return err
 				}
@@ -401,7 +392,7 @@ func scanCmd(b Backend, dir string) tea.Cmd {
 			return m
 		}
 		m.err = b.Read(func(s *ops.Session) (e error) {
-			m.res, e = projectflow.ScanSourceWith(src, catalogOf(s), discovery.Options{IncludeIgnored: src.IsFile()})
+			m.res, e = projectflow.ScanSourceWith(src, s.Catalog(), discovery.Options{IncludeIgnored: src.IsFile()})
 			return e
 		})
 		return m

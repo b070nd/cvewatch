@@ -153,7 +153,7 @@ func HintsFor(p model.Project, issues []Issue, o HintOptions) []Hint {
 		on := true
 		add(Hint{Level: "info", Field: "update.auto",
 			Message: "scheduled runs skip this project; run cvewatch update or press u in the TUI to refresh it",
-			Fix:     []Op{{Kind: "set_update", Auto: &on}}})
+			Fix:     []Op{{Kind: KindSetUpdate, Auto: &on}}})
 	}
 	if p.Update.Every > model.LongEvery {
 		add(Hint{Level: "info", Field: "update.every",

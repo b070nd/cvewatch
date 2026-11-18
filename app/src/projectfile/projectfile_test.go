@@ -164,37 +164,37 @@ func TestApplyOnExample(t *testing.T) {
 		ops  []Op
 		want []string // the added and removed lines, in order
 	}{
-		{"deployed version updated", []Op{{Kind: "set_env_tech", Env: "prod", Tech: "php", Version: "8.2.31"}},
+		{"deployed version updated", []Op{{Kind: KindSetEnvTech, Env: "prod", Tech: "php", Version: "8.2.31"}},
 			[]string{`-   techs: {php: "8.2.30"}`, `+   techs: {php: "8.2.31"}`}},
-		{"deployed version in a new env", []Op{{Kind: "set_env_tech", Env: "staging", Tech: "php", Version: "8.2.30"}},
+		{"deployed version in a new env", []Op{{Kind: KindSetEnvTech, Env: "staging", Tech: "php", Version: "8.2.30"}},
 			[]string{`+ when@staging:`, `+   techs: {php: "8.2.30"}`}},
-		{"second tech in an env", []Op{{Kind: "set_env_tech", Env: "prod", Tech: "node", Version: "20"}},
+		{"second tech in an env", []Op{{Kind: KindSetEnvTech, Env: "prod", Tech: "node", Version: "20"}},
 			[]string{`-   techs: {php: "8.2.30"}`, `+   techs: {php: "8.2.30", node: "20"}`}},
-		{"image", []Op{{Kind: "set_image", Env: "prod", Image: "reg.example/shop:1.4"}},
+		{"image", []Op{{Kind: KindSetImage, Env: "prod", Image: "reg.example/shop:1.4"}},
 			[]string{`-   image: registry.example/shop@sha256:...   # recorded only`, `+   image: reg.example/shop:1.4 # recorded only`}},
-		{"image in a new env", []Op{{Kind: "set_image", Env: "dev", Image: "shop:dev"}},
+		{"image in a new env", []Op{{Kind: KindSetImage, Env: "dev", Image: "shop:dev"}},
 			[]string{`+ when@dev:`, `+   image: shop:dev`}},
-		{"lockfile with env", []Op{{Kind: "add_lockfile", Lockfile: model.Lockfile{Type: "cyclonedx", Path: "/p/shop-prod.cdx.json", Env: "prod"}}},
+		{"lockfile with env", []Op{{Kind: KindAddLockfile, Lockfile: model.Lockfile{Type: "cyclonedx", Path: "/p/shop-prod.cdx.json", Env: "prod"}}},
 			[]string{`+   - {type: cyclonedx, path: /p/shop-prod.cdx.json, env: prod}`}},
-		{"lockfile with dev", []Op{{Kind: "add_lockfile", Lockfile: model.Lockfile{Type: "pip", Path: "req.txt", Dev: true}}},
+		{"lockfile with dev", []Op{{Kind: KindAddLockfile, Lockfile: model.Lockfile{Type: "pip", Path: "req.txt", Dev: true}}},
 			[]string{`+   - {type: pip, path: req.txt, dev: true}`}},
-		{"duplicate lockfile is ignored", []Op{{Kind: "add_lockfile", Lockfile: model.Lockfile{Type: "npm", Path: "/path/to/shop/package-lock.json"}}}, nil},
-		{"remove lockfile", []Op{{Kind: "remove_lockfile", Lockfile: model.Lockfile{Path: "/path/to/shop/package-lock.json"}}},
+		{"duplicate lockfile is ignored", []Op{{Kind: KindAddLockfile, Lockfile: model.Lockfile{Type: "npm", Path: "/path/to/shop/package-lock.json"}}}, nil},
+		{"remove lockfile", []Op{{Kind: KindRemoveLockfile, Lockfile: model.Lockfile{Path: "/path/to/shop/package-lock.json"}}},
 			[]string{`-   - {type: npm, path: /path/to/shop/package-lock.json}`}},
-		{"new tech", []Op{{Kind: "set_tech", Tech: "redis", Version: "7.2"}},
+		{"new tech", []Op{{Kind: KindSetTech, Tech: "redis", Version: "7.2"}},
 			[]string{`+   - {name: redis, version: "7.2"}`}},
-		{"new tech without version", []Op{{Kind: "set_tech", Tech: "redis"}},
+		{"new tech without version", []Op{{Kind: KindSetTech, Tech: "redis"}},
 			[]string{`+   - {name: redis}`}},
-		{"tech version changed, name matched ignoring case", []Op{{Kind: "set_tech", Tech: "PHP", Version: "8.3"}},
+		{"tech version changed, name matched ignoring case", []Op{{Kind: KindSetTech, Tech: "PHP", Version: "8.3"}},
 			[]string{`-   - {name: php, version: "8.2"}`, `+   - {name: php, version: "8.3"}`}},
-		{"tech with empty version keeps the old one", []Op{{Kind: "set_tech", Tech: "php"}}, nil},
-		{"remove tech", []Op{{Kind: "remove_tech", Tech: "Magento"}},
+		{"tech with empty version keeps the old one", []Op{{Kind: KindSetTech, Tech: "php"}}, nil},
+		{"remove tech", []Op{{Kind: KindRemoveTech, Tech: "Magento"}},
 			[]string{`-   - {name: magento, version: "2.4.7"}`}},
-		{"envs narrowed", []Op{{Kind: "set_envs", Envs: []model.Env{"staging", "prod"}}},
+		{"envs narrowed", []Op{{Kind: KindSetEnvs, Envs: []model.Env{"staging", "prod"}}},
 			[]string{`- envs: [dev, int, staging, prod]   # omit for all four`, `+ envs: [staging, prod] # omit for all four`}},
-		{"remove env tech and prune", []Op{{Kind: "remove_env_tech", Env: "prod", Tech: "php"}},
+		{"remove env tech and prune", []Op{{Kind: KindRemoveEnvTech, Env: "prod", Tech: "php"}},
 			[]string{`-   techs: {php: "8.2.30"}`}},
-		{"clear image", []Op{{Kind: "set_image", Env: "prod", Image: ""}},
+		{"clear image", []Op{{Kind: KindSetImage, Env: "prod", Image: ""}},
 			[]string{`-   image: registry.example/shop@sha256:...   # recorded only`}},
 	}
 	for _, tt := range tests {
@@ -214,12 +214,12 @@ func TestApplyOnExample(t *testing.T) {
 func TestApplyResultsAreRight(t *testing.T) {
 	f := mustParse(t, shopExample)
 	err := f.Apply(
-		Op{Kind: "set_env_tech", Env: "prod", Tech: "php", Version: "8.2.31"},
-		Op{Kind: "set_env_tech", Env: "int", Tech: "node", Version: "20"},
-		Op{Kind: "set_image", Env: "int", Image: "shop:int"},
-		Op{Kind: "add_lockfile", Lockfile: model.Lockfile{Type: "cyclonedx", Path: "/x.json", Env: "prod", Dev: true}},
-		Op{Kind: "set_tech", Tech: "redis", Version: "7.2"},
-		Op{Kind: "set_envs", Envs: []model.Env{"int", "prod", "int"}},
+		Op{Kind: KindSetEnvTech, Env: "prod", Tech: "php", Version: "8.2.31"},
+		Op{Kind: KindSetEnvTech, Env: "int", Tech: "node", Version: "20"},
+		Op{Kind: KindSetImage, Env: "int", Image: "shop:int"},
+		Op{Kind: KindAddLockfile, Lockfile: model.Lockfile{Type: "cyclonedx", Path: "/x.json", Env: "prod", Dev: true}},
+		Op{Kind: KindSetTech, Tech: "redis", Version: "7.2"},
+		Op{Kind: KindSetEnvs, Envs: []model.Env{"int", "prod", "int"}},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -246,29 +246,29 @@ func TestApplyResultsAreRight(t *testing.T) {
 }
 
 func TestVersionsAreQuoted(t *testing.T) {
-	got := mustApply(t, "name: x\ntechs: []\n", Op{Kind: "set_tech", Tech: "php", Version: "8.2"},
-		Op{Kind: "set_env_tech", Env: "dev", Tech: "php", Version: "8.20"})
+	got := mustApply(t, "name: x\ntechs: []\n", Op{Kind: KindSetTech, Tech: "php", Version: "8.2"},
+		Op{Kind: KindSetEnvTech, Env: "dev", Tech: "php", Version: "8.20"})
 	for _, want := range []string{`- {name: php, version: "8.2"}`, `techs: {php: "8.20"}`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in\n%s", want, got)
 		}
 	}
 	// an existing plain version is rewritten quoted when it changes, and left alone otherwise
-	got = mustApply(t, blockStyle, Op{Kind: "set_tech", Tech: "php", Version: "8.3"})
+	got = mustApply(t, blockStyle, Op{Kind: KindSetTech, Tech: "php", Version: "8.3"})
 	if !strings.Contains(got, `version: "8.3"`) {
 		t.Errorf("changed version not quoted:\n%s", got)
 	}
-	if same := mustApply(t, blockStyle, Op{Kind: "set_tech", Tech: "php", Version: "8.2"}); same != blockStyle {
+	if same := mustApply(t, blockStyle, Op{Kind: KindSetTech, Tech: "php", Version: "8.2"}); same != blockStyle {
 		t.Errorf("setting the same version changed the file:\n%s", same)
 	}
 }
 
 func TestBlockStyleFile(t *testing.T) {
 	got := mustApply(t, blockStyle,
-		Op{Kind: "set_tech", Tech: "redis", Version: "7"},
-		Op{Kind: "set_tech", Tech: "mysql", Version: "8.0"},
-		Op{Kind: "add_lockfile", Lockfile: model.Lockfile{Type: "npm", Path: "package-lock.json"}},
-		Op{Kind: "set_env_tech", Env: "prod", Tech: "mysql", Version: "8.0.35"},
+		Op{Kind: KindSetTech, Tech: "redis", Version: "7"},
+		Op{Kind: KindSetTech, Tech: "mysql", Version: "8.0"},
+		Op{Kind: KindAddLockfile, Lockfile: model.Lockfile{Type: "npm", Path: "package-lock.json"}},
+		Op{Kind: KindSetEnvTech, Env: "prod", Tech: "mysql", Version: "8.0.35"},
 	)
 	want := strings.NewReplacer(
 		"  - name: mysql\n", "  - name: mysql\n    version: \"8.0\"\n  - {name: redis, version: \"7\"}\n",
@@ -281,7 +281,7 @@ func TestBlockStyleFile(t *testing.T) {
 }
 
 func TestBlankLinesAndCommentsSurviveEdits(t *testing.T) {
-	got := mustApply(t, blockStyle, Op{Kind: "set_env_tech", Env: "prod", Tech: "php", Version: "8.2.31"})
+	got := mustApply(t, blockStyle, Op{Kind: KindSetEnvTech, Env: "prod", Tech: "php", Version: "8.2.31"})
 	want := strings.Replace(blockStyle, `php: "8.2.30"`, `php: "8.2.31"`, 1)
 	if got != want {
 		t.Fatalf("got\n%s\nwant\n%s", got, want)
@@ -290,7 +290,7 @@ func TestBlankLinesAndCommentsSurviveEdits(t *testing.T) {
 
 func TestSetEnvs(t *testing.T) {
 	t.Run("empty list removes the key", func(t *testing.T) {
-		got := mustApply(t, shopExample, Op{Kind: "set_envs"})
+		got := mustApply(t, shopExample, Op{Kind: KindSetEnvs})
 		if strings.Contains(got, "envs:") {
 			t.Fatalf("envs still there:\n%s", got)
 		}
@@ -300,13 +300,13 @@ func TestSetEnvs(t *testing.T) {
 		}
 	})
 	t.Run("keeps the line comment", func(t *testing.T) {
-		got := mustApply(t, shopExample, Op{Kind: "set_envs", Envs: []model.Env{"prod"}})
+		got := mustApply(t, shopExample, Op{Kind: KindSetEnvs, Envs: []model.Env{"prod"}})
 		if !strings.Contains(got, "envs: [prod] # omit for all four\n") {
 			t.Fatalf("got\n%s", got)
 		}
 	})
 	t.Run("new key goes after name", func(t *testing.T) {
-		got := mustApply(t, "name: x\ntechs: []\n", Op{Kind: "set_envs", Envs: []model.Env{"dev", "prod"}})
+		got := mustApply(t, "name: x\ntechs: []\n", Op{Kind: KindSetEnvs, Envs: []model.Env{"dev", "prod"}})
 		if got != "name: x\nenvs: [dev, prod]\ntechs: []\n" {
 			t.Fatalf("got %q", got)
 		}
@@ -321,20 +321,20 @@ func TestApplyErrors(t *testing.T) {
 	}{
 		{"unknown kind", Op{Kind: "explode"}, `unknown kind "explode"`},
 		{"empty kind", Op{}, "unknown kind"},
-		{"invalid env in set_envs", Op{Kind: "set_envs", Envs: []model.Env{"dev", "QA"}}, `"QA"`},
-		{"invalid env in set_env_tech", Op{Kind: "set_env_tech", Env: "QA", Tech: "php", Version: "8"}, `"QA"`},
-		{"missing env", Op{Kind: "set_image", Image: "x"}, "invalid env"},
-		{"empty tech in set_tech", Op{Kind: "set_tech", Tech: "  "}, "empty"},
-		{"empty tech in remove_tech", Op{Kind: "remove_tech"}, "empty"},
-		{"empty tech in set_env_tech", Op{Kind: "set_env_tech", Env: "dev", Version: "1"}, "empty"},
-		{"empty version in set_env_tech", Op{Kind: "set_env_tech", Env: "dev", Tech: "php"}, "version"},
-		{"remove absent tech", Op{Kind: "remove_tech", Tech: "ruby"}, `"ruby"`},
-		{"remove absent env tech", Op{Kind: "remove_env_tech", Env: "dev", Tech: "php"}, "when@dev.techs.php"},
-		{"remove absent env tech in known env", Op{Kind: "remove_env_tech", Env: "prod", Tech: "node"}, "when@prod.techs.node"},
-		{"remove absent lockfile", Op{Kind: "remove_lockfile", Lockfile: model.Lockfile{Path: "/nope"}}, `"/nope"`},
-		{"remove lockfile for the wrong env", Op{Kind: "remove_lockfile", Lockfile: model.Lockfile{Path: "/path/to/shop/composer.lock", Env: "dev"}}, "dev"},
-		{"lockfile without path", Op{Kind: "add_lockfile", Lockfile: model.Lockfile{Type: "npm"}}, "path"},
-		{"lockfile with bad env", Op{Kind: "add_lockfile", Lockfile: model.Lockfile{Type: "npm", Path: "p", Env: "QA"}}, "QA"},
+		{"invalid env in set_envs", Op{Kind: KindSetEnvs, Envs: []model.Env{"dev", "QA"}}, `"QA"`},
+		{"invalid env in set_env_tech", Op{Kind: KindSetEnvTech, Env: "QA", Tech: "php", Version: "8"}, `"QA"`},
+		{"missing env", Op{Kind: KindSetImage, Image: "x"}, "invalid env"},
+		{"empty tech in set_tech", Op{Kind: KindSetTech, Tech: "  "}, "empty"},
+		{"empty tech in remove_tech", Op{Kind: KindRemoveTech}, "empty"},
+		{"empty tech in set_env_tech", Op{Kind: KindSetEnvTech, Env: "dev", Version: "1"}, "empty"},
+		{"empty version in set_env_tech", Op{Kind: KindSetEnvTech, Env: "dev", Tech: "php"}, "version"},
+		{"remove absent tech", Op{Kind: KindRemoveTech, Tech: "ruby"}, `"ruby"`},
+		{"remove absent env tech", Op{Kind: KindRemoveEnvTech, Env: "dev", Tech: "php"}, "when@dev.techs.php"},
+		{"remove absent env tech in known env", Op{Kind: KindRemoveEnvTech, Env: "prod", Tech: "node"}, "when@prod.techs.node"},
+		{"remove absent lockfile", Op{Kind: KindRemoveLockfile, Lockfile: model.Lockfile{Path: "/nope"}}, `"/nope"`},
+		{"remove lockfile for the wrong env", Op{Kind: KindRemoveLockfile, Lockfile: model.Lockfile{Path: "/path/to/shop/composer.lock", Env: "dev"}}, "dev"},
+		{"lockfile without path", Op{Kind: KindAddLockfile, Lockfile: model.Lockfile{Type: "npm"}}, "path"},
+		{"lockfile with bad env", Op{Kind: KindAddLockfile, Lockfile: model.Lockfile{Type: "npm", Path: "p", Env: "QA"}}, "QA"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -354,9 +354,9 @@ func TestApplyIsAtomic(t *testing.T) {
 	f := mustParse(t, shopExample)
 	before := f.Project()
 	err := f.Apply(
-		Op{Kind: "set_tech", Tech: "redis", Version: "7"},
-		Op{Kind: "set_env_tech", Env: "int", Tech: "php", Version: "8.2"},
-		Op{Kind: "remove_tech", Tech: "does-not-exist"},
+		Op{Kind: KindSetTech, Tech: "redis", Version: "7"},
+		Op{Kind: KindSetEnvTech, Env: "int", Tech: "php", Version: "8.2"},
+		Op{Kind: KindRemoveTech, Tech: "does-not-exist"},
 	)
 	if err == nil || !strings.Contains(err.Error(), "op 3") {
 		t.Fatalf("err = %v, want it to name op 3", err)
@@ -371,11 +371,11 @@ func TestApplyIsAtomic(t *testing.T) {
 
 func TestApplyIsIdempotent(t *testing.T) {
 	ops := []Op{
-		{Kind: "set_tech", Tech: "redis", Version: "7.2"},
-		{Kind: "set_env_tech", Env: "int", Tech: "php", Version: "8.2.1"},
-		{Kind: "set_image", Env: "int", Image: "shop:int"},
-		{Kind: "add_lockfile", Lockfile: model.Lockfile{Type: "pip", Path: "r.txt", Env: "dev"}},
-		{Kind: "set_envs", Envs: []model.Env{"dev", "prod"}},
+		{Kind: KindSetTech, Tech: "redis", Version: "7.2"},
+		{Kind: KindSetEnvTech, Env: "int", Tech: "php", Version: "8.2.1"},
+		{Kind: KindSetImage, Env: "int", Image: "shop:int"},
+		{Kind: KindAddLockfile, Lockfile: model.Lockfile{Type: "pip", Path: "r.txt", Env: "dev"}},
+		{Kind: KindSetEnvs, Envs: []model.Env{"dev", "prod"}},
 	}
 	once := mustApply(t, shopExample, ops...)
 	twice := mustApply(t, once, ops...)
@@ -388,16 +388,16 @@ func TestEmptyContainersAreFilled(t *testing.T) {
 	// a key with nothing after it, and empty flow lists and maps
 	src := "name: x\ntechs:\nlockfiles: []\nwhen@dev: {}\n"
 	got := mustApply(t, src,
-		Op{Kind: "set_tech", Tech: "php", Version: "8.2"},
-		Op{Kind: "add_lockfile", Lockfile: model.Lockfile{Type: "npm", Path: "p"}},
-		Op{Kind: "set_env_tech", Env: "dev", Tech: "php", Version: "8.2.1"},
+		Op{Kind: KindSetTech, Tech: "php", Version: "8.2"},
+		Op{Kind: KindAddLockfile, Lockfile: model.Lockfile{Type: "npm", Path: "p"}},
+		Op{Kind: KindSetEnvTech, Env: "dev", Tech: "php", Version: "8.2.1"},
 	)
 	want := "name: x\ntechs:\n  - {name: php, version: \"8.2\"}\nlockfiles:\n  - {type: npm, path: p}\nwhen@dev:\n  techs: {php: \"8.2.1\"}\n"
 	if got != want {
 		t.Fatalf("got\n%s\nwant\n%s", got, want)
 	}
 	// removing the last item leaves a valid empty list
-	got = mustApply(t, got, Op{Kind: "remove_tech", Tech: "php"}, Op{Kind: "remove_env_tech", Env: "dev", Tech: "php"})
+	got = mustApply(t, got, Op{Kind: KindRemoveTech, Tech: "php"}, Op{Kind: KindRemoveEnvTech, Env: "dev", Tech: "php"})
 	if want := "name: x\ntechs: []\nlockfiles:\n  - {type: npm, path: p}\n"; got != want {
 		t.Fatalf("got\n%s\nwant\n%s", got, want)
 	}
@@ -600,7 +600,7 @@ func TestEndToEndEditAndSave(t *testing.T) {
 	}
 	raw, _ := os.ReadFile(path)
 	f := mustParse(t, string(raw))
-	if err := f.Apply(Op{Kind: "set_env_tech", Env: "prod", Tech: "php", Version: "8.2.31"}); err != nil {
+	if err := f.Apply(Op{Kind: KindSetEnvTech, Env: "prod", Tech: "php", Version: "8.2.31"}); err != nil {
 		t.Fatal(err)
 	}
 	out, _ := f.Bytes()

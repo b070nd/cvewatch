@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/b070nd/cvewatch/app/src/config"
+	"github.com/b070nd/cvewatch/app/src/ops"
 	"github.com/b070nd/cvewatch/app/src/query"
 )
 
@@ -51,7 +52,7 @@ func Run(ctx context.Context, b Backend, o Options) error {
 func New(b Backend, o Options) tea.Model { return newApp(context.Background(), b, o) }
 
 func newApp(ctx context.Context, b Backend, o Options) *app {
-	m := &app{b: b, o: o, loading: true, helpVP: scrolling(), after: afterCmd, sys: newSysDesktop(), stl: &staleMemo{}, tui: config.TUI{Refresh: o.refresh(), Fetch: o.Fetch, Auto: o.Auto}}
+	m := &app{b: b, o: o, loading: true, helpVP: scrolling(), after: afterCmd, sys: newSysDesktop(), stl: &ops.StaleCache{}, tui: config.TUI{Refresh: o.refresh(), Fetch: o.Fetch, Auto: o.Auto}}
 	m.ctx, m.stop = context.WithCancel(ctx)
 	for i := range m.txt {
 		m.txt[i] = scrolling()
@@ -82,7 +83,7 @@ type app struct {
 	stop    context.CancelFunc
 	tui     config.TUI // the tui settings as last read: the periods of the re-read and the fetch
 	fet     fetchState
-	stl     *staleMemo        // the staleness of the snapshot, worked out again only when the files change
+	stl     *ops.StaleCache   // the staleness of the snapshot, worked out again only when the files change
 	tried   string            // the files (snapshot stamp) a revalidation started by itself was tried on
 	sinces  map[string]string // the since dates a revalidation preview read, until its job ends
 	sys     desktop           // the browser and the clipboard
@@ -110,6 +111,7 @@ type app struct {
 	tenantAuto bool         // the context was chosen because there is one project only
 	reveal     bool         // scroll the page to the row that was just selected
 	narrowed   scopedIssues // the issues of the context that the time filter lets through
+	wide       scopedIssues // the same in any status (snapshot.Wide)
 
 	published query.TimeRange // the time filter on the publication date; the zero value is any time
 }

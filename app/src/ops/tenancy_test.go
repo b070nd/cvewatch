@@ -256,7 +256,7 @@ func TestProjectViewAndSetVendorNeedFullAccess(t *testing.T) {
 		}
 		defer s.Close()
 		s.Actor = actor
-		return s.EditProject(ProjectChange{Project: project, Ops: []projectfile.Op{{Kind: "set_vendor", Vendor: vendor}}, Save: true})
+		return s.EditProject(ProjectChange{Project: project, Ops: []projectfile.Op{{Kind: projectfile.KindSetVendor, Vendor: vendor}}, Save: true})
 	}
 
 	prev, err := set("ann", "shop", "other")
@@ -289,5 +289,19 @@ func TestViewOfShowsTheVendor(t *testing.T) {
 	}
 	if v := ViewOf(model.Project{Name: "shop"}); v.Vendor != "" {
 		t.Errorf("%+v", v)
+	}
+}
+
+func TestSincesKeepToTheProjectsTheActorMaySee(t *testing.T) {
+	cfg := tenantBundle(t, map[string]config.Grant{"ann": {Projects: []string{"vendor:acme"}}, "root": {Projects: []string{"*"}}})
+	for i := range cfg.Projects {
+		cfg.Projects[i].Since = day
+	}
+	st := tenantStore(t)
+	if got := open(t, cfg, st, "ann").Sinces(); len(got) != 2 || got["shop"].IsZero() || got["crm"].IsZero() {
+		t.Errorf("ann sees the since dates of acme only: %v", got)
+	}
+	if got := open(t, cfg, st, "root").Sinces(); len(got) != 4 {
+		t.Errorf("root sees all: %v", got)
 	}
 }

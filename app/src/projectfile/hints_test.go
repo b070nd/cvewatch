@@ -58,7 +58,7 @@ func TestHintsForTheUsersOwnTerms(t *testing.T) {
 func TestHintsReuseTheIssuesFixes(t *testing.T) {
 	src := "name: shop\nenvs: [local]\nsince: 2026-01-01\ntechs:\n  - {name: mariadb, version: \"10\"}\n"
 	h, ok := hintAt(hintsOf(t, src, HintOptions{}), "techs[0]", "not in the catalog")
-	if !ok || len(h.Fix) != 2 || h.Fix[0].Kind != "remove_tech" || h.Fix[1].Tech != "mysql" {
+	if !ok || len(h.Fix) != 2 || h.Fix[0].Kind != KindRemoveTech || h.Fix[1].Tech != "mysql" {
 		t.Fatalf("the rename fix of ValidateCatalog must carry over: %+v", h)
 	}
 }
@@ -117,7 +117,7 @@ func TestHintsNothingMatchable(t *testing.T) {
 
 func TestHintsAboutEnvironments(t *testing.T) {
 	hs := hintsOf(t, "name: a\nenvs: [local]\nsince: 2026-01-01\ntechs:\n  - {name: mysql, version: \"8\"}\n", HintOptions{})
-	if h, ok := hintAt(hs, "envs", "no prod"); !ok || h.Level != "info" || len(h.Fix) != 1 || h.Fix[0].Kind != "add_env" {
+	if h, ok := hintAt(hs, "envs", "no prod"); !ok || h.Level != "info" || len(h.Fix) != 1 || h.Fix[0].Kind != KindAddEnv {
 		t.Fatalf("%+v", hs)
 	}
 	hs = hintsOf(t, "name: a\nenvs: [local, production]\nsince: 2026-01-01\ntechs:\n  - {name: mysql, version: \"8\"}\n", HintOptions{})

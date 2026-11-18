@@ -252,12 +252,7 @@ func (c *cellStats) tip() string {
 
 // openByProject lists "project: env, env" for the open targets of an issue.
 func openByProject(is query.Issue) string {
-	byProject := map[string][]model.Env{}
-	for _, t := range is.Targets {
-		if t.Status == model.StatusOpen && !slices.Contains(byProject[t.Project], t.Env) {
-			byProject[t.Project] = append(byProject[t.Project], t.Env)
-		}
-	}
+	_, byProject := is.OpenIn()
 	names := make([]string, 0, len(byProject))
 	for n := range byProject {
 		names = append(names, n)

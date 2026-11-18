@@ -114,6 +114,9 @@ func (s *Session) Commit() error {
 	if s.readOnly {
 		return ErrReadOnly
 	}
+	if err := s.Ledger.Changed(); err != nil {
+		return fmt.Errorf("not saved: %w", err)
+	}
 	return s.store.Save(s.Ledger.State())
 }
 
@@ -354,9 +357,8 @@ type Change struct {
 
 func (c Change) validate(cfg *config.Bundle) error {
 	switch c.Status {
-	case model.StatusFixed, model.StatusIgnored, model.StatusOpen:
-	case model.StatusNotAffected:
-		if strings.TrimSpace(c.Note) == "" {
+	case model.StatusFixed, model.StatusIgnored, model.StatusOpen, model.StatusNotAffected:
+		if c.Status.NeedsReason() && strings.TrimSpace(c.Note) == "" {
 			return errors.New("a not-affected statement needs a reason (-note)")
 		}
 	default:
@@ -588,7 +590,7 @@ func (s *Session) Violations() ([]priority.Violation, error) {
 	var subjects []priority.Subject
 	for _, fd := range s.Ledger.Findings() {
 		v := s.Ledger.Vuln(fd.VulnID)
-		if fd.Status != model.StatusOpen || fd.Applies == model.AppNotAffected || v == nil ||
+		if !fd.Actionable() || v == nil ||
 			(len(f.Projects) > 0 && !slices.Contains(f.Projects, fd.Project)) {
 			continue
 		}

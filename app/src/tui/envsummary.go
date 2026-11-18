@@ -58,28 +58,11 @@ func sameEnvs(a, b []model.Env) bool {
 	return len(a) == len(b) && !slices.ContainsFunc(a, func(e model.Env) bool { return !slices.Contains(b, e) })
 }
 
-// openEnvs is the environments an issue is open in, per project, in the order the projects appear.
-func openEnvs(is query.Issue) (order []string, open map[string][]model.Env) {
-	open = map[string][]model.Env{}
-	for _, t := range is.Targets {
-		if t.Status != model.StatusOpen {
-			continue
-		}
-		if _, ok := open[t.Project]; !ok {
-			order = append(order, t.Project)
-		}
-		if !slices.Contains(open[t.Project], t.Env) {
-			open[t.Project] = append(open[t.Project], t.Env)
-		}
-	}
-	return order, open
-}
-
 // whereOpen says where an issue is open in at most w cells: a project's name alone
 // when it is open in every environment the project monitors, else the name and
 // only the environments it is open in. Projects that do not fit end in "+k more".
 func whereOpen(is query.Issue, mon map[string][]model.Env, w int) string {
-	order, open := openEnvs(is)
+	order, open := is.OpenIn()
 	entries := make([]string, 0, len(order))
 	for _, p := range order {
 		if envs, ok := mon[p]; ok && sameEnvs(envs, open[p]) {
@@ -102,7 +85,7 @@ func whereOpen(is query.Issue, mon map[string][]model.Env, w int) string {
 
 // openIn is the same for the issues of one project, whose name the page already shows.
 func openIn(is query.Issue, project string, envs []string) string {
-	_, open := openEnvs(is)
+	_, open := is.OpenIn()
 	mon := make([]model.Env, len(envs))
 	for i, e := range envs {
 		mon[i] = model.Env(e)

@@ -113,7 +113,7 @@ func restoreLayout(orig, out string) string {
 
 // Op is one edit. Kind picks which of the other fields are used.
 type Op struct {
-	Kind     string         `json:"kind"`
+	Kind     Kind           `json:"kind"`
 	Env      model.Env      `json:"env,omitempty"`
 	Envs     []model.Env    `json:"envs,omitempty"`
 	To       model.Env      `json:"to,omitempty"` // the new name, for rename_env
@@ -157,38 +157,38 @@ func (f *File) Apply(ops ...Op) error {
 func apply(root *yaml.Node, op Op) error {
 	tech, version := strings.TrimSpace(op.Tech), strings.TrimSpace(op.Version)
 	switch op.Kind {
-	case "set_envs":
+	case KindSetEnvs:
 		return setEnvs(root, op.Envs)
-	case "add_env":
+	case KindAddEnv:
 		return addEnv(root, op.Env)
-	case "remove_env":
+	case KindRemoveEnv:
 		return removeEnv(root, op.Env)
-	case "rename_env":
+	case KindRenameEnv:
 		return renameEnv(root, op.Env, op.To)
-	case "set_tech":
+	case KindSetTech:
 		if tech == "" {
 			return errors.New("tech name is empty")
 		}
 		return setTech(root, tech, version)
-	case "remove_tech":
+	case KindRemoveTech:
 		if tech == "" {
 			return errors.New("tech name is empty")
 		}
 		return removeTech(root, tech)
-	case "set_env_tech", "remove_env_tech", "set_image", "exclude_env_tech", "include_env_tech":
+	case KindSetEnvTech, KindRemoveEnvTech, "set_image", "exclude_env_tech", "include_env_tech":
 		if !op.Env.Valid() {
 			return fmt.Errorf("invalid env %q (lowercase letters, digits, - and _)", op.Env)
 		}
 		switch op.Kind {
-		case "set_image":
+		case KindSetImage:
 			return setImage(root, op.Env, strings.TrimSpace(op.Image))
-		case "remove_env_tech":
+		case KindRemoveEnvTech:
 			return removeEnvTech(root, op.Env, tech)
-		case "exclude_env_tech", "include_env_tech":
+		case KindExcludeEnvTech, KindIncludeEnvTech:
 			if tech == "" {
 				return errors.New("tech name is empty")
 			}
-			if op.Kind == "include_env_tech" {
+			if op.Kind == KindIncludeEnvTech {
 				return includeEnvTech(root, op.Env, tech)
 			}
 			return excludeEnvTech(root, op.Env, tech)
@@ -200,14 +200,14 @@ func apply(root *yaml.Node, op Op) error {
 			return errors.New("a deployed version is required")
 		}
 		return setEnvTech(root, op.Env, tech, version)
-	case "set_tech_envs":
+	case KindSetTechEnvs:
 		if tech == "" {
 			return errors.New("tech name is empty")
 		}
 		return setTechEnvs(root, tech, op.Envs)
-	case "migrate_envs":
+	case KindMigrateEnvs:
 		return migrateEnvironments(root)
-	case "add_lockfile":
+	case KindAddLockfile:
 		l := op.Lockfile
 		if l.Type == "" || l.Path == "" {
 			return errors.New("a lockfile needs a type and a path")
@@ -216,23 +216,23 @@ func apply(root *yaml.Node, op Op) error {
 			return fmt.Errorf("invalid lockfile env %q", l.Env)
 		}
 		return addLockfile(root, l)
-	case "remove_lockfile":
+	case KindRemoveLockfile:
 		if op.Lockfile.Env != "" && !op.Lockfile.Env.Valid() {
 			return fmt.Errorf("invalid lockfile env %q", op.Lockfile.Env)
 		}
 		return removeLockfile(root, op.Lockfile)
-	case "set_lockfile_dev":
+	case KindSetLockfileDev:
 		if op.Lockfile.Env != "" && !op.Lockfile.Env.Valid() {
 			return fmt.Errorf("invalid lockfile env %q", op.Lockfile.Env)
 		}
 		return setLockfileDev(root, op.Lockfile)
-	case "set_since":
+	case KindSetSince:
 		return setSince(root, strings.TrimSpace(op.Since))
-	case "set_profile":
+	case KindSetProfile:
 		return setProfile(root, strings.TrimSpace(op.Profile))
-	case "set_update":
+	case KindSetUpdate:
 		return setUpdate(root, strings.TrimSpace(op.Every), op.Auto)
-	case "set_vendor":
+	case KindSetVendor:
 		return setVendor(root, strings.TrimSpace(op.Vendor))
 	}
 	return fmt.Errorf("unknown kind %q", op.Kind)

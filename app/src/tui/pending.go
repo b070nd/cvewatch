@@ -112,7 +112,7 @@ func (m *app) start(label, key string, after reloadSet, prm *prompt, cmd tea.Cmd
 // opDone is the one place an operation ends.
 func (m *app) opDone(msg opMsg) tea.Cmd {
 	op, _ := m.pend.end(msg.id)
-	m.stl.invalidate() // what the operation did may change what the findings are judged against
+	m.stl.Invalidate() // what the operation did may change what the findings are judged against
 	m.tried = ""
 	out := m.result(msg.msg)
 	if p := msg.prm; p != nil && p == m.prm { // else it was closed meanwhile: the result is not its to take

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/b070nd/cvewatch/app/src/projectfile"
-	"github.com/b070nd/cvewatch/app/src/setup"
 )
 
 const (
@@ -60,13 +59,13 @@ func (d *driver) exists(root, rel string) bool {
 }
 
 // opKinds are the kinds of the edits in the preview that is on screen.
-func (d *driver) opKinds() []string {
+func (d *driver) opKinds() []projectfile.Kind {
 	d.t.Helper()
 	fx := d.m.(*app).prj.fix
 	if fx == nil {
 		d.t.Fatalf("no preview on screen:\n%s", d.view())
 	}
-	var ks []string
+	var ks []projectfile.Kind
 	for _, o := range fx.fix.Ops {
 		ks = append(ks, o.Kind)
 	}
@@ -84,8 +83,8 @@ func (d *driver) toField(n int) {
 func TestFieldEditorEditsEveryKindOfFieldAndKeepsComments(t *testing.T) {
 	b, root := diskFake(t, nil)
 	d := start(t, b, Options{})
-	seen := map[string]bool{}
-	save := func(note string, kinds ...string) {
+	seen := map[projectfile.Kind]bool{}
+	save := func(note string, kinds ...projectfile.Kind) {
 		t.Helper()
 		d.want("Save this change?", "Edit project: shop")
 		for _, k := range d.opKinds() {
@@ -369,28 +368,20 @@ func TestFieldEditorEditsEveryKindOfFieldAndKeepsComments(t *testing.T) {
 	d.press("enter", "f", "enter")
 	save("write the old default environments into the file", "set_envs")
 
-	for _, k := range OpKinds {
+	for _, k := range projectfile.GuidedKinds() {
 		if !seen[k] {
 			t.Errorf("the editor never built a %q op", k)
 		}
 	}
 	for k := range seen {
-		if !slices.Contains(OpKinds, k) {
-			t.Errorf("the editor built %q, which OpKinds does not list", k)
-		}
-	}
-}
-
-func TestOpKindsAreDeclaredToSetup(t *testing.T) {
-	for _, k := range OpKinds {
-		if !slices.Contains(setup.OpKinds, k) {
-			t.Errorf("%s is built by the TUI editor but missing from setup.OpKinds", k)
+		if spec, _ := projectfile.SpecOf(k); !spec.Guided {
+			t.Errorf("the editor built %q, which the op table does not mark guided", k)
 		}
 	}
 }
 
 func TestOpKindsAreKindsProjectfileApplies(t *testing.T) {
-	for _, k := range OpKinds {
+	for _, k := range projectfile.Kinds() {
 		f, err := projectfile.New("x")
 		if err != nil {
 			t.Fatal(err)

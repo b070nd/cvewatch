@@ -8,7 +8,7 @@ import (
 
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/ops"
-	"github.com/b070nd/cvewatch/app/src/setup"
+	"github.com/b070nd/cvewatch/app/src/projectfile"
 )
 
 const diffSvc = "name: svc\nenvs: [local, dev, prod]\ntechs:\n  - {name: php, version: \"8.2\"}\n  - {name: nginx, version: \"1.25\"}\n  - {name: mysql, version: \"8.0\", envs: [dev, prod]}\n" +
@@ -211,16 +211,10 @@ func TestDifferenceLinesFollowTheGenericTechnologies(t *testing.T) {
 	}
 }
 
-func TestDifferenceOpKindsAreDeclaredByEditorAndSetup(t *testing.T) {
-	for _, k := range []string{"set_tech_envs", "exclude_env_tech", "include_env_tech", "migrate_envs"} {
-		if !slices.Contains(OpKinds, k) {
-			t.Errorf("tui.OpKinds lacks %s", k)
-		}
-		if !slices.Contains(setup.OpKinds, k) {
-			t.Errorf("setup.OpKinds lacks %s", k)
-		}
-		if slices.Contains(setup.NotYet, k) {
-			t.Errorf("%s is still listed as not yet handled", k)
+func TestDifferenceOpKindsAreGuided(t *testing.T) {
+	for _, k := range []projectfile.Kind{projectfile.KindSetTechEnvs, projectfile.KindExcludeEnvTech, projectfile.KindIncludeEnvTech, projectfile.KindMigrateEnvs} {
+		if !slices.Contains(projectfile.GuidedKinds(), k) {
+			t.Errorf("%s is built by the editor but not marked guided in the op table", k)
 		}
 	}
 }

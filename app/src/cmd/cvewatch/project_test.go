@@ -99,7 +99,7 @@ func readFile(t *testing.T, root, rel string) string {
 
 func TestEveryOpKindHasACLIFlag(t *testing.T) {
 	for _, spec := range projectfile.OpTable {
-		t.Run(spec.Kind, func(t *testing.T) {
+		t.Run(string(spec.Kind), func(t *testing.T) {
 			e, err := parseProjectEdit(append([]string{"shop"}, spec.Args...))
 			if err != nil {
 				t.Fatal(err)
@@ -154,11 +154,11 @@ func TestProjectFlagsErrors(t *testing.T) {
 		}
 	}
 	e, err := parseProjectEdit([]string{"shop", "-since", ""})
-	if err != nil || len(e.ops) != 1 || e.ops[0].Kind != "set_since" || e.ops[0].Since != "" {
+	if err != nil || len(e.ops) != 1 || e.ops[0].Kind != projectfile.KindSetSince || e.ops[0].Since != "" {
 		t.Fatalf("an empty -since must clear: %+v %v", e, err)
 	}
 	e, err = parseProjectEdit([]string{"shop", "-lock-nodev", "composer:composer.lock", "-envs", "all"})
-	if err != nil || len(e.ops) != 2 || e.ops[0].Kind != "set_envs" || e.ops[1].Kind != "set_lockfile_dev" || e.ops[1].Lockfile.Dev {
+	if err != nil || len(e.ops) != 2 || e.ops[0].Kind != projectfile.KindSetEnvs || e.ops[1].Kind != projectfile.KindSetLockfileDev || e.ops[1].Lockfile.Dev {
 		t.Fatalf("%+v %v", e, err)
 	}
 }
@@ -303,11 +303,11 @@ func TestProjectDifferenceFlags(t *testing.T) {
 	}
 	got := e.ops // the order across flags is not part of the contract: compare as a set
 	want := []projectfile.Op{
-		{Kind: "set_tech_envs", Tech: "xdebug"},
-		{Kind: "set_tech_envs", Tech: "php", Envs: []model.Env{"local", "dev"}},
-		{Kind: "exclude_env_tech", Env: "prod", Tech: "xdebug"},
-		{Kind: "include_env_tech", Env: "dev", Tech: "xdebug"},
-		{Kind: "migrate_envs"},
+		{Kind: projectfile.KindSetTechEnvs, Tech: "xdebug"},
+		{Kind: projectfile.KindSetTechEnvs, Tech: "php", Envs: []model.Env{"local", "dev"}},
+		{Kind: projectfile.KindExcludeEnvTech, Env: "prod", Tech: "xdebug"},
+		{Kind: projectfile.KindIncludeEnvTech, Env: "dev", Tech: "xdebug"},
+		{Kind: projectfile.KindMigrateEnvs},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("ops = %+v", got)

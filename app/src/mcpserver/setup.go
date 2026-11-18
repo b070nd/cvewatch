@@ -238,7 +238,7 @@ type projectIn struct {
 func (in projectIn) change(save bool) ops.ProjectChange {
 	c := ops.ProjectChange{Project: in.Project, Save: save}
 	for _, o := range in.Changes {
-		op := projectfile.Op{Kind: o.Kind, Tech: o.Tech, Version: o.Version, Env: model.Env(o.Env), To: model.Env(o.To), Image: o.Image, Since: o.Since, Vendor: o.Vendor, Profile: o.Profile, Every: o.Every, Auto: o.Auto,
+		op := projectfile.Op{Kind: projectfile.Kind(o.Kind), Tech: o.Tech, Version: o.Version, Env: model.Env(o.Env), To: model.Env(o.To), Image: o.Image, Since: o.Since, Vendor: o.Vendor, Profile: o.Profile, Every: o.Every, Auto: o.Auto,
 			Lockfile: model.Lockfile{Type: o.LockType, Path: o.LockPath, Env: model.Env(o.LockEnv), Dev: o.LockDev}}
 		if l := o.Lockfile; l != nil {
 			op.Lockfile = model.Lockfile{Type: l.Type, Path: l.Path, Env: model.Env(l.Env), Dev: l.Dev}

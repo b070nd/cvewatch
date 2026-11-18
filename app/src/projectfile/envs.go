@@ -148,18 +148,18 @@ func EnvHints(p model.Project) []EnvHint {
 	if slices.ContainsFunc(slices.Collect(maps.Values(p.Environments)), func(c model.EnvConfig) bool { return c.Old }) {
 		out = append(out, EnvHint{Level: "info", Field: "environments",
 			Message: "environments: is the old spelling of the when@<env> blocks (same meaning); migrate_envs rewrites it and changes nothing else",
-			Fix:     []Op{{Kind: "migrate_envs"}}})
+			Fix:     []Op{{Kind: KindMigrateEnvs}}})
 	}
 	if len(p.Envs) == 0 {
 		out = append(out, EnvHint{Level: "warn", Field: "envs",
 			Message: "envs not set: using the old default " + joinEnvs(model.LegacyEnvs) + "; list your environments (names are free, local is a good start)",
-			Fix:     []Op{{Kind: "set_envs", Envs: slices.Clone(model.LegacyEnvs)}}})
+			Fix:     []Op{{Kind: KindSetEnvs, Envs: slices.Clone(model.LegacyEnvs)}}})
 		return out
 	}
 	if !slices.ContainsFunc(p.Envs, model.IsProd) {
 		out = append(out, EnvHint{Level: "info", Field: "envs",
 			Message: "no prod environment: add prod (and any others) if you deploy there; names are free",
-			Fix:     []Op{{Kind: "add_env", Env: model.EnvProd}}})
+			Fix:     []Op{{Kind: KindAddEnv, Env: model.EnvProd}}})
 	}
 	return out
 }

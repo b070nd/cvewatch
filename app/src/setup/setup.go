@@ -937,7 +937,7 @@ func (f *Flow) Ops() []projectfile.Op {
 	var ops []projectfile.Op
 
 	if !sameEnvs(base.EffectiveEnvs(), cur.EffectiveEnvs()) {
-		ops = append(ops, projectfile.Op{Kind: "set_envs", Envs: slices.Clone(cur.Envs)}) // none clears the key
+		ops = append(ops, projectfile.Op{Kind: projectfile.KindSetEnvs, Envs: slices.Clone(cur.Envs)}) // none clears the key
 	}
 
 	// set_tech cannot clear a version, so a cleared one is removed and set again.
@@ -946,7 +946,7 @@ func (f *Flow) Ops() []projectfile.Op {
 		i := techIndex(cur.Techs, b.Name)
 		switch {
 		case i < 0 || b.Version != "" && cur.Techs[i].Version == "":
-			ops = append(ops, projectfile.Op{Kind: "remove_tech", Tech: b.Name})
+			ops = append(ops, projectfile.Op{Kind: projectfile.KindRemoveTech, Tech: b.Name})
 			reset[strings.ToLower(b.Name)] = true // removing drops the limit to some environments with it
 		case b.Version != cur.Techs[i].Version:
 			changed[strings.ToLower(b.Name)] = true
@@ -955,7 +955,7 @@ func (f *Flow) Ops() []projectfile.Op {
 	for _, c := range cur.Techs {
 		i := techIndex(base.Techs, c.Name)
 		if i < 0 || changed[strings.ToLower(c.Name)] || base.Techs[i].Version != "" && c.Version == "" {
-			ops = append(ops, projectfile.Op{Kind: "set_tech", Tech: c.Name, Version: c.Version})
+			ops = append(ops, projectfile.Op{Kind: projectfile.KindSetTech, Tech: c.Name, Version: c.Version})
 		}
 	}
 
@@ -965,7 +965,7 @@ func (f *Flow) Ops() []projectfile.Op {
 			was = base.Techs[i].Envs
 		}
 		if !sameEnvs(was, c.Envs) || reset[strings.ToLower(c.Name)] && len(c.Envs) > 0 {
-			ops = append(ops, projectfile.Op{Kind: "set_tech_envs", Tech: c.Name, Envs: slices.Clone(c.Envs)}) // none lifts the limit
+			ops = append(ops, projectfile.Op{Kind: projectfile.KindSetTechEnvs, Tech: c.Name, Envs: slices.Clone(c.Envs)}) // none lifts the limit
 		}
 	}
 
@@ -975,12 +975,12 @@ func (f *Flow) Ops() []projectfile.Op {
 	}
 	for _, l := range base.Lockfiles {
 		if !has(cur.Lockfiles, l) {
-			ops = append(ops, projectfile.Op{Kind: "remove_lockfile", Lockfile: l})
+			ops = append(ops, projectfile.Op{Kind: projectfile.KindRemoveLockfile, Lockfile: l})
 		}
 	}
 	for _, l := range cur.Lockfiles {
 		if !has(base.Lockfiles, l) {
-			ops = append(ops, projectfile.Op{Kind: "add_lockfile", Lockfile: l})
+			ops = append(ops, projectfile.Op{Kind: projectfile.KindAddLockfile, Lockfile: l})
 		}
 	}
 
@@ -997,23 +997,23 @@ func (f *Flow) Ops() []projectfile.Op {
 			bv, cv := b.Techs[n], c.Techs[n]
 			switch {
 			case cv == "" && bv != "":
-				ops = append(ops, projectfile.Op{Kind: "remove_env_tech", Env: e, Tech: n})
+				ops = append(ops, projectfile.Op{Kind: projectfile.KindRemoveEnvTech, Env: e, Tech: n})
 			case cv != "" && cv != bv:
-				ops = append(ops, projectfile.Op{Kind: "set_env_tech", Env: e, Tech: n, Version: cv})
+				ops = append(ops, projectfile.Op{Kind: projectfile.KindSetEnvTech, Env: e, Tech: n, Version: cv})
 			}
 		}
 		for _, x := range b.Exclude {
 			if !slices.ContainsFunc(c.Exclude, func(o string) bool { return strings.EqualFold(o, x) }) {
-				ops = append(ops, projectfile.Op{Kind: "include_env_tech", Env: e, Tech: x})
+				ops = append(ops, projectfile.Op{Kind: projectfile.KindIncludeEnvTech, Env: e, Tech: x})
 			}
 		}
 		for _, x := range c.Exclude {
 			if !slices.ContainsFunc(b.Exclude, func(o string) bool { return strings.EqualFold(o, x) }) {
-				ops = append(ops, projectfile.Op{Kind: "exclude_env_tech", Env: e, Tech: x})
+				ops = append(ops, projectfile.Op{Kind: projectfile.KindExcludeEnvTech, Env: e, Tech: x})
 			}
 		}
 		if b.Image != c.Image {
-			ops = append(ops, projectfile.Op{Kind: "set_image", Env: e, Image: c.Image})
+			ops = append(ops, projectfile.Op{Kind: projectfile.KindSetImage, Env: e, Image: c.Image})
 		}
 	}
 	return ops

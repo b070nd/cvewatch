@@ -112,7 +112,7 @@ func (s *Session) Stale() (Staleness, error) {
 	}
 	if len(f.Projects) == 0 { // the feeds are shared settings: only someone who sees everything is told about them
 		for _, src := range s.Cfg.Sources {
-			if !src.Disabled && !s.Ledger.Feed(src.ID).Backfill.IsZero() {
+			if !src.Disabled && s.Ledger.Feed(src.ID).Owes() {
 				out.BackfillPending = append(out.BackfillPending, src.ID)
 			}
 		}

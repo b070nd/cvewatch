@@ -106,7 +106,10 @@ func TestProjectSchemaCoversTheOpTable(t *testing.T) {
 			Description string
 		}
 		json.Unmarshal(raw, &kind)
-		want := projectfile.Kinds()
+		var want []string
+		for _, k := range projectfile.Kinds() {
+			want = append(want, string(k))
+		}
 		sort.Strings(want)
 		sort.Strings(kind.Enum)
 		if !slices.Equal(kind.Enum, want) {

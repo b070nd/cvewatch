@@ -55,8 +55,8 @@ func minLabel(s model.Severity) string {
 
 // refit filters the issues again after they or the filter changed and puts
 // the cursor back on its issue.
-func (l *issueList) refit(all []query.Issue) {
-	l.vis = query.Narrow(all, l.min, l.text)
+func (l *issueList) refit(all, wide []query.Issue) {
+	l.vis = query.NarrowFrom(all, wide, l.min, l.text)
 	sortIssues(l.vis, l.sortBy, l.desc, l.grouped)
 	l.secs = nil
 	if l.grouped {
@@ -166,8 +166,8 @@ func (l *issueList) rowAtLine(y int) int {
 	return -1
 }
 
-func (f *findingsState) refit(all []query.Issue) {
-	f.issueList.refit(all)
+func (f *findingsState) refit(all, wide []query.Issue) {
+	f.issueList.refit(all, wide)
 	if d := f.det; d != nil {
 		if i := slices.IndexFunc(f.vis, func(is query.Issue) bool { return is.ID == d.id }); i >= 0 {
 			d.pos = i
@@ -247,9 +247,9 @@ func (m *app) list() *issueList {
 
 // refitLists filters both lists again after the issues, the scope or a filter changed.
 func (m *app) refitLists() {
-	all := m.dataIssues()
-	m.fnd.refit(all)
-	m.ovw.refit(all)
+	all, wide := m.dataIssues(), m.wideIssues()
+	m.fnd.refit(all, wide)
+	m.ovw.refit(all, wide)
 }
 
 // noneText is what an empty list says: nothing is open, or nothing in the scope or the time filter.

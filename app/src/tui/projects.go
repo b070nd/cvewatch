@@ -389,14 +389,9 @@ func securitySummary(issues []query.Issue) string {
 		return "no open security issues"
 	}
 	var parts []string
+	c := query.Count(issues)
 	for _, sev := range sevOrder {
-		n := 0
-		for _, is := range issues {
-			if is.Severity == sev || (sev == model.SevUnknown && is.Severity.Rank() == 0) {
-				n++
-			}
-		}
-		if n > 0 {
+		if n := c.BySev[sev.Rank()]; n > 0 {
 			parts = append(parts, fmt.Sprintf("%d %s", n, sevWord(sev)))
 		}
 	}

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/b070nd/cvewatch/app/src/audit"
 	"github.com/b070nd/cvewatch/app/src/catalog"
@@ -146,6 +147,26 @@ func (p ProjectPreview) Blocked() bool {
 func (s *Session) projectsDir() string { return filepath.Join(s.Cfg.Root, "config", "projects") }
 
 // mayRead checks that the actor may see one project.
+// Catalog is the technology catalog the session's configuration offers,
+// never nil.
+func (s *Session) Catalog() *catalog.Catalog {
+	if s.Cfg.Catalog != nil {
+		return s.Cfg.Catalog
+	}
+	return catalog.New(s.Cfg.Techs)
+}
+
+// Sinces is the since date of each project the actor may see that has one.
+func (s *Session) Sinces() map[string]time.Time {
+	out := map[string]time.Time{}
+	for _, p := range s.Cfg.Projects {
+		if !p.Since.IsZero() && s.mayRead(p.Name) == nil {
+			out[p.Name] = p.Since
+		}
+	}
+	return out
+}
+
 func (s *Session) mayRead(project string) error {
 	projects, _, open := s.Cfg.Allowed(baseActor(s.Actor))
 	if open || slices.Contains(projects, project) {
@@ -268,7 +289,7 @@ func (s *Session) declaredLockOps(f *projectfile.File, list []projectfile.Op) ([
 		return filepath.Clean(p)
 	}
 	for i, op := range out {
-		if op.Kind != "remove_lockfile" && op.Kind != "set_lockfile_dev" {
+		if op.Kind != projectfile.KindRemoveLockfile && op.Kind != projectfile.KindSetLockfileDev {
 			continue
 		}
 		var declared []string
@@ -390,7 +411,7 @@ func (s *Session) EditProject(c ProjectChange) (ProjectPreview, error) {
 	if !c.Save {
 		return out, nil
 	}
-	if slices.ContainsFunc(c.Ops, func(o projectfile.Op) bool { return o.Kind == "set_vendor" }) {
+	if slices.ContainsFunc(c.Ops, func(o projectfile.Op) bool { return o.Kind == projectfile.KindSetVendor }) {
 		// Moving a project to another vendor changes who may see it. The actor
 		// may write the project, so it still gets the preview with the refusal.
 		if err := s.mayWrite(""); err != nil {
@@ -438,7 +459,7 @@ func (s *Session) planEnvRenames(project string, list []projectfile.Op) ([]EnvMo
 	var moved []EnvMove
 	var warns []projectfile.Issue
 	for _, op := range list {
-		if op.Kind != "rename_env" {
+		if op.Kind != projectfile.KindRenameEnv {
 			continue
 		}
 		n, err := s.Ledger.EnvMove(project, op.Env, op.To)

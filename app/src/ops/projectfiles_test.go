@@ -73,7 +73,7 @@ func TestProblemsNoteAFileNamedDifferently(t *testing.T) {
 
 func TestEditProjectWritesTheFileThatDeclaresTheName(t *testing.T) {
 	eachResolution(t, func(t *testing.T, s *Session) {
-		p, err := s.EditProject(ProjectChange{Project: "shop", Ops: []projectfile.Op{{Kind: "set_since", Since: "2026-01-02"}}, Save: true})
+		p, err := s.EditProject(ProjectChange{Project: "shop", Ops: []projectfile.Op{{Kind: projectfile.KindSetSince, Since: "2026-01-02"}}, Save: true})
 		if err != nil || !p.Saved || p.Created || filepath.Base(p.Path) != "magento2-shop.yaml" {
 			t.Fatalf("%+v %v", p, err)
 		}

@@ -640,8 +640,8 @@ func TestSinceAndLockfileDevThroughEditProject(t *testing.T) {
 	s := editable(t, nil, "alice")
 	writeRoot(t, s, "config/projects/blog.yaml", "# blog\nname: blog   # mine\nlockfiles:\n  - {type: composer, path: composer.lock}   # php\n")
 	p, err := s.EditProject(ProjectChange{Project: "blog", Save: true, Ops: []projectfile.Op{
-		{Kind: "set_since", Since: "2026-03-04"},
-		{Kind: "set_lockfile_dev", Lockfile: model.Lockfile{Path: "composer.lock", Dev: true}},
+		{Kind: projectfile.KindSetSince, Since: "2026-03-04"},
+		{Kind: projectfile.KindSetLockfileDev, Lockfile: model.Lockfile{Path: "composer.lock", Dev: true}},
 	}})
 	if err != nil || !p.Saved {
 		t.Fatalf("%+v %v", p, err)
@@ -654,7 +654,7 @@ func TestSinceAndLockfileDevThroughEditProject(t *testing.T) {
 		t.Fatalf("file:\n%s", got)
 	}
 	// a future date saves with a warning, a malformed one is refused
-	p, err = s.EditProject(ProjectChange{Project: "blog", Save: true, Ops: []projectfile.Op{{Kind: "set_since", Since: "2999-01-01"}}})
+	p, err = s.EditProject(ProjectChange{Project: "blog", Save: true, Ops: []projectfile.Op{{Kind: projectfile.KindSetSince, Since: "2999-01-01"}}})
 	warned := false
 	for _, i := range p.Issues {
 		warned = warned || i.Level == "warning" && i.Field == "since"
@@ -662,11 +662,24 @@ func TestSinceAndLockfileDevThroughEditProject(t *testing.T) {
 	if err != nil || !warned {
 		t.Fatalf("%+v %v", p.Issues, err)
 	}
-	if _, err := s.EditProject(ProjectChange{Project: "blog", Save: true, Ops: []projectfile.Op{{Kind: "set_since", Since: "soon"}}}); err == nil {
+	if _, err := s.EditProject(ProjectChange{Project: "blog", Save: true, Ops: []projectfile.Op{{Kind: projectfile.KindSetSince, Since: "soon"}}}); err == nil {
 		t.Fatal("a malformed date was saved")
 	}
-	p, err = s.EditProject(ProjectChange{Project: "blog", Save: true, Ops: []projectfile.Op{{Kind: "set_since"}}})
+	p, err = s.EditProject(ProjectChange{Project: "blog", Save: true, Ops: []projectfile.Op{{Kind: projectfile.KindSetSince}}})
 	if err != nil || p.Result.Since != "" || strings.Contains(readRoot(t, s, "config/projects/blog.yaml"), "since") {
 		t.Fatalf("%+v %v", p, err)
+	}
+}
+
+func TestCommitRefusesAFindingMadeIllegal(t *testing.T) {
+	s, st := lcSession(t, "root", true)
+	f := findingsOf(s.Ledger, "shop")[0]
+	s.Ledger.Mutate(f.Key(), func(m *model.Finding) { m.Auto = true }) // open and closed by cvewatch at once
+	err := s.Commit()
+	if !errors.Is(err, model.ErrIllegalFinding) {
+		t.Fatalf("err = %v", err)
+	}
+	if got := findingsOf(stored(t, st), "shop")[0]; got.Auto {
+		t.Fatal("the illegal finding was stored")
 	}
 }

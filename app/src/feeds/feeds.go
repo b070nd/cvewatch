@@ -101,13 +101,10 @@ func FetchRange(ctx context.Context, g Getter, src model.Source, st model.FeedSt
 	if !isFetcher && !isParser {
 		return out, fmt.Errorf("feeds: source %q: unknown type %q", src.ID, src.Type)
 	}
-	since := st.LastRun
-	if since.IsZero() {
-		since = now.Add(-lookback)
-	}
+	since, backfill := st.Window(now, lookback)
 	prev := st.Validators
-	if !st.Backfill.IsZero() && st.Backfill.Before(since) {
-		since, prev, out.Backfilled = st.Backfill, model.Validators{}, true // a conditional GET would answer "unchanged"
+	if backfill {
+		prev, out.Backfilled = model.Validators{}, true // a conditional GET would answer "unchanged"
 	}
 	out.From = since
 	var (

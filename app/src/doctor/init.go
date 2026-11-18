@@ -99,7 +99,7 @@ func Init(root string, o InitOptions) (InitResult, error) {
 			maybe = append(maybe, t)
 		}
 	}
-	if !slices.ContainsFunc(edits, func(o projectfile.Op) bool { return o.Kind != "set_envs" }) { // the environment alone is not a finding
+	if !slices.ContainsFunc(edits, func(o projectfile.Op) bool { return o.Kind != projectfile.KindSetEnvs }) { // the environment alone is not a finding
 		res.Notes = append(res.Notes, fmt.Sprintf(
 			"Found no lockfile or technology in %s: copy config/projects/example.yaml.example to config/projects/%s.yaml and edit it.", repo, name), next)
 		return res, nil

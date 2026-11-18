@@ -2,11 +2,12 @@ package tui
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/b070nd/cvewatch/app/src/model"
-	"github.com/b070nd/cvewatch/app/src/setup"
+	"github.com/b070nd/cvewatch/app/src/projectfile"
 )
 
 // openEnvList opens the environments of the second project (shop) in the field editor.
@@ -238,21 +239,10 @@ func TestNewProjectFormStartsWithLocalAndTakesFreeNames(t *testing.T) {
 	}
 }
 
-func TestEnvOpKindsAreDeclaredByEditorAndSetup(t *testing.T) {
-	for _, k := range []string{"add_env", "remove_env", "rename_env"} {
-		for name, list := range map[string][]string{"tui.OpKinds": OpKinds, "setup.OpKinds": setup.OpKinds} {
-			found := false
-			for _, o := range list {
-				found = found || o == k
-			}
-			if !found {
-				t.Errorf("%s lacks %s", name, k)
-			}
-		}
-		for _, n := range setup.NotYet {
-			if n == k {
-				t.Errorf("%s is still listed as not yet handled", k)
-			}
+func TestEnvOpKindsAreGuided(t *testing.T) {
+	for _, k := range []projectfile.Kind{projectfile.KindAddEnv, projectfile.KindRemoveEnv, projectfile.KindRenameEnv} {
+		if !slices.Contains(projectfile.GuidedKinds(), k) {
+			t.Errorf("%s is built by the editor but not marked guided in the op table", k)
 		}
 	}
 }

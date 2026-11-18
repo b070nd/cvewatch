@@ -22,7 +22,7 @@ environments:   # what runs where
 func TestMigrateEnvsIsPreviewedThenSaved(t *testing.T) {
 	s := editable(t, nil, "alice")
 	writeRoot(t, s, "config/projects/shop.yaml", legacyShop)
-	change := ProjectChange{Project: "shop", Ops: []projectfile.Op{{Kind: "migrate_envs"}}}
+	change := ProjectChange{Project: "shop", Ops: []projectfile.Op{{Kind: projectfile.KindMigrateEnvs}}}
 
 	p, err := s.EditProject(change)
 	if err != nil {
@@ -54,7 +54,7 @@ func TestMigrateEnvsIsPreviewedThenSaved(t *testing.T) {
 			hint = &h.Hint
 		}
 	}
-	if hint == nil || len(hint.Fix) != 1 || hint.Fix[0].Kind != "migrate_envs" {
+	if hint == nil || len(hint.Fix) != 1 || hint.Fix[0].Kind != projectfile.KindMigrateEnvs {
 		t.Fatalf("hints = %+v", hints)
 	}
 
@@ -70,7 +70,7 @@ func TestMigrateEnvsIsPreviewedThenSaved(t *testing.T) {
 func TestEditingADifferenceOfAnOldFileWritesTheNewSpelling(t *testing.T) {
 	s := editable(t, nil, "alice")
 	writeRoot(t, s, "config/projects/shop.yaml", legacyShop)
-	p, err := s.EditProject(ProjectChange{Project: "shop", Ops: []projectfile.Op{{Kind: "exclude_env_tech", Env: "local", Tech: "php"}}, Save: true})
+	p, err := s.EditProject(ProjectChange{Project: "shop", Ops: []projectfile.Op{{Kind: projectfile.KindExcludeEnvTech, Env: "local", Tech: "php"}}, Save: true})
 	if err != nil || !p.Saved {
 		t.Fatalf("%+v %v", p, err)
 	}

@@ -9,6 +9,7 @@ package ledger
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -47,7 +48,7 @@ type State struct {
 //	1  per-channel delivery records (Finding.Alerted) replace Finding.AlertedAt
 //	2  health records: cycles, per-source and per-channel outcomes, heartbeat
 //	3  Finding.Retired says why a match was given up; matches carry their basis
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 // maxCycles is how many cycle records are kept.
 const maxCycles = 50
@@ -58,6 +59,9 @@ type Ledger struct {
 	// ofVuln lists the findings of each vulnerability. It is built on first
 	// use and dropped whenever a finding is added, moved or removed.
 	ofVuln map[string][]*model.Finding
+	// inherited are the findings that were already illegal when the state
+	// was loaded; Changed refuses only new ones, so old data never blocks a save.
+	inherited map[string]bool
 }
 
 // New wraps loaded state, filling in empty maps and building the id index.
@@ -84,11 +88,47 @@ func New(s State) *Ledger {
 		s.Channels = map[string]model.ChannelHealth{}
 	}
 	migrate(&s)
-	l := &Ledger{d: s, byKey: map[string]string{}}
+	l := &Ledger{d: s, byKey: map[string]string{}, inherited: map[string]bool{}}
 	for _, v := range s.Vulns {
 		l.index(v)
 	}
+	for _, err := range l.Check() {
+		var key illegalKey
+		if errors.As(err, &key) {
+			l.inherited[string(key)] = true
+		}
+	}
 	return l
+}
+
+// illegalKey carries the key of the finding a Check error is about.
+type illegalKey string
+
+func (k illegalKey) Error() string { return string(k) }
+
+// Check lists every stored finding whose fields disagree (model.Finding.Check),
+// in key order.
+func (l *Ledger) Check() []error {
+	var out []error
+	for _, key := range slices.Sorted(maps.Keys(l.d.Findings)) {
+		if err := l.d.Findings[key].Check(); err != nil {
+			out = append(out, errors.Join(err, illegalKey(key)))
+		}
+	}
+	return out
+}
+
+// Changed is the gate before a save: it refuses a finding that became
+// illegal since the state was loaded. Findings that were already illegal are
+// left to doctor, so a save never fails on data it did not touch.
+func (l *Ledger) Changed() error {
+	for _, err := range l.Check() {
+		var key illegalKey
+		if errors.As(err, &key) && !l.inherited[string(key)] {
+			return err
+		}
+	}
+	return nil
 }
 
 // State returns what should be persisted.
@@ -330,11 +370,7 @@ func (l *Ledger) Update(vulnID, project string, env model.Env, u Update, now tim
 		n++
 		f.Updated = now
 		if u.Status != nil {
-			f.Status, f.Auto = *u.Status, false
-			if u.Note != nil {
-				f.Note = *u.Note
-			}
-			f.History = append(f.History, model.Disposition{Time: now, Actor: u.Actor, Action: "status", Status: *u.Status, Note: f.Note})
+			f.Resolve(u.Actor, *u.Status, u.Note, now)
 		} else if u.Note != nil {
 			f.Note = *u.Note
 		}
@@ -472,6 +508,15 @@ func migrate(s *State) {
 			if f.Retired == "" && len(f.Installed) == 0 && f.Applies == model.AppNotAffected &&
 				len(f.Reasons) > 0 && strings.HasPrefix(f.Reasons[0], "no longer installed") {
 				f.Retired = model.RetiredUninstalled
+			}
+		}
+	}
+	if s.SchemaVersion < 4 {
+		for _, f := range s.Findings {
+			// Why cvewatch closed a finding used to be told only by its status
+			// and note; it is stored now.
+			if f.Auto && f.AutoReason == "" {
+				f.AutoReason = f.ClosedBy()
 			}
 		}
 	}
