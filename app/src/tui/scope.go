@@ -148,6 +148,15 @@ func (m *app) dataIssues() []query.Issue {
 	return m.narrowed
 }
 
+// wideIssues are the issues of the context in any status, which a search that
+// names a status or an applicability is answered from.
+func (m *app) wideIssues() []query.Issue {
+	if m.data == nil {
+		return nil
+	}
+	return m.wide
+}
+
 // violations are the policy violations in the context.
 func (m *app) violations() []priority.Violation {
 	if m.data == nil {
@@ -169,7 +178,7 @@ func (m *app) violations() []priority.Violation {
 // rescope reads the issues of the context out of the snapshot again and drops
 // what was drawn from the old ones.
 func (m *app) rescope() {
-	m.narrowed = nil
+	m.narrowed, m.wide = nil, nil
 	m.ovw.lead = nil
 	m.ovw.grouped, m.fnd.grouped = m.tenant.multi(), m.tenant.multi()
 	m.ovw.per = 0
@@ -177,11 +186,12 @@ func (m *app) rescope() {
 		m.ovw.per = overviewTop
 	}
 	if m.data != nil {
-		var all []query.Issue
+		var all, wide []query.Issue
 		for _, name := range m.tenantNames() {
 			all = append(all, m.data.ByProject[name]...)
+			wide = append(wide, m.data.Wide[name]...)
 		}
-		m.narrowed = m.published.Keep(all, m.timeNow())
+		m.narrowed, m.wide = m.published.Keep(all, m.timeNow()), m.published.Keep(wide, m.timeNow())
 		m.ovw.lead = m.data.Status.Problems
 	}
 	m.cache[scrOverview] = textCache{}

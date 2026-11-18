@@ -111,6 +111,7 @@ type app struct {
 	tenantAuto bool         // the context was chosen because there is one project only
 	reveal     bool         // scroll the page to the row that was just selected
 	narrowed   scopedIssues // the issues of the context that the time filter lets through
+	wide       scopedIssues // the same in any status (snapshot.Wide)
 
 	published query.TimeRange // the time filter on the publication date; the zero value is any time
 }

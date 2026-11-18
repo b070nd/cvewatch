@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/b070nd/cvewatch/app/src/model"
+	"github.com/b070nd/cvewatch/app/src/ops"
 	"github.com/b070nd/cvewatch/app/src/query"
 )
 
@@ -113,4 +115,30 @@ func TestFindingsFilterHistoryAndBadSyntax(t *testing.T) {
 	d.press("/")
 	d.typ("colour:red")
 	d.want("read as plain words", "unknown field")
+}
+
+func TestFindingsFilterReachesClosedFindingsLikeASearch(t *testing.T) {
+	b := newFake(t, nil)
+	if err := b.Write(func(s *ops.Session) error {
+		_, err := s.Resolve(ops.Change{ID: "CVE-2026-4", Project: "shop", Status: model.StatusFixed})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d := start(t, b, Options{})
+	d.screen("findings")
+	d.want("2 of 2 open issues")
+	d.wantNot("CVE-2026-4")
+	d.press("/")
+	d.typ("status:fixed")
+	d.want("CVE-2026-4", "Minor thing")
+	d.wantNot("CVE-2026-3", "CVE-2026-1")
+	d.press("esc")
+	d.wantNot("CVE-2026-4")
+
+	var cli []query.Issue
+	read(t, b, func(s *ops.Session) { cli, _ = s.Search("status:fixed", query.Filter{}, false) })
+	if len(cli) != 1 || cli[0].ID != "CVE-2026-4" {
+		t.Fatalf("the CLI and MCP search find the same: %+v", cli)
+	}
 }

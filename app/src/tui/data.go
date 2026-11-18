@@ -27,6 +27,7 @@ type snapshot struct {
 	At         time.Time
 	Root       string
 	ByProject  map[string][]query.Issue // the open issues of each project, most urgent first, read project by project so that no row mixes projects
+	Wide       map[string][]query.Issue // the same in any status, for a search that names a status or an applicability (ops.Workspace.Wide)
 	Status     status.Report
 	Violations []priority.Violation
 	Projects   []projectRow
@@ -68,7 +69,7 @@ func loadSnapshotMemo(s *ops.Session, memo *ops.StaleCache) (*snapshot, error) {
 	if err != nil {
 		return nil, err // access denied shows here
 	}
-	sn := &snapshot{At: w.At, Root: w.Root, ByProject: w.Issues, Status: w.Status, Violations: w.Violations, Horizon: w.Horizon}
+	sn := &snapshot{At: w.At, Root: w.Root, ByProject: w.Issues, Wide: w.Wide, Status: w.Status, Violations: w.Violations, Horizon: w.Horizon}
 	for _, warning := range w.Warnings {
 		sn.Warnings = append(sn.Warnings, oneLine(warning))
 	}

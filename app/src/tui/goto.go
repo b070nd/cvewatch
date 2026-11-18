@@ -82,7 +82,7 @@ func (m *app) goBack() tea.Cmd {
 	m.ret = nil
 	if r.filter != "" && m.scr == scrFindings && m.fnd.text == r.filter {
 		m.fnd.text = ""
-		m.fnd.refit(m.dataIssues())
+		m.fnd.refit(m.dataIssues(), m.wideIssues())
 	}
 	cmd := m.goTo(r.to)
 	m.ret = nil
@@ -150,7 +150,7 @@ func (m *app) goTo(t target) tea.Cmd {
 		i := m.visibleIssue(t.project, t.issue)
 		if i < 0 && !t.open { // the cursor has to land somewhere: show everything
 			m.fnd.text, m.fnd.min = "", model.SevUnknown
-			m.fnd.refit(m.dataIssues())
+			m.fnd.refit(m.dataIssues(), m.wideIssues())
 			i = m.visibleIssue(t.project, t.issue)
 		}
 		if i < 0 && !t.open && !m.published.Any() { // it may be outside the time filter
@@ -170,7 +170,7 @@ func (m *app) goTo(t target) tea.Cmd {
 		m.scr = scrFindings
 		m.fnd.filtering, m.fnd.det = false, nil
 		m.fnd.text, m.fnd.min = t.filter, model.SevUnknown
-		m.fnd.refit(m.dataIssues())
+		m.fnd.refit(m.dataIssues(), m.wideIssues())
 		m.fnd.vp.to(0)
 	case tgProject:
 		i := -1

@@ -21,6 +21,7 @@ type clause []term
 // same row.
 type term struct {
 	exclude bool
+	field   string // the canonical field of a field term, empty for a plain term
 	plain   string // lower-case text of a plain term, empty for a field term
 	test    func(Issue, Target) bool
 }
@@ -168,7 +169,24 @@ func compile(t token, now time.Time) (term, error) {
 		return term{exclude: t.exclude, plain: strings.ToLower(t.value), test: containing(strings.ToLower(t.value))}, nil
 	}
 	test, err := fieldTest(t.field, t.value, now)
-	return term{exclude: t.exclude, test: test}, err
+	field := t.field
+	if canonical, ok := fieldAliases[field]; ok {
+		field = canonical
+	}
+	return term{exclude: t.exclude, field: field, test: test}, err
+}
+
+// Names reports whether a term of the query, included or excluded, is about
+// one of the fields.
+func (s Search) Names(fields ...string) bool {
+	for _, c := range s.clauses {
+		for _, t := range c {
+			if t.field != "" && slices.Contains(fields, t.field) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func containing(text string) func(Issue, Target) bool {
