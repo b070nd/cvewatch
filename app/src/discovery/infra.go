@@ -23,6 +23,13 @@ func isComposeFile(low string) bool {
 		(strings.HasPrefix(low, "docker-compose") || strings.HasPrefix(low, "compose"))
 }
 
+// IsContainerFile says whether a file name is a Dockerfile, a Containerfile or
+// a compose file: it names images and runtimes, not packages.
+func IsContainerFile(name string) bool {
+	low := strings.ToLower(filepath.Base(name))
+	return isDockerfile(low) || isComposeFile(low)
+}
+
 // SupportedFile says whether ScanFile can read a file of this name: a
 // Dockerfile or Containerfile, a compose file or Kubernetes manifest (any
 // yaml), Terraform, or a lockfile.

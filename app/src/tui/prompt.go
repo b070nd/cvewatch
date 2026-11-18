@@ -418,6 +418,6 @@ func (m *app) startLockPath(project string) {
 		title = "Add a lockfile to " + project
 	}
 	m.prm = &prompt{kind: pkLock, title: oneLine(title), project: project,
-		hint: "a package-lock.json, composer.lock, go.sum or another lockfile; the type is taken from its name",
+		hint: "a package-lock.json, composer.lock, go.sum or another lockfile, the type is taken from its name; a Dockerfile or compose file is merged like a scan",
 		box:  newBox(boxLockfile, "Lockfile")}
 }

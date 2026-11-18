@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The TUI Health screen starts and stops the daemon with `d`. The daemon now takes a lock in the data folder, so a second one refuses to start, and `daemon.pid` says which process holds it.
 - The Since field of a project works like the time range of a dashboard: a list with Past 24 hours, week, month, 3 months, 6 months and year, Any time, or Custom. Custom, `cvewatch project NAME -since` and the MCP `set_since` take a day, a time (`2026-01-31T08:30:00Z`) or a span back from now (`24h`, `7d`, `2w`, `3m`, `1y`).
 - `s` in the fields of a project adds inputs: a folder, Dockerfile, compose file, manifest or lockfile is scanned and merged into the project without duplicates, with the change shown first. A declared technology without a version learns it from the scan, and a version that differs from the declared one is offered for the environment only or everywhere. A file named on purpose is read even when `.gitignore` lists it.
+- `+` for a lockfile in the fields of a project also takes a Dockerfile, Containerfile or compose file: it is merged like a scan, with the change shown first.
 - Discovery reads DDEV (`.ddev/config.yaml`): PHP, Node.js, database (MySQL, MariaDB, PostgreSQL) and web server. An image with a runtime in its tag (`1.1.7-php-8.2.35`) gives that runtime and version.
 - A technology named like a version (`v8-0-31`) is a problem with a fix that makes it the version of a technology that has none.
 

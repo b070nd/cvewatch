@@ -87,3 +87,23 @@ func TestScanInputsAsksWhereADifferentVersionApplies(t *testing.T) {
 		t.Errorf("dev gets 8.3.1 and prod keeps its own:\n%s", got)
 	}
 }
+
+func TestAddingALockfileAcceptsADockerfile(t *testing.T) {
+	b, root := diskFake(t, map[string]string{"repos/app/Dockerfile": "FROM redis:7.2.4\n"})
+	d := start(t, b, Options{})
+	d.screen("projects")
+	d.press("down", "c")
+	d.toField(2)
+	d.press("enter")
+	d.press("+")
+	d.want("Add a lockfile to shop")
+	d.typ(filepath.Join(root, "repos", "app", "Dockerfile"))
+	d.press("enter")
+	d.wantNot("Type of")
+	d.want("redis", "7.2.4")
+	d.press("y")
+	d.want("ok: saved shop")
+	if got := fileAt(t, root, "config/projects/shop.yaml"); !strings.Contains(got, "redis") {
+		t.Errorf("the Dockerfile's stack is in the project:\n%s", got)
+	}
+}

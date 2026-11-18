@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/b070nd/cvewatch/app/src/discovery"
 	"github.com/b070nd/cvewatch/app/src/matrix"
 	"github.com/b070nd/cvewatch/app/src/model"
 	"github.com/b070nd/cvewatch/app/src/ops"
@@ -1055,6 +1056,12 @@ func (m *app) lockPicked(p *prompt) tea.Cmd {
 		return refuse("that is a folder, not a lockfile: tab opens it, then pick a lockfile")
 	case !fi.Mode().IsRegular():
 		return refuse("that is not a file")
+	}
+	if discovery.IsContainerFile(abs) {
+		if p.project == "" {
+			return refuse("a Dockerfile or compose file names images, not packages: scan its folder with Ctrl+D to take its technologies")
+		}
+		return m.previewMerge(p, abs)
 	}
 	m.prm = nil
 	if typ, ok := matrix.DetectType(filepath.Base(abs)); ok {
