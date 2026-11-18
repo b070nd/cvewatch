@@ -22,7 +22,7 @@ import (
 // files and settings. Only edit_project, edit_settings and manage_project
 // write, so only they need allow-write.
 func addSetupTools(srv *mcp.Server, s *server, allowWrite bool) {
-	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
+	ro := readHints()
 	mcp.AddTool(srv, &mcp.Tool{Name: "search_catalog", Annotations: ro,
 		Description: "Search the technology catalog (open and closed source: runtimes, frameworks, databases, servers, platforms and so on) by name, vendor or alias, optionally within one category. Use the returned name in a project's techs."}, s.searchCatalog)
 	mcp.AddTool(srv, &mcp.Tool{Name: "discover_stack", Annotations: ro,
@@ -41,14 +41,14 @@ func addSetupTools(srv *mcp.Server, s *server, allowWrite bool) {
 		Description: "Show what changes to the settings would do (diff and problems) without writing anything. Each edit is set, unset or append on a path from the schema, for example set http.timeout 45s, unset http.retries or append policy.rules {name, ...}. All edits apply or none do."}, s.previewSettings)
 	addTechTools(srv, s, allowWrite)
 	if allowWrite {
-		no := false
 		mcp.AddTool(srv, &mcp.Tool{Name: "edit_project", InputSchema: projectInSchema(),
-			Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no},
+			Annotations: writeHints(true),
 			Description: "Apply changes to a project file (created if new): technologies, versions, environments, lockfiles, the since date, the vendor, the matching profile, how often it is refreshed. Comments in the file are kept, the old file is backed up and the change is audited. Run preview_project_change first and show the user the diff. Only declare what the user confirmed. The kinds of change:\n" + projectfile.KindHelp()}, s.editProject)
 		mcp.AddTool(srv, &mcp.Tool{Name: "edit_settings",
-			Annotations: &mcp.ToolAnnotations{IdempotentHint: true, DestructiveHint: &no},
+			Annotations: writeHints(true),
 			Description: "Apply changes to the settings (config.yaml, techs.yaml, sources/*.yaml). Comments are kept, the old file is backed up, the change is audited, and a change that would not validate is refused. Run preview_settings_change first and show the user the diff. The daemon uses the new settings from its next cycle."}, s.editSettings)
 		mcp.AddTool(srv, &mcp.Tool{Name: "manage_project",
+			Annotations: hints(false, true, false, false),
 			Description: "Rename, duplicate, delete, disable or enable a whole project. Without confirm it only returns the consequences: findings affected, access rules rewritten, files moved. Show them to the user and call again with confirm true only after they agreed. Rename moves the findings to the new name, delete moves the file to the backups (close_findings also marks its open findings ignored), disable renames the file to .disabled and enable reverses that."}, s.manageProject)
 	}
 }
