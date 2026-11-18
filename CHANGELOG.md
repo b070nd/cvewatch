@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-11-18
+
+### Upgrading from 2.1
+- The first cycle after upgrading judges the stored advisories again once, because the `mysql`, `mariadb` and `mongodb` technologies now also match the vendor product names. Projects with those technologies can get findings that were missed before.
+- The daemon takes `daemon.lock` in the data folder. A second daemon on the same data folder now refuses to start instead of running next to the first.
+
 ### Added
 - The TUI Health screen starts and stops the daemon with `d`. The daemon now takes a lock in the data folder, so a second one refuses to start, and `daemon.pid` says which process holds it.
 - The Since field of a project works like the time range of a dashboard: a list with Past 24 hours, week, month, 3 months, 6 months and year, Any time, or Custom. Custom, `cvewatch project NAME -since` and the MCP `set_since` take a day, a time (`2026-01-31T08:30:00Z`) or a span back from now (`24h`, `7d`, `2w`, `3m`, `1y`).
