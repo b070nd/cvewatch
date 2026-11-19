@@ -11,6 +11,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `p` in the TUI Findings list pins an issue to the top of its project's list, or unpins it. Pinned issues come before the recent ones, in the order they were pinned. A pin is shared with everyone who sees the project, recorded in the finding's history and in the audit log, and shown as `[PIN]` and "pinned by NAME". A sort by a column ignores pins and the recent window.
 - `cvewatch list` puts pinned, recent and known exploited issues in sections of their own (PINNED, RECENT, KNOWN EXPLOITED) before the severity sections, so a severity heading no longer appears twice.
 
+### Changed
+- Every MCP tool description is one plain sentence string, so directories that read the source print `search_findings`, `preview_project_change` and `edit_project` in full. The list of project change kinds is in the `kind` field of their input schema only.
+
 ## [2.3.0] - 2026-11-18
 
 ### Upgrading from 2.2

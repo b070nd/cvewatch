@@ -26,6 +26,7 @@ func sample() []query.Issue {
 		KEV:      &query.KEVInfo{DateAdded: now.Add(-24 * time.Hour), DueDate: now.Add(72 * time.Hour), Ransomware: true},
 		EPSS:     &model.EPSS{Score: 0.97312, Percentile: 0.99, Date: now.Add(-24 * time.Hour)},
 		Priority: []string{"known exploited", "open in prod"}, ProdOpen: true, Report: "reports/CVE-2026-0001.md",
+		Pinned: now.Add(-2 * time.Hour), PinnedBy: "ann", Recent: true,
 		Targets: []query.Target{
 			{Vendor: "acme", Project: "shop", Env: model.EnvStaging, Status: model.StatusOpen, Applies: model.AppAffected, Matched: []string{"php 8.2.1", "ext-x"},
 				Reasons: []string{"version in range", "tech match"}, Basis: []string{"cpe", "package"}, Retired: "unmatched", Owner: "ann", Due: now.Add(-24 * time.Hour), Overdue: true, Ticket: "OPS-1",
