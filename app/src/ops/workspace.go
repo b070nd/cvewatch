@@ -28,6 +28,7 @@ type Workspace struct {
 	Violations []priority.Violation
 	Projects   []WorkspaceProject // by vendor when any project has one, else in configuration order
 	Warnings   []string           // parts that could not be read; the rest is still there
+	Templates  []string           // project templates a new project can start from (ProjectTemplates)
 }
 
 // WorkspaceProject is one project of a Workspace: loaded, broken or switched off.
@@ -61,6 +62,9 @@ func (s *Session) Workspace() (Workspace, error) {
 	}
 	if w.Violations, err = s.Violations(); err != nil {
 		warn("policy", err)
+	}
+	if w.Templates, err = s.ProjectTemplates(); err != nil {
+		warn("project templates", err)
 	}
 	files, err := s.ProjectNames()
 	if err != nil {

@@ -542,7 +542,8 @@ func TestPathRoundTrip(t *testing.T) {
 
 func TestShippedTemplatesEditCleanly(t *testing.T) {
 	root := t.TempDir()
-	put(t, root, "config/config.yaml", string(defaults.Settings()))
+	put(t, root, "config/config.yaml.dist", string(DistSettings()))
+	put(t, root, "config/config.yaml", string(defaults.UserSettings()))
 	put(t, root, "config/techs.yaml", string(defaults.UserTechs()))
 	put(t, root, "sources/custom.yaml", string(defaults.UserSources()))
 	put(t, root, "config/projects/shop.yaml", "name: shop\n")
@@ -566,7 +567,7 @@ func TestShippedTemplatesEditCleanly(t *testing.T) {
 			}
 		}
 	}
-	if got := text(t, c, IDTechs); !strings.Contains(got, "# Your own technologies.") || !strings.Contains(got, "  - name: acme\n    aliases: [acme gateway]") {
+	if got := text(t, c, IDTechs); !strings.Contains(got, "# Technologies added") || !strings.Contains(got, "  - name: acme\n    aliases: [acme gateway]") {
 		t.Fatalf("%s", got)
 	}
 }
@@ -665,10 +666,10 @@ func TestUpdateSettingsAreEditableAndChecked(t *testing.T) {
 }
 
 func TestShippedSettingsFileDocumentsTheUpdateKeys(t *testing.T) {
-	text := string(defaults.Settings())
-	for _, want := range []string{"# update:", "#   auto: true", "#   auto: true       # without a running daemon", "update: {every: 1h, auto: false}"} {
+	text := string(DistSettings())
+	for _, want := range []string{"# update:", "#   auto: true", "#   # Scheduled updates:", "# tui:", "#   auto: true"} {
 		if !strings.Contains(text, want) {
-			t.Errorf("config.yaml template lacks %q", want)
+			t.Errorf("config.yaml.dist lacks %q", want)
 		}
 	}
 	if example := string(defaults.ProjectExample()); !strings.Contains(example, "# update:") || !strings.Contains(example, "every: 1h") {
@@ -689,5 +690,95 @@ func TestSourceAuthEnvTakesAVariableNameNeverAToken(t *testing.T) {
 	}
 	if _, err := s.With(Edit{Op: OpSet, Path: "sources.[id=vendor].auth_env", Value: "ghp_abc-123 def"}); err == nil || strings.Contains(err.Error(), "ghp_abc") {
 		t.Fatalf("a token must be refused without echoing it: %v", err)
+	}
+}
+
+func TestDistFilesAreReadOnlyAndEditsCopyWhatTheyReplace(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, "config/projects/shop.yaml", "name: shop\n")
+	put(t, root, "config/config.yaml.dist", "interval: 2h\npolicy:\n  rules:\n    - {name: kev-prod, kev: true, fix_within: 72h}\naccess:\n  ann: {projects: ['*'], write: true}\n  bob: {projects: [shop]}\n")
+	put(t, root, "sources/team.yaml.dist", "sources:\n  - {id: team-feed, type: rss, url: 'https://team.test/feed'}\n")
+	s := mustRead(t, root)
+	if d := s.Doc(IDSettingsDist); d == nil || d.Layer != LayerDist || !d.ReadOnly {
+		t.Fatalf("config.yaml.dist is a read-only document: %+v", d)
+	}
+	if s.Doc("sources/team.dist") == nil {
+		t.Fatal("a shared feed file is a document")
+	}
+	if _, err := s.With(Edit{Doc: IDSettingsDist, Op: OpSet, Path: "interval", Value: "1h"}); err == nil || !strings.Contains(err.Error(), "config.yaml.dist holds shared defaults") {
+		t.Fatalf("editing the shared file is refused: %v", err)
+	}
+
+	c := mustWith(t, s, Edit{Op: OpSet, Path: "interval", Value: "1h"})
+	if got := text(t, c, IDSettings); got != "interval: 1h\n" {
+		t.Fatalf("a plain value is only overridden:\n%s", got)
+	}
+	c = mustWith(t, s, Edit{Op: OpAppend, Path: "policy.rules", Value: map[string]any{"name": "owner", "owner_within": "24h"}})
+	if got := text(t, c, IDSettings); !strings.Contains(got, "kev-prod") || !strings.Contains(got, "owner") {
+		t.Fatalf("appending to a shared list copies it first:\n%s", got)
+	}
+	c = mustWith(t, s, Edit{Op: OpSet, Path: "access.bob.write", Value: true})
+	if got := text(t, c, IDSettings); !strings.Contains(got, "shop") || strings.Contains(got, "ann") {
+		t.Fatalf("changing one actor copies that actor's rule only:\n%s", got)
+	}
+	if _, err := s.With(Edit{Op: OpUnset, Path: "interval"}); err == nil || !strings.Contains(err.Error(), "config.yaml.dist") {
+		t.Fatalf("removing what only the shared file sets is refused: %v", err)
+	}
+	c = mustWith(t, s, Edit{Op: OpSet, Path: "sources.[id=team-feed].url", Value: "https://team.test/other"})
+	if got := text(t, c, "sources/custom"); !strings.Contains(got, "team-feed") || !strings.Contains(got, "https://team.test/other") {
+		t.Fatalf("a shared feed is overridden in the user's feed file:\n%s", got)
+	}
+	if rep := c.Validate(); rep.Blocked() {
+		t.Fatalf("the layered result loads: %+v", rep.Issues)
+	}
+}
+
+func TestEveryBlockOfTheDistFileLoadsWhenUncommented(t *testing.T) {
+	text := string(DistSettings())
+	var keys []string
+	for _, l := range strings.Split(text, "\n") {
+		if k, _, ok := strings.Cut(strings.TrimPrefix(l, "# "), ":"); ok && strings.HasPrefix(l, "# ") && !strings.HasPrefix(l, "#  ") && k == strings.ToLower(k) && !strings.Contains(k, " ") {
+			keys = append(keys, k)
+		}
+	}
+	if len(keys) < 15 {
+		t.Fatalf("top-level keys: %v", keys)
+	}
+	var all strings.Builder
+	for _, key := range keys {
+		var block []string
+		on := false
+		for _, l := range strings.Split(text, "\n") {
+			switch {
+			case strings.HasPrefix(l, "# "+key+":"):
+				on = true
+			case !strings.HasPrefix(l, "#"):
+				on = false
+			}
+			if on {
+				block = append(block, strings.TrimPrefix(l, "# "))
+			}
+		}
+		all.WriteString(strings.Join(block, "\n") + "\n")
+	}
+	root := t.TempDir()
+	put(t, root, "config/config.yaml", all.String())
+	put(t, root, "config/projects/shop.yaml", "name: shop\n")
+	b, err := config.Load(root)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, all.String())
+	}
+	if b.Interval != config.Defaults().Interval || b.HTTP.Timeout != config.Defaults().HTTP.Timeout {
+		t.Fatalf("the values written are the defaults: %v %v", b.Interval, b.HTTP.Timeout)
+	}
+}
+
+func TestTheRepositoryDistFileIsTheGeneratedOne(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "config", "config.yaml.dist"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != string(DistSettings()) {
+		t.Fatal("app/config/config.yaml.dist is not what cvewatch generates: run `cvewatch -root app init -force` and keep only config/config.yaml.dist")
 	}
 }

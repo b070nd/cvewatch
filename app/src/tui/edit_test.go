@@ -654,3 +654,27 @@ func TestSinceRangePicksASpanBackFromNow(t *testing.T) {
 		t.Fatalf("the span is saved as the day it means:\n%s", got)
 	}
 }
+
+func TestPlusOffersTheProjectTemplates(t *testing.T) {
+	b, root := diskFake(t, map[string]string{"config/projects/webshop.yaml.dist": "name: webshop\nenvs: [local, prod]\ntechs:\n  - {name: php, version: \"8.2\"}\n"})
+	d := start(t, b, Options{})
+	d.screen("projects")
+	d.press("+")
+	d.want("From the template webshop", "config/projects/webshop.yaml.dist")
+	d.press("down", "down", "down", "enter")
+	d.want("New project from the template webshop", "> Name")
+	d.typ("blog")
+	d.press("enter")
+	d.want("New project: blog", "create project blog from webshop", "Save this change?", "name: blog", "envs: [local, prod]")
+	if d.exists(root, "config/projects/blog.yaml") {
+		t.Fatal("not before the user says yes")
+	}
+	d.press("y")
+	d.want("blog")
+	if !d.exists(root, "config/projects/blog.yaml") {
+		t.Fatal("saved from the template")
+	}
+	if d.exists(root, "config/projects/webshop.yaml") {
+		t.Fatal("the template stays a template")
+	}
+}

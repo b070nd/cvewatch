@@ -25,6 +25,7 @@ type setVal struct {
 	value  string
 	items  []string // for a list of plain values
 	secret bool
+	shared bool // from a .dist file, and not overridden by the user's file
 }
 
 // setIssue is a problem with the position-based path of its field replaced by
@@ -90,6 +91,27 @@ func newSetModel(v ops.SettingsView) *setModel {
 			}
 		}
 	}
+	// values of the shared .dist files show where the user's files say nothing
+	var shared []setVal
+	for _, d := range v.Docs {
+		if d.Layer != confdoc.LayerDist {
+			continue
+		}
+		for _, e := range d.Entries {
+			segs, err := confdoc.ParsePath(e.Path)
+			if err != nil {
+				continue
+			}
+			unit := segs
+			if n := confdoc.OverrideUnit(d.Kind, segs); n > 0 {
+				unit = segs[:n]
+			}
+			if !m.has(d.Kind, unit) {
+				shared = append(shared, setVal{doc: d.ID, kind: d.Kind, segs: segs, secret: e.Secret, value: e.Value, items: e.Items, shared: true})
+			}
+		}
+	}
+	m.vals = append(m.vals, shared...)
 	broken := map[string]bool{}
 	for _, is := range v.Issues {
 		is = horizonIssue(is)
@@ -195,18 +217,18 @@ func (m *setModel) docFor(kind string, segs []string) string {
 		return confdoc.IDTechs
 	}
 	for _, v := range m.vals {
-		if v.kind == kind && hasPrefix(v.segs, segs) {
+		if v.kind == kind && !v.shared && hasPrefix(v.segs, segs) {
 			return v.doc
 		}
 	}
 	for n := len(segs) - 1; n >= 1; n-- {
 		for _, v := range m.vals {
-			if v.kind == kind && hasPrefix(v.segs, segs[:n]) {
+			if v.kind == kind && !v.shared && hasPrefix(v.segs, segs[:n]) {
 				return v.doc
 			}
 		}
 	}
-	return ""
+	return "" // a shared feed is overridden in sources/custom, which confdoc picks
 }
 
 // ---- the schema, arranged ----
@@ -460,8 +482,25 @@ func (m *setModel) fieldRow(f confdoc.Field, segs []string) setRow {
 	if r.value == "" {
 		r.value, r.dflt = "-", true
 	}
+	if m.sharedAt(f.Doc, segs) {
+		r.value += " (shared)"
+	}
 	m.horizonRow(&r)
 	return r
+}
+
+// sharedAt says the value at segs comes from a .dist file.
+func (m *setModel) sharedAt(kind string, segs []string) bool {
+	found := false
+	for _, v := range m.vals {
+		if v.kind == kind && hasPrefix(v.segs, segs) {
+			if !v.shared {
+				return false
+			}
+			found = true
+		}
+	}
+	return found
 }
 
 func secretText(v setVal, secret bool) string {

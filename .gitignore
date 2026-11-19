@@ -2,9 +2,26 @@
 /alerts/
 /data/
 /cvewatch
+/cvewatch-tui
 
-# real project configs stay local; only the *.example skeletons are tracked
-/app/config/projects/*.yaml
+# Live configuration stays local: settings, techs, feeds and projects, also
+# disabled ones. Only the shared .dist files are tracked, both for a
+# configuration folder at the repository root and for the one under app/.
+# CI fails when anything else under these folders is tracked.
+/config/*
+!/config/*.dist
+!/config/projects/
+/config/projects/*
+!/config/projects/*.dist
+/sources/*
+!/sources/*.dist
+/app/config/*
+!/app/config/*.dist
+!/app/config/projects/
+/app/config/projects/*
+!/app/config/projects/*.dist
+/app/sources/*
+!/app/sources/*.dist
 
 # local tooling and secrets
 /.claude/settings.local.json

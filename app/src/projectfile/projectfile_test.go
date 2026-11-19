@@ -12,7 +12,7 @@ import (
 	"github.com/b070nd/cvewatch/app/src/model"
 )
 
-// shopExample is app/config/projects/shop.yaml.example.
+// shopExample is an earlier app/config/projects/shop.yaml.dist.
 const shopExample = `# Copy to <name>.yaml (any *.yaml in this folder is loaded and stays untracked),
 # or let ` + "`cvewatch init -repo /path/to/repo`" + ` write one for you.
 name: shop

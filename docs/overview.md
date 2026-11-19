@@ -540,7 +540,7 @@ Add `-json` to print the preview as JSON. Project edits use `-save`; lifecycle c
 The settings commands work on the configuration files without loading them, so they also work when `config.yaml` is broken. Changes apply from the next daemon cycle.
 
 ```bash
-cvewatch settings list [-json] [SECTION]        # values set in config.yaml, techs.yaml and sources/*.yaml, by section
+cvewatch settings list [-json] [SECTION]        # values set in config.yaml, techs.yaml and sources/*.yaml, by section; those only a .dist file sets read (shared)
 cvewatch settings get [-json] PATH              # one value, or the default when it is not set
 cvewatch settings set PATH VALUE [-yes]         # change a value
 cvewatch settings unset PATH [-yes]             # remove a value, so the default applies
@@ -875,11 +875,27 @@ Channels switch on when their secret is in the environment, so one config file i
 | Path | Purpose |
 |---|---|
 | `config/config.yaml` | interval, update, HTTP limits, Slack, notify, policy, enrich, storage, access, horizon, tui (refresh, auto, fetch and editor) |
+| `config/config.yaml.dist` | shared defaults for the same settings, which `config.yaml` overrides key by key (see [Shared defaults](#shared-defaults-dist-files)) |
 | `config/techs.yaml` | your additions to the built-in technology catalog, including your own keywords (`cvewatch tech`) |
+| `config/techs.yaml.dist` | shared additions to the catalog; an entry in `techs.yaml` with the same name replaces one here |
 | `config/projects/*.yaml` | one file per project |
+| `config/projects/*.yaml.dist` | project templates: never loaded as projects, offered by `+` on the Projects screen |
+| `sources/*.yaml.dist` | shared feeds, read before `sources/*.yaml` |
 | `sources/*.yaml` | your additions to the built-in feeds (an entry with the id of an existing feed changes only the fields it gives, such as `disabled: true` to switch it off; a new id needs a `type` and a `url`). Other fields: `headers`, `auth_env` (a token variable, see [GitHub advisories and the rate limit](#github-advisories-and-the-rate-limit)), `match_title_only`, `match_structured` |
 | `data/` | state (`state.json`, or `state.db` with the SQLite backend), `audit.log`, `project-backups/` |
 | `alerts/` | generated markdown reports and calendar pages |
+
+### Shared defaults (.dist files)
+
+A file ending in `.dist` holds defaults shared by everyone who uses the folder, and can be kept in version control while the file without the suffix stays local. cvewatch reads the built-in defaults first, then `config/config.yaml.dist`, then `config/config.yaml`, key by key:
+
+- A plain value or a list in `config.yaml` replaces the one in `config.yaml.dist` as a whole. A map such as `access` is merged by key, and one entry, such as one actor's rule, is replaced as a whole.
+- `techs.yaml.dist` and `sources/*.yaml.dist` are read before `techs.yaml` and `sources/*.yaml`, and merge the same way the built-in catalog and feeds do: by name and by id.
+- `config/projects/NAME.yaml.dist` is a template, never a project. `+` on the Projects screen offers it, and the new project starts as a copy of it under the name you give.
+
+The TUI, the MCP tools and the CLI never change a `.dist` file. An edit goes to the file without the suffix. When it changes part of a list or of an entry that only the `.dist` file sets, the whole list or entry is copied over first, so nothing of it is lost. Removing a value that only the `.dist` file sets is refused, because it would change nothing. The Settings screen and `cvewatch settings list` mark values that come from a `.dist` file `(shared)`, and `get_settings` lists those files with `layer: dist`.
+
+`cvewatch init` writes `config/config.yaml.dist` with every setting, its help and its default, all commented out, so it sets nothing until a line is uncommented. It also writes a short `config.yaml` for your own values, `techs.yaml.dist`, `sources/custom.yaml.dist` and the project template `config/projects/example.yaml.dist`. A folder without `.dist` files works as before.
 
 ## Storage
 

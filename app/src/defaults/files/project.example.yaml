@@ -1,4 +1,5 @@
-# Copy to <name>.yaml (any *.yaml in this folder is loaded and stays untracked).
+# A template: pick it when adding a project in the TUI, or copy it to <name>.yaml.
+# Files ending in .yaml.dist are never loaded as projects; any *.yaml is.
 name: shop
 # vendor: acme                      # optional: the customer or organisation that owns it; findings, filters and access rules group by it
 envs: [local, prod]               # free names, e.g. local, dev, qa, prod; without envs: dev, int, staging, prod

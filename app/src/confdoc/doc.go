@@ -30,6 +30,7 @@ type Layer string
 
 const (
 	LayerUser    Layer = "user"    // a file in the user's folder; editable
+	LayerDist    Layer = "dist"    // a shared .dist file the user's file overrides; never changed by cvewatch
 	LayerShipped Layer = "shipped" // built into the binary; shown for reference
 )
 
@@ -37,6 +38,8 @@ const (
 const (
 	IDSettings      = "config"
 	IDTechs         = "techs"
+	IDSettingsDist  = "config.dist"
+	IDTechsDist     = "techs.dist"
 	IDShippedTechs  = "shipped/techs"
 	IDShippedSource = "shipped/sources"
 	sourcesPrefix   = "sources/"
@@ -95,6 +98,27 @@ func Read(root string) (*Set, error) {
 			return nil, err
 		}
 		s.Docs = append(s.Docs, doc)
+	}
+	dists, err := filepath.Glob(filepath.Join(config.SourcesDir(root), "*.yaml"+config.Dist))
+	if err != nil {
+		return nil, err
+	}
+	shared := []struct{ id, kind, path string }{
+		{IDSettingsDist, KindSettings, config.SettingsPath(root) + config.Dist},
+		{IDTechsDist, KindTechs, config.TechsPath(root) + config.Dist},
+	}
+	for _, f := range dists {
+		shared = append(shared, struct{ id, kind, path string }{sourcesPrefix + strings.TrimSuffix(filepath.Base(f), ".yaml"+config.Dist) + config.Dist, KindSources, f})
+	}
+	for _, d := range shared {
+		doc, err := readFile(d.id, d.kind, d.path)
+		if err != nil {
+			return nil, err
+		}
+		if doc.Exists {
+			doc.Layer, doc.ReadOnly = LayerDist, true
+			s.Docs = append(s.Docs, doc)
+		}
 	}
 	for _, d := range []struct {
 		id, kind string

@@ -6,12 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Upgrading from 2.3
+- The repository's `app/config/config.yaml` is now `app/config/config.yaml.dist`, and the project examples are `app/config/projects/*.yaml.dist`. A local `app/config/config.yaml` with changes of your own has to be moved aside before pulling and put back afterwards. It then overrides the `.dist` file key by key, and git no longer tracks it.
+- A folder without `.dist` files loads exactly as before.
+
 ### Added
 - Issues published within the last `recent` (default 72h, so a weekend's news is still on top on Monday) lead the lists, the most urgent of them first. This holds in the TUI, `cvewatch list`, the MCP `list_findings`, exports and the dashboard. 0 turns it off. They show `[NEW]` in the TUI and "published Nh ago" as the first reason of their rank.
 - `p` in the TUI Findings list pins an issue to the top of its project's list, or unpins it. Pinned issues come before the recent ones, in the order they were pinned. A pin is shared with everyone who sees the project, recorded in the finding's history and in the audit log, and shown as `[PIN]` and "pinned by NAME". A sort by a column ignores pins and the recent window.
 - `cvewatch list` puts pinned, recent and known exploited issues in sections of their own (PINNED, RECENT, KNOWN EXPLOITED) before the severity sections, so a severity heading no longer appears twice.
+- Shared defaults in `.dist` files. `config/config.yaml.dist`, `config/techs.yaml.dist` and `sources/*.yaml.dist` sit between the built-in defaults and the files without the suffix, which override them key by key, so a team can keep shared settings, technologies and feeds in version control while each person keeps a short file of their own. The TUI, the MCP tools and the CLI never change a `.dist` file: an edit goes to the file without the suffix and first copies a shared list or entry it changes part of. The Settings screen and `cvewatch settings list` mark shared values `(shared)`, and `get_settings` lists the `.dist` files with `layer: dist`.
+- `cvewatch init` writes `config/config.yaml.dist` with every setting, its help and its default, all commented out, generated from the settings schema so it stays complete. It also writes a short `config.yaml` for a person's own values.
+- Project templates: `config/projects/NAME.yaml.dist` is never loaded as a project. `+` on the Projects screen offers each one, and the new project starts as a copy of it under the name given, checked and audited like any new project.
 
 ### Changed
+- Live configuration never reaches git: `.gitignore` ignores every file in `config/`, `config/projects/` and `sources/`, at the repository root and under `app/`, except the `.dist` files, and disabled projects too. CI fails when such a file is tracked anyway, and `.dockerignore` keeps local configuration out of image builds.
 - Every MCP tool description is one plain sentence string, so directories that read the source print `search_findings`, `preview_project_change` and `edit_project` in full. The list of project change kinds is in the `kind` field of their input schema only.
 
 ## [2.3.0] - 2026-11-18
