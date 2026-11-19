@@ -21,13 +21,31 @@ type Facts struct {
 	EPSS      *model.EPSS
 	Published time.Time
 	FirstSeen time.Time
-	ProdOpen  bool // an open finding exists in prod
+	ProdOpen  bool      // an open finding exists in prod
+	Pinned    time.Time // when a person pinned it to the top; zero when not
+	PinnedBy  string
+	Recent    bool // published within the recent window
 }
 
-// Compare orders two issues: a negative result puts a first. The default
-// order is KEV first, then severity, then open in prod, then EPSS (higher
-// first), then age (older first, it has been exposed longer).
+// Compare orders two issues: a negative result puts a first. Issues a person
+// pinned come first, in the order they were pinned, then issues published
+// within the recent window. Within each group the order is KEV first, then
+// severity, then open in prod, then EPSS (higher first), then age (older
+// first, it has been exposed longer).
 func Compare(a, b Facts) int {
+	switch pa, pb := a.Pinned, b.Pinned; {
+	case !pa.IsZero() && pb.IsZero():
+		return -1
+	case pa.IsZero() && !pb.IsZero():
+		return 1
+	case pa.Before(pb):
+		return -1
+	case pb.Before(pa):
+		return 1
+	}
+	if x, y := b2i(a.Recent), b2i(b.Recent); x != y {
+		return y - x
+	}
 	if x, y := b2i(a.KEV != nil), b2i(b.KEV != nil); x != y {
 		return y - x
 	}
@@ -75,6 +93,12 @@ func b2i(b bool) int {
 // Reasons explains the position in plain words, using only our own data.
 func Reasons(f Facts, now time.Time) []string {
 	var out []string
+	if !f.Pinned.IsZero() {
+		out = append(out, "pinned by "+f.PinnedBy)
+	}
+	if f.Recent {
+		out = append(out, "published "+short(now.Sub(f.Published))+" ago")
+	}
 	if f.KEV != nil {
 		r := "known exploited (CISA KEV)"
 		if !f.KEV.DueDate.IsZero() {

@@ -140,6 +140,24 @@ func (f *Finding) Resolve(actor string, st Status, note *string, now time.Time) 
 	f.History = append(f.History, Disposition{Time: now, Actor: actor, Action: "status", Status: st, Note: f.Note})
 }
 
+// Pin puts the finding at the top of the lists, or takes it off (on false).
+// Pinning a pinned finding keeps when it was first pinned.
+func (f *Finding) Pin(actor string, on bool, now time.Time) {
+	switch {
+	case on && f.Pinned.IsZero():
+		f.Pinned, f.PinnedBy = now, actor
+	case !on:
+		f.Pinned, f.PinnedBy = time.Time{}, ""
+	default:
+		return
+	}
+	action := "pin"
+	if !on {
+		action = "unpin"
+	}
+	f.History = append(f.History, Disposition{Time: now, Actor: actor, Action: action})
+}
+
 func labels(in []Installed) []string {
 	out := make([]string, len(in))
 	for i, x := range in {

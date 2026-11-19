@@ -303,6 +303,28 @@ func bulkCmd(b Backend, cs []ops.Change) tea.Cmd {
 	}
 }
 
+func pinCmd(b Backend, id, project string, on bool) tea.Cmd {
+	return func() tea.Msg {
+		var late error
+		err := b.Write(func(s *ops.Session) error {
+			n, e := s.Pin(id, project, on)
+			if n > 0 {
+				late = e
+				return nil
+			}
+			return e
+		})
+		if err != nil {
+			return actionMsg{err: err}
+		}
+		word := "pinned to the top"
+		if !on {
+			word = "unpinned"
+		}
+		return actionMsg{info: fmt.Sprintf("%s %s in %s", id, word, project), warn: late}
+	}
+}
+
 func assignCmd(b Backend, a ops.Assignment) tea.Cmd {
 	return func() tea.Msg {
 		var n int

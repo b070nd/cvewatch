@@ -220,13 +220,14 @@ Below the summary, the list holds every open issue. It is searched and sorted li
 | Enter | open the selected issue |
 | `/` | filter by words or fields such as `severity:high`. The list narrows as you type. Enter keeps the filter, Esc clears it. Up and Down bring back the filters kept before. A field the language does not know is shown on the count line, and the text is then matched as plain words |
 | `=` | filter by a field: severity, environment, project, technology, owner, applies, KEV, fix or overdue. Each value shows how many issues have it, counted with the rest of the filter. The ticked values are written into the filter text as `field:a,b`, so `/` shows and edits them; ticking none takes the field out |
-| `>` | sort by priority (the default), severity, CVSS, EPSS, ID, age, open in, owner or title. Choosing the order in use again reverses it. The sorted column heading carries ▲ or ▼, the count line names the order, and ties keep the priority order |
+| `>` | sort by priority (the default: pinned issues, then those published within `recent`, 72 hours unless config.yaml says otherwise, then by rank), severity, CVSS, EPSS, ID, age, open in, owner or title. Choosing the order in use again reverses it. The sorted column heading carries ▲ or ▼, the count line names the order, and ties keep the priority order |
 | `<` | reverse the order of the sorted column |
 | `s` | cycle the minimum severity: all, low+, medium+, high+, critical+ |
 | `t` | cycle the time filter on the publication date (see [Time filter](#time-filter)) |
 | `0` | clear the time filter |
 | Space | mark or unmark the issue, then move down (see Triage) |
 | Ctrl+A | mark every issue in the list, or clear the marks when all are marked |
+| `p` | pin the issue to the top of its project's list, or unpin it. A pin is shared with everyone who sees the project and is audited. The title shows `[PIN]`; issues published within `recent` show `[NEW]`. A sort by a column ignores both |
 | `f` `i` `n` `o` | with marks: set every marked issue fixed, ignored, not affected, or open again |
 | Esc | clear the marks first; then go back to where a jump came from; then clear the filter |
 
