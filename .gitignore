@@ -7,7 +7,7 @@
 # Live configuration stays local: settings, techs, feeds and projects, also
 # disabled ones. Only the shared .dist files are tracked, both for a
 # configuration folder at the repository root and for the one under app/.
-# CI fails when anything else under these folders is tracked.
+# CI fails when anything else under these folders, or under .claude/, is tracked.
 /config/*
 !/config/*.dist
 !/config/projects/
@@ -24,7 +24,7 @@
 !/app/sources/*.dist
 
 # local tooling and secrets
-/.claude/settings.local.json
+/.claude/
 .env
 .env.*
 !.env.example

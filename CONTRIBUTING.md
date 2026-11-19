@@ -13,6 +13,8 @@ go vet ./...
 go test -race ./...
 ```
 
+`./build.sh` at the repository root builds both binaries into the root folder, stamped `dev-<commit>` (with `-dirty` for uncommitted changes); `./build.sh tag` builds the tag on HEAD into `dist/` and refuses a working tree with changes.
+
 Format code with `gofmt` before you commit. CI fails on any file `gofmt -l .` lists:
 
 ```sh

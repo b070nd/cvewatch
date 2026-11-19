@@ -10,6 +10,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Default owners: `owner:` in a project file, and `owner:` in a `when@ENV` block for one environment. Open findings without an owner take it, new ones as they are found and existing ones on the next cycle or revalidation; an owner cvewatch set follows the default, and one a person assigned is never replaced. Set it in the TUI (Owner in a project's fields), with `cvewatch project NAME -owner [ENV=]NAME` or the MCP op `set_owner`.
 - `a` in the TUI Findings list assigns an owner, a due date or a ticket to every open environment of the marked issues at once, as one audited operation.
 
+### Changed
+- `.claude/` stays out of git as a whole, and CI fails when a file under it is tracked. `build.sh` at the repository root is part of the repository: it builds both binaries into the root folder (`./build.sh`), or the tag on HEAD into `dist/` (`./build.sh tag`).
+
 ## [2.4.0] - 2026-11-19
 
 ### Upgrading from 2.3
