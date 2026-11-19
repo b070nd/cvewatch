@@ -235,3 +235,41 @@ func TestPKeyPinsAnIssueToTheTopAndUnpinsIt(t *testing.T) {
 		t.Fatalf("unpinned, it goes back to its rank: %s", first())
 	}
 }
+
+func TestAAssignsTheSelectedIssuesAtOnce(t *testing.T) {
+	b := newFake(t, nil)
+	d := start(t, b, Options{})
+	d.screen("findings")
+	d.press(" ", " ") // CVE-2026-3 and CVE-2026-1
+	d.press("a")
+	d.want("Assign 2 issues, 2 open findings", "Owner", "Due", "Ticket")
+	d.press("enter", "enter", "enter")
+	d.want("problem: give an owner, a due date or a ticket")
+	d.press("shift+tab", "shift+tab")
+	d.typ("ann")
+	d.press("enter")
+	d.typ("2026-12-01")
+	d.press("enter", "enter")
+	d.want("ok: assigned: 2 findings in 2 issues")
+	d.wantNot("selected")
+	if b.writes != 1 {
+		t.Fatalf("one write session for the whole selection, got %d", b.writes)
+	}
+	read(t, b, func(s *ops.Session) {
+		for _, id := range []string{"CVE-2026-3", "CVE-2026-1"} {
+			is, _, err := s.Show(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, tg := range is.Targets {
+				if tg.Project == "shop" && tg.Status == model.StatusOpen && (tg.Owner != "ann" || day(tg.Due) != "2026-12-01") {
+					t.Errorf("%s %s/%s owner %q due %v", id, tg.Project, tg.Env, tg.Owner, tg.Due)
+				}
+			}
+		}
+	})
+	log, _ := os.ReadFile(filepath.Join(b.cfg.DataDir, "audit.log"))
+	if n := strings.Count(string(log), `"action":"assign"`); n != 2 {
+		t.Fatalf("every assignment is audited (%d):\n%s", n, log)
+	}
+}

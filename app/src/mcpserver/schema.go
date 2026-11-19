@@ -35,6 +35,7 @@ func projectInSchema() map[string]any {
 			"image":         text(projectfile.ParamHelp("image")),
 			"since":         text(projectfile.ParamHelp("since")),
 			"vendor":        text(projectfile.ParamHelp("vendor")),
+			"owner":         text(projectfile.ParamHelp("owner")),
 			"profile":       text(projectfile.ParamHelp("profile")),
 			"every":         text(projectfile.ParamHelp("every")),
 			"auto":          map[string]any{"type": "boolean", "description": projectfile.ParamHelp("auto")},

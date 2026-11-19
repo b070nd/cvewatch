@@ -615,3 +615,30 @@ func TestEndToEndEditAndSave(t *testing.T) {
 		t.Fatalf("saved file:\n%s", got)
 	}
 }
+
+func TestSetOwnerForTheProjectAndOneEnvironment(t *testing.T) {
+	f, err := Parse([]byte("name: shop\nvendor: acme\nenvs: [stage, prod]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Apply(Op{Kind: KindSetOwner, Owner: "web-team"}, Op{Kind: KindSetOwner, Env: "prod", Owner: "ops-oncall"}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := f.Bytes()
+	if got := string(b); !strings.Contains(got, "vendor: acme\nowner: web-team\n") || !strings.Contains(got, "when@prod:\n  owner: ops-oncall") {
+		t.Fatalf("the owner goes after the vendor, an environment's in its block:\n%s", got)
+	}
+	p := f.Project()
+	if p.OwnerIn("stage") != "web-team" || p.OwnerIn("prod") != "ops-oncall" {
+		t.Fatalf("owners: %q %q", p.OwnerIn("stage"), p.OwnerIn("prod"))
+	}
+	if err := f.Apply(Op{Kind: KindSetOwner, Env: "prod"}, Op{Kind: KindSetOwner}); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := f.Bytes(); strings.Contains(string(b), "owner") || strings.Contains(string(b), "when@prod") {
+		t.Fatalf("empty clears both:\n%s", b)
+	}
+	if err := f.Apply(Op{Kind: KindSetOwner, Owner: "two\nlines"}); err == nil {
+		t.Fatal("an owner is one line")
+	}
+}

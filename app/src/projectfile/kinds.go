@@ -23,6 +23,7 @@ const (
 	KindSetLockfileDev Kind = "set_lockfile_dev"
 	KindSetSince       Kind = "set_since"
 	KindSetVendor      Kind = "set_vendor"
+	KindSetOwner       Kind = "set_owner"
 	KindSetProfile     Kind = "set_profile"
 	KindSetUpdate      Kind = "set_update"
 )

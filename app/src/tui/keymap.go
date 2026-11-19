@@ -174,6 +174,8 @@ func init() {
 			binding{keys: ks("ctrl+a"), help: "select every issue in the list, or none when all of them are selected", short: "all", prio: 3, do: plain((*app).selectAll)},
 			binding{keys: ks("f", "i", "n", "o"), disp: "f/i/n/o", help: "mark every selected issue fixed, ignored, not affected or reopened (its open environments); one note for all",
 				short: "mark selected", prio: 1, when: hasSelection, do: m2(func(m *app, s string) { m.startBulk(statusKeys[s]) })},
+			binding{keys: ks("a"), help: "assign owner, due date and ticket to the selected issues",
+				short: "assign selected", prio: 2, when: hasSelection, do: plain(func(m *app) tea.Cmd { m.startBulkAssign(); return nil })},
 			binding{keys: ks("esc"), help: "clear the selection", short: "clear selection", prio: 1, when: hasSelection, do: plain((*app).clearSelection)},
 			bindReturn(lvList),
 			bindClearFilter(func(m *app) bool { return m.retAt(lvList) }),

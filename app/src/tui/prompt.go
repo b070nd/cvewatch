@@ -16,21 +16,22 @@ import (
 type promptKind int
 
 const (
-	pkStatus    promptKind = iota // a note for a status change
-	pkAssign                      // owner, due date, ticket
-	pkPath                        // a folder to scan
-	pkMerge                       // a folder or file whose stack is merged into one project
-	pkBulk                        // a note for a status change of the selected issues
-	pkEvidence                    // a note and a link attached to an environment
-	pkEdit                        // the value of one field of a project file
-	pkNew                         // a project made from a name, without scanning a folder
-	pkTemplate                    // a project made from a template; project holds the template's name
-	pkRename                      // the new name of a project
-	pkDuplicate                   // the name of the copy of a project
-	pkDelete                      // the name of the project to delete, typed to confirm
-	pkSetting                     // the value of a setting, or what a new item of a list needs
-	pkLock                        // the file of a lockfile to add to a project, or to the project being set up
-	pkTech                        // a technology of the person's own: name, keywords, category, CPE
+	pkStatus     promptKind = iota // a note for a status change
+	pkAssign                       // owner, due date, ticket
+	pkPath                         // a folder to scan
+	pkMerge                        // a folder or file whose stack is merged into one project
+	pkBulk                         // a note for a status change of the selected issues
+	pkBulkAssign                   // owner, due date and ticket for the selected issues
+	pkEvidence                     // a note and a link attached to an environment
+	pkEdit                         // the value of one field of a project file
+	pkNew                          // a project made from a name, without scanning a folder
+	pkTemplate                     // a project made from a template; project holds the template's name
+	pkRename                       // the new name of a project
+	pkDuplicate                    // the name of the copy of a project
+	pkDelete                       // the name of the project to delete, typed to confirm
+	pkSetting                      // the value of a setting, or what a new item of a list needs
+	pkLock                         // the file of a lockfile to add to a project, or to the project being set up
+	pkTech                         // a technology of the person's own: name, keywords, category, CPE
 )
 
 type field struct {
@@ -203,13 +204,31 @@ func noteHint(st model.Status) string {
 // bulkChanges are the changes that give every selected issue of the context
 // the status st; ops decides which environments that touches.
 func (m *app) bulkChanges(st model.Status, note string) []ops.Change {
-	var picked []query.Issue
+	return ops.StatusChanges(m.picked(), st, note)
+}
+
+// picked are the selected issues of the context.
+func (m *app) picked() []query.Issue {
+	var out []query.Issue
 	for _, is := range m.dataIssues() {
 		if m.fnd.sel[issueKey(is)] && m.inContext(rowProject(is)) {
-			picked = append(picked, is)
+			out = append(out, is)
 		}
 	}
-	return ops.StatusChanges(picked, st, note)
+	return out
+}
+
+// startBulkAssign asks once for the owner, due date and ticket of every open
+// environment of the selected issues.
+func (m *app) startBulkAssign() {
+	as := ops.Assignments(m.picked(), "x", "", "")
+	if len(as) == 0 {
+		m.fail("nothing to assign in the selected issues")
+		return
+	}
+	title := fmt.Sprintf("Assign %s, %s", plural(len(m.fnd.sel), "issue", "issues"), plural(len(as), "open finding", "open findings"))
+	m.openBound(&prompt{kind: pkBulkAssign, title: title, hint: "empty keeps a value, - clears it; due is YYYY-MM-DD; a person's owner replaces the project's default",
+		fields: []field{{label: "Owner"}, {label: "Due"}, {label: "Ticket"}}})
 }
 
 // startBulk asks for one note for the status change of every selected issue.
@@ -323,6 +342,17 @@ func (m *app) promptSubmit() tea.Cmd {
 			return nil
 		}
 		return m.start("saving...", "bulk", reList|reDetail, p, bulkCmd(m.b, cs))
+	case pkBulkAssign:
+		if val(0) == "" && val(1) == "" && val(2) == "" {
+			p.problem = "give an owner, a due date or a ticket"
+			return nil
+		}
+		as := ops.Assignments(m.picked(), val(0), val(1), val(2))
+		if len(as) == 0 {
+			p.problem = "nothing left to assign in the selected issues"
+			return nil
+		}
+		return m.start("saving...", "bulk", reList|reDetail, p, bulkAssignCmd(m.b, as))
 	case pkEvidence:
 		a := p.attach
 		if m.foreign(a.Project) {

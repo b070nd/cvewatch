@@ -140,6 +140,22 @@ func (f *Finding) Resolve(actor string, st Status, note *string, now time.Time) 
 	f.History = append(f.History, Disposition{Time: now, Actor: actor, Action: "status", Status: st, Note: f.Note})
 }
 
+// DefaultOwner gives an open finding its project's default owner. An owner a
+// person assigned stays; one cvewatch set follows the default, and goes when
+// the default is removed. It reports whether the finding changed.
+func (f *Finding) DefaultOwner(owner string, now time.Time) bool {
+	if f.Status != StatusOpen || f.Owner != "" && !f.OwnerDefault || f.Owner == owner {
+		return false
+	}
+	note := "the project's default owner"
+	if owner == "" {
+		note = "the project has no default owner any more"
+	}
+	f.Owner, f.OwnerDefault = owner, owner != ""
+	f.History = append(f.History, Disposition{Time: now, Actor: "cvewatch", Action: "assign", Owner: owner, Note: note})
+	return true
+}
+
 // Pin puts the finding at the top of the lists, or takes it off (on false).
 // Pinning a pinned finding keeps when it was first pinned.
 func (f *Finding) Pin(actor string, on bool, now time.Time) {
@@ -199,6 +215,8 @@ func (f Finding) Check() error {
 		return bad("open but marked as closed by cvewatch")
 	case f.AutoReason != "" && !f.Auto:
 		return bad("has a reason for an automatic close (%s) but was not closed by cvewatch", f.AutoReason)
+	case f.OwnerDefault && f.Owner == "":
+		return bad("marked as having the default owner but has no owner")
 	}
 	switch f.AutoReason {
 	case "", AutoSince, AutoEnvRemoved:

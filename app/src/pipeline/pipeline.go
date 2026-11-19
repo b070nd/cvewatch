@@ -225,6 +225,7 @@ func (r *Runner) Run(ctx context.Context) (Result, error) {
 		r.Log.Info("findings whose match is disproved were left as they are", "findings", c.held, "hint", "retire is manual: run `cvewatch revalidate -apply`")
 	}
 	c.applyEnvs(&Revalidation{}, r.Only) // also repairs data from before a revalidation saw the change
+	c.applyOwners(r.Only)
 	r.report(Progress{Phase: PhaseEnrich})
 	if !r.BackfillOnly {
 		c.enrich(ctx)

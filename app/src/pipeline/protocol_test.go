@@ -256,3 +256,54 @@ func TestAProjectWithoutEnvsClosesNothingForItsLegacyEnvironments(t *testing.T) 
 }
 
 func updateOwner(owner string) ledger.Update { return ledger.Update{Actor: "test", Owner: &owner} }
+
+func TestFindingsTakeTheDefaultOwnerOfTheirProject(t *testing.T) {
+	const owned = "name: shop\nowner: web-team\nenvs: [stage, prod]\ntechs: [{name: php, version: '8.2.10'}]\nwhen@prod:\n  owner: ops-oncall\n"
+	g := rig(t, phpTech, map[string]string{"shop": owned}, phpFlaw("CVE-2026-3301"))
+	g.Run()
+	owner := func(id string, env model.Env) model.Finding {
+		for _, f := range g.Findings(id) {
+			if f.Env == env {
+				return f
+			}
+		}
+		t.Fatalf("no finding for %s in %s", id, env)
+		return model.Finding{}
+	}
+	if f := owner("CVE-2026-3301", "stage"); f.Owner != "web-team" || !f.OwnerDefault {
+		t.Fatalf("a new finding takes the project's owner: %+v", f)
+	}
+	if f := owner("CVE-2026-3301", "prod"); f.Owner != "ops-oncall" {
+		t.Fatalf("an environment's owner wins there: %+v", f)
+	}
+
+	ann := "ann"
+	if _, err := g.Ledger.Update("CVE-2026-3301", "shop", "stage", ledger.Update{Actor: "bob", Owner: &ann}, g.Now); err != nil {
+		t.Fatal(err)
+	}
+	g.Write("config/projects/shop.yaml", strings.Replace(owned, "owner: web-team", "owner: platform", 1))
+	g.Reload()
+	g.Run()
+	if f := owner("CVE-2026-3301", "stage"); f.Owner != "ann" || f.OwnerDefault {
+		t.Fatalf("an owner a person assigned stays: %+v", f)
+	}
+	if f := owner("CVE-2026-3301", "prod"); f.Owner != "ops-oncall" {
+		t.Fatalf("prod keeps its own: %+v", f)
+	}
+
+	g.Write("config/projects/shop.yaml", strings.Replace(strings.Replace(owned, "owner: web-team\n", "", 1), "when@prod:\n  owner: ops-oncall\n", "", 1))
+	g.Reload()
+	g.Run()
+	if f := owner("CVE-2026-3301", "prod"); f.Owner != "" || f.OwnerDefault {
+		t.Fatalf("a default owner goes with the default: %+v", f)
+	}
+	var assigned int
+	for _, e := range auditEvents(t, g) {
+		if e.Action == "assign" && e.Actor == "cvewatch" {
+			assigned++
+		}
+	}
+	if assigned != 3 { // stage and prod at first, prod cleared at the end
+		t.Fatalf("every default owner change is audited: %d", assigned)
+	}
+}

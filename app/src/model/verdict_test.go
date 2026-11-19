@@ -87,3 +87,28 @@ func TestCheckRefusesFieldsThatDisagree(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultOwnerFillsGapsAndFollowsTheDefault(t *testing.T) {
+	f := NewFinding("CVE-1", "shop", EnvProd, php(), AppAffected, nil, day)
+	if !f.DefaultOwner("web", day) || f.Owner != "web" || !f.OwnerDefault {
+		t.Fatalf("an unowned finding takes the default: %+v", f)
+	}
+	if f.DefaultOwner("web", day) {
+		t.Fatal("the same default changes nothing")
+	}
+	if !f.DefaultOwner("ops", day) || f.Owner != "ops" {
+		t.Fatalf("a default owner follows the default: %+v", f)
+	}
+	f.Owner, f.OwnerDefault = "ann", false // a person assigned
+	if f.DefaultOwner("web", day) || f.Owner != "ann" {
+		t.Fatalf("a person's owner stays: %+v", f)
+	}
+	closed := NewFinding("CVE-2", "shop", EnvProd, php(), AppAffected, nil, day)
+	closed.Resolve("ann", StatusFixed, nil, day)
+	if closed.DefaultOwner("web", day) {
+		t.Fatal("a closed finding is left alone")
+	}
+	if err := (Finding{Status: StatusOpen, OwnerDefault: true}).Check(); !errors.Is(err, ErrIllegalFinding) {
+		t.Fatalf("a default owner needs an owner: %v", err)
+	}
+}

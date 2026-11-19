@@ -326,6 +326,32 @@ func pinCmd(b Backend, id, project string, on bool) tea.Cmd {
 	}
 }
 
+// bulkAssignCmd applies the assignments as one operation of ops.
+func bulkAssignCmd(b Backend, as []ops.Assignment) tea.Cmd {
+	return func() tea.Msg {
+		var res ops.BulkResult
+		err := b.Write(func(s *ops.Session) (err error) {
+			res, err = s.AssignAll(as)
+			return err
+		})
+		left := map[string]int{}
+		for _, a := range as {
+			left[a.Project+"\x00"+a.ID]++
+		}
+		var done []string
+		for _, a := range as[:res.Applied] {
+			key := a.Project + "\x00" + a.ID
+			if left[key]--; left[key] == 0 {
+				done = append(done, key)
+			}
+		}
+		if err != nil {
+			return bulkMsg{err: err, done: done}
+		}
+		return bulkMsg{info: fmt.Sprintf("assigned: %s in %s", plural(res.Findings, "finding", "findings"), plural(len(done), "issue", "issues")), warn: res.ReportErr, done: done}
+	}
+}
+
 func assignCmd(b Backend, a ops.Assignment) tea.Cmd {
 	return func() tea.Msg {
 		var n int

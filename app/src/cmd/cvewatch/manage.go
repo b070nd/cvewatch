@@ -304,7 +304,7 @@ type projectEdit struct {
 // projectfile.OpTable lists; its parity test runs every row through here.
 func parseProjectEdit(args []string) (projectEdit, error) {
 	fs := flag.NewFlagSet("project", flag.ContinueOnError)
-	var set, remove, lock, unlock, lockDev, lockNoDev, envSet, envUnset, envAdd, envRemove, envRename, envExclude, envInclude, techEnvs, image listFlag
+	var set, remove, lock, unlock, lockDev, lockNoDev, envSet, envUnset, envAdd, envRemove, envRename, envExclude, envInclude, techEnvs, image, owner listFlag
 	var since, vendor, profile, updateEvery, updateAuto optFlag
 	fs.Var(&set, "set", "declare tech=version (version may be empty), repeatable")
 	fs.Var(&remove, "remove", "stop declaring a tech, repeatable")
@@ -322,6 +322,7 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 	fs.Var(&techEnvs, "tech-envs", "limit a generic tech to some environments as tech=env,env (tech= lifts the limit), repeatable")
 	fs.Var(&image, "image", "set the image of an environment as env=tag (empty tag clears), repeatable")
 	fs.Var(&since, "since", "when advisories count from: a day YYYY-MM-DD, a time such as 2026-01-31T08:30:00Z, or a span back from now such as 7d, 3m, 1y (empty clears)")
+	fs.Var(&owner, "owner", "who handles the findings unless a person assigns another: NAME for the project, env=NAME for one environment (empty clears), repeatable")
 	fs.Var(&vendor, "vendor", "the vendor (customer or organisation) that owns the project, a lowercase name (empty clears)")
 	fs.Var(&profile, "profile", "how much evidence a match needs: strict, balanced or discovery (default or empty clears: the profile of config.yaml applies)")
 	fs.Var(&updateEvery, "update-every", "how often the project is refreshed, such as 30m, 1h or 2d, at least 5m (default removes it: the interval of config.yaml applies)")
@@ -457,6 +458,13 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 	if *migrate {
 		changes = append(changes, projectfile.Op{Kind: projectfile.KindMigrateEnvs})
 	}
+	for _, v := range owner {
+		op := projectfile.Op{Kind: projectfile.KindSetOwner, Owner: v}
+		if env, name, ok := strings.Cut(v, "="); ok && model.Env(env).Valid() {
+			op.Env, op.Owner = model.Env(env), name
+		}
+		changes = append(changes, op)
+	}
 	for _, v := range image {
 		env, img, ok := strings.Cut(v, "=")
 		if !ok || env == "" {
@@ -465,7 +473,7 @@ func parseProjectEdit(args []string) (projectEdit, error) {
 		changes = append(changes, projectfile.Op{Kind: projectfile.KindSetImage, Env: model.Env(env), Image: img})
 	}
 	if len(changes) == 0 {
-		return projectEdit{}, errors.New("nothing to change: use -set, -remove, -env-set, -env-unset, -image, -lock, -unlock, -lock-dev, -lock-nodev, -since, -vendor, -profile, -update-every, -update-auto, -envs, -env-add, -env-remove, -env-rename, -env-exclude, -env-include, -tech-envs or -migrate-envs (cvewatch project NAME -h lists them)")
+		return projectEdit{}, errors.New("nothing to change: use -set, -remove, -env-set, -env-unset, -image, -lock, -unlock, -lock-dev, -lock-nodev, -since, -vendor, -owner, -profile, -update-every, -update-auto, -envs, -env-add, -env-remove, -env-rename, -env-exclude, -env-include, -tech-envs or -migrate-envs (cvewatch project NAME -h lists them)")
 	}
 	return projectEdit{name: name, ops: changes, save: *save}, nil
 }

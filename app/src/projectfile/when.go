@@ -158,6 +158,29 @@ func setImage(root *yaml.Node, env model.Env, image string) error {
 	return nil
 }
 
+// setEnvOwner sets who handles the findings of one environment.
+func setEnvOwner(root *yaml.Node, env model.Env, owner string) error {
+	if owner == "" { // an empty owner clears it
+		if err := migrateEnvironments(root); err != nil {
+			return err
+		}
+		keys := []string{whenKey(env)}
+		chain, err := dig(root, keys...)
+		if err != nil || len(chain) <= len(keys) {
+			return err
+		}
+		mapDel(chain[len(chain)-1], "owner")
+		prune(chain, keys)
+		return nil
+	}
+	block, err := whenBlock(root, env)
+	if err != nil {
+		return err
+	}
+	setStr(block, "owner", owner, 0)
+	return nil
+}
+
 func seqIndexFold(seq *yaml.Node, name string) int {
 	for i, it := range seq.Content {
 		if it.Kind == yaml.ScalarNode && strings.EqualFold(it.Value, name) {
