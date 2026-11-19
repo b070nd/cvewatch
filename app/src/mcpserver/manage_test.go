@@ -116,7 +116,7 @@ func TestProjectSchemaCoversTheOpTable(t *testing.T) {
 			t.Errorf("%s: kind enum %v, table %v", name, kind.Enum, want)
 		}
 		for _, k := range want {
-			if !strings.Contains(kind.Description, k) || !strings.Contains(tl.Description, k) {
+			if !strings.Contains(kind.Description, k) {
 				t.Errorf("%s: kind %s is not described", name, k)
 			}
 		}

@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Every MCP tool description is one plain sentence string, so directories that read the source print `search_findings`, `preview_project_change` and `edit_project` in full. The list of project change kinds is in the `kind` field of their input schema only.
+
 ## [2.3.0] - 2026-11-18
 
 ### Upgrading from 2.2
