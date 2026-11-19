@@ -34,6 +34,15 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - name: no live configuration is tracked
+        run: |
+          live=$(git ls-files | grep -E '^(app/)?(config|sources)/' | grep -vE '\.dist$' || true)
+          if [ -n "$live" ]; then
+            echo "Live configuration must stay out of git; only .dist files are tracked:"
+            echo "$live"
+            exit 1
+          fi
       - run: test "${{ needs.platforms.result }}" = "success"
   vulncheck:
     runs-on: ubuntu-latest

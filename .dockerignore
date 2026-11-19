@@ -5,4 +5,10 @@ alerts
 data
 cvewatch
 dist
-app/config/projects/*.yaml
+config
+sources
+app/config/*
+!app/config/config.yaml.dist
+app/sources
+.env
+.env.*

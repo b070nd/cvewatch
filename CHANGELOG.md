@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Project templates: `config/projects/NAME.yaml.dist` is never loaded as a project. `+` on the Projects screen offers each one, and the new project starts as a copy of it under the name given, checked and audited like any new project.
 
 ### Changed
+- Live configuration never reaches git: `.gitignore` ignores every file in `config/`, `config/projects/` and `sources/`, at the repository root and under `app/`, except the `.dist` files, and disabled projects too. CI fails when such a file is tracked anyway, and `.dockerignore` keeps local configuration out of image builds.
 - Every MCP tool description is one plain sentence string, so directories that read the source print `search_findings`, `preview_project_change` and `edit_project` in full. The list of project change kinds is in the `kind` field of their input schema only.
 
 ## [2.3.0] - 2026-11-18
