@@ -6,7 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-11-19
+
 ### Upgrading from 2.3
+- Pins are stored on the findings. A 2.3 build that saves the state drops them, so update every process that writes it, the daemon and the TUI, together.
 - The repository's `app/config/config.yaml` is now `app/config/config.yaml.dist`, and the project examples are `app/config/projects/*.yaml.dist`. A local `app/config/config.yaml` with changes of your own has to be moved aside before pulling and put back afterwards. It then overrides the `.dist` file key by key, and git no longer tracks it.
 - A folder without `.dist` files loads exactly as before.
 
@@ -20,7 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Live configuration never reaches git: `.gitignore` ignores every file in `config/`, `config/projects/` and `sources/`, at the repository root and under `app/`, except the `.dist` files, and disabled projects too. CI fails when such a file is tracked anyway, and `.dockerignore` keeps local configuration out of image builds.
-- Every MCP tool description is one plain sentence string, so directories that read the source print `search_findings`, `preview_project_change` and `edit_project` in full. The list of project change kinds is in the `kind` field of their input schema only.
+- Every MCP tool description is one plain string, so directories that read the source print `search_findings`, `preview_project_change` and `edit_project` in full. The list of project change kinds is in the `kind` field of their input schema only.
 
 ## [2.3.0] - 2026-11-18
 
