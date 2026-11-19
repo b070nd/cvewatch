@@ -344,18 +344,18 @@ func Matches(issues []query.Issue) string {
 }
 
 func list(heading string, issues []query.Issue, fresh map[string]bool, targets func(query.Issue) string) string {
-	counts := map[model.Severity]int{}
+	counts := map[string]int{}
 	for _, is := range issues {
-		counts[is.Severity]++
+		counts[section(is)]++
 	}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s: %d\n", heading, len(issues))
-	var current model.Severity
+	current := ""
 	for i, is := range issues {
-		if i == 0 || is.Severity != current {
-			current = is.Severity
-			fmt.Fprintf(&b, "\n%s (%d)\n", label(current), counts[current])
+		if s := section(is); i == 0 || s != current {
+			current = s
+			fmt.Fprintf(&b, "\n%s (%d)\n", current, counts[current])
 		}
 		mark := "    "
 		if fresh[is.ID] {
@@ -369,6 +369,21 @@ func list(heading string, issues []query.Issue, fresh map[string]bool, targets f
 		}
 	}
 	return b.String()
+}
+
+// section is the heading an issue is listed under, in the order of
+// priority.Compare: pinned, recent and known exploited issues lead, the rest
+// go by severity.
+func section(is query.Issue) string {
+	switch {
+	case !is.Pinned.IsZero():
+		return "PINNED"
+	case is.Recent:
+		return "RECENT"
+	case is.KEV != nil:
+		return "KNOWN EXPLOITED"
+	}
+	return label(is.Severity)
 }
 
 // facts is the one-line summary: age, article count and fix status.

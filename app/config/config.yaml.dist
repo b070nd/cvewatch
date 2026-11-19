@@ -24,6 +24,12 @@
 # that date.
 # lookback: 168h
 
+# Recent issues first: Issues published this recently lead the lists, the most
+# urgent of them first, so news of the last days (a weekend, say) is seen
+# before older issues of higher rank. Pinned issues still come before them; a
+# sort by a column ignores both. 0 turns it off. Default 72h.
+# recent: 72h
+
 # Retention: Forget items that matched nothing after this long; 0 keeps them.
 # At least twice the lookback. Until then a new tech or project can pick them
 # up again (cvewatch revalidate).

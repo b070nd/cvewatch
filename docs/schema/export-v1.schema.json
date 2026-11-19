@@ -11,7 +11,7 @@
     "count": { "type": "integer", "minimum": 0, "description": "Number of entries in issues." },
     "issues": {
       "type": "array",
-      "description": "Issues in priority order: known-exploited first, then severity, open in prod, EPSS and age.",
+      "description": "Issues in priority order: pinned first, in the order they were pinned, then those published within the recent window, then known-exploited, severity, open in prod, EPSS and age.",
       "items": {
         "type": "object",
         "required": ["id", "severity", "published", "age", "age_hours", "first_seen", "applies", "article_count", "fix", "prod_open", "targets", "untrusted"],
@@ -60,6 +60,9 @@
           },
           "priority": { "type": "array", "items": { "type": "string" }, "description": "Why the issue sits where it does, from our own data." },
           "prod_open": { "type": "boolean", "description": "Open in a production environment." },
+          "pinned": { "type": "string", "format": "date-time", "description": "When a person pinned the issue to the top; absent when it is not pinned." },
+          "pinned_by": { "type": "string", "description": "Who pinned it." },
+          "recent": { "type": "boolean", "description": "Published within the recent window, so it leads the order; absent when not." },
           "report": { "type": "string", "description": "Path of the markdown plan, when one was written." },
           "targets": {
             "type": "array",

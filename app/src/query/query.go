@@ -26,6 +26,7 @@ type Filter struct {
 	Closed    bool           // also list the fixed, ignored and not-affected targets of issues that still have an open one
 	AnyStatus bool           // list issues whose findings are in any status, with all their targets
 	Published TimeRange      // only issues published in this range; the zero value is any time
+	Recent    time.Duration  // issues published this recently lead the order; 0 turns it off
 
 	Vendor  string            // only the projects of this vendor; model.NoVendor selects those without one
 	Vendors map[string]string // the vendor of each project, how a target's vendor is told; a project not listed has none
@@ -124,6 +125,9 @@ type Issue struct {
 	EPSS         *model.EPSS         `json:"epss,omitempty"`
 	Priority     []string            `json:"priority,omitempty"` // why it sits where it does, from our own data
 	ProdOpen     bool                `json:"prod_open"`
+	Pinned       time.Time           `json:"pinned,omitzero"` // when a person pinned it to the top; zero when not
+	PinnedBy     string              `json:"pinned_by,omitempty"`
+	Recent       bool                `json:"recent,omitempty"` // published within the recent window, so it leads the order
 	Report       string              `json:"report,omitempty"` // markdown file with the plan
 	Targets      []Target            `json:"targets"`
 	Untrusted    Untrusted           `json:"untrusted"`
@@ -157,6 +161,7 @@ func Open(l *ledger.Ledger, f Filter, now time.Time) []Issue {
 			out = append(out, is)
 		}
 		is.Targets = append(is.Targets, t)
+		is.pin(fd)
 		is.Applies = worst(is.Applies, fd.Applies, len(is.Targets) == 1)
 		is.ProdOpen = is.ProdOpen || (model.IsProd(fd.Env) && fd.Status == model.StatusOpen)
 	}
@@ -178,11 +183,11 @@ func Open(l *ledger.Ledger, f Filter, now time.Time) []Issue {
 		}
 	}
 	for _, is := range out {
-		facts := factsOf(l.Vuln(is.ID), is.ProdOpen)
-		is.Priority = prodWhere(priority.Reasons(facts, now), is.Targets)
+		is.Recent = f.recent(is.Published, now)
+		is.Priority = prodWhere(priority.Reasons(issueFacts(l, is), now), is.Targets)
 	}
 	slices.SortStableFunc(out, func(a, b *Issue) int {
-		if c := priority.Compare(factsOf(l.Vuln(a.ID), a.ProdOpen), factsOf(l.Vuln(b.ID), b.ProdOpen)); c != 0 {
+		if c := priority.Compare(issueFacts(l, a), issueFacts(l, b)); c != 0 {
 			return c
 		}
 		return strings.Compare(a.ID, b.ID)
@@ -221,6 +226,24 @@ func factsOf(v *model.Vulnerability, prodOpen bool) priority.Facts {
 	return priority.Facts{Severity: v.Severity, KEV: v.KEV, EPSS: v.EPSS, Published: v.Published, FirstSeen: v.FirstSeen, ProdOpen: prodOpen}
 }
 
+func issueFacts(l *ledger.Ledger, is *Issue) priority.Facts {
+	f := factsOf(l.Vuln(is.ID), is.ProdOpen)
+	f.Pinned, f.PinnedBy, f.Recent = is.Pinned, is.PinnedBy, is.Recent
+	return f
+}
+
+// recent reports whether an issue published then is within the recent window.
+func (f Filter) recent(published, now time.Time) bool {
+	return f.Recent > 0 && !published.IsZero() && now.Sub(published) < f.Recent
+}
+
+// pin takes the earliest pin among the issue's findings.
+func (is *Issue) pin(fd model.Finding) {
+	if !fd.Pinned.IsZero() && (is.Pinned.IsZero() || fd.Pinned.Before(is.Pinned)) {
+		is.Pinned, is.PinnedBy = fd.Pinned, fd.PinnedBy
+	}
+}
+
 // One returns an issue with all its targets in any status. The id may be an alias.
 // Targets outside the filter's projects are left out.
 func One(l *ledger.Ledger, id string, f Filter, now time.Time) (Issue, error) {
@@ -237,6 +260,7 @@ func One(l *ledger.Ledger, id string, f Filter, now time.Time) (Issue, error) {
 	if len(f.Projects) > 0 && len(is.Targets) == 0 {
 		return Issue{}, fmt.Errorf("unknown vulnerability %q", id) // do not reveal what you may not see
 	}
+	is.Recent = f.recent(is.Published, now)
 	return is, nil
 }
 
@@ -268,6 +292,7 @@ func Entries(l *ledger.Ledger, f Filter, now time.Time) []calendar.Entry {
 // addTarget lists a finding on the issue and folds it into the issue's verdicts.
 func (is *Issue) addTarget(fd model.Finding, now time.Time, vendor string) {
 	is.Targets = append(is.Targets, target(fd, now, vendor))
+	is.pin(fd)
 	is.Applies = worst(is.Applies, fd.Applies, len(is.Targets) == 1)
 	is.ProdOpen = is.ProdOpen || (model.IsProd(fd.Env) && fd.Status == model.StatusOpen)
 }

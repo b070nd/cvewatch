@@ -356,6 +356,7 @@ type Update struct {
 	Due      *time.Time // a pointer to the zero time clears the due date
 	Ticket   *string
 	Evidence *model.Evidence
+	Pin      *bool // pin the findings to the top of the lists, or take them off
 }
 
 // Update applies a change to the findings of one vulnerability in a project;
@@ -386,6 +387,9 @@ func (l *Ledger) Update(vulnID, project string, env model.Env, u Update, now tim
 				f.Ticket, d.Ticket = *u.Ticket, *u.Ticket
 			}
 			f.History = append(f.History, d)
+		}
+		if u.Pin != nil {
+			f.Pin(u.Actor, *u.Pin, now)
 		}
 		if u.Evidence != nil {
 			e := *u.Evidence

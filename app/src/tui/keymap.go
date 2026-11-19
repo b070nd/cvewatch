@@ -170,6 +170,7 @@ func init() {
 			bindSeverity(),
 			bindTime(),
 			binding{keys: ks(" "), disp: "space", help: "mark or unmark the issue for a change of many; the cursor moves on", short: "select", prio: 2, do: plain((*app).toggleSelect)},
+			binding{keys: ks("p"), help: "pin the issue to the top of the list for everyone, or unpin it", short: "pin", prio: 4, do: plain((*app).togglePin)},
 			binding{keys: ks("ctrl+a"), help: "select every issue in the list, or none when all of them are selected", short: "all", prio: 3, do: plain((*app).selectAll)},
 			binding{keys: ks("f", "i", "n", "o"), disp: "f/i/n/o", help: "mark every selected issue fixed, ignored, not affected or reopened (its open environments); one note for all",
 				short: "mark selected", prio: 1, when: hasSelection, do: m2(func(m *app, s string) { m.startBulk(statusKeys[s]) })},

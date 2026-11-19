@@ -194,6 +194,7 @@ func ParseTenantFilter(min, vendor, project, env string) (query.Filter, error) {
 // scope narrows a filter to what the actor may see.
 func (s *Session) scope(f query.Filter) (query.Filter, error) {
 	f.Vendors = s.vendors()
+	f.Recent = s.Cfg.Recent
 	projects, _, open := s.Cfg.Allowed(baseActor(s.Actor))
 	switch {
 	case open:
@@ -442,6 +443,20 @@ func (s *Session) Assign(a Assignment) (int, error) {
 		return 0, errors.New("nothing to assign: give -owner, -due or -ticket")
 	}
 	return s.apply(a.ID, a.Project, a.Env, u, audit.Event{Action: "assign", Note: strings.Join(parts, " ")})
+}
+
+// Pin puts an issue at the top of the lists of a project, every environment,
+// or takes it off (on false). Pins are shared: everyone who sees the project
+// sees them, and each change is audited.
+func (s *Session) Pin(id, project string, on bool) (int, error) {
+	if err := s.mayWrite(project); err != nil {
+		return 0, err
+	}
+	action := "pin"
+	if !on {
+		action = "unpin"
+	}
+	return s.apply(id, project, "", ledger.Update{Pin: &on}, audit.Event{Action: action})
 }
 
 // Attachment adds a note and link as evidence for a fix, a decision or a deployment.

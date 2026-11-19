@@ -12,7 +12,7 @@ It starts read-only with these tools:
 
 | Tool | Does |
 |---|---|
-| `list_findings` | open issues, most urgent first (KEV, severity, prod, EPSS, age); filters `min_severity`, `vendor`, `project`, `env`, `include_unaffected`, `include_closed`; returns the versioned export document |
+| `list_findings` | open issues, most urgent first (pinned, published within `recent`, then KEV, severity, prod, EPSS, age); filters `min_severity`, `vendor`, `project`, `env`, `include_unaffected`, `include_closed`; returns the versioned export document |
 | `search_findings` | findings matching a query in the [search syntax](search.md): words, `"phrases"`, `-exclude`, `A OR B` and fields such as `severity:high+`, `vendor:acme`, `project:shop`; filters `open_only`, `min_severity`, `vendor`, `project`, `env`; closed findings are included unless `open_only` is set |
 | `get_vulnerability` | description, articles in chronological order, fix evidence, status per project and environment, report path. Optional `vendor` and `project` leave the targets of other projects out |
 | `explain` | why it matched: recorded reasons and what today's config says. Optional `vendor` and `project` as for `get_vulnerability` |

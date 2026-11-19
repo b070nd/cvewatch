@@ -35,6 +35,7 @@ type Settings struct {
 	Update    Update        `yaml:"update"`     // whether anything is refreshed by itself
 	Lookback  time.Duration `yaml:"lookback"`   // how far back a source's first run reaches
 	Retention time.Duration `yaml:"retention"`  // forget irrelevant items after this; 0 keeps them
+	Recent    time.Duration `yaml:"recent"`     // issues published this recently lead the default order; 0 turns it off
 	DataDir   string        `yaml:"data_dir"`   // state lives here
 	AlertsDir string        `yaml:"alerts_dir"` // markdown reports land here
 	HTTP      HTTP          `yaml:"http"`
@@ -213,6 +214,7 @@ func Defaults() Settings {
 		Interval:  4 * time.Hour,
 		Lookback:  7 * 24 * time.Hour,
 		Retention: 180 * 24 * time.Hour,
+		Recent:    72 * time.Hour,
 		DataDir:   "../data",
 		AlertsDir: "../alerts",
 		HTTP: HTTP{
@@ -636,6 +638,9 @@ func (b *Bundle) validate(decoded map[string]bool, og origins) []Issue {
 	}
 	if b.Storage.DSNEnv != "" && !envName.MatchString(b.Storage.DSNEnv) {
 		failSet("storage.dsn_env", "storage.dsn_env must be the name of an environment variable, not the connection string itself")
+	}
+	if b.Recent < 0 {
+		fail(og.settings, "recent", "recent must not be negative; 0 turns it off")
 	}
 	if b.Retention > 0 && b.Retention < 2*b.Lookback {
 		failSet("retention", "retention must be at least twice the lookback, or old items could be judged again")

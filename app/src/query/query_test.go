@@ -194,3 +194,44 @@ func TestEnvironmentsOfAnyNameSortAndProdOpen(t *testing.T) {
 		t.Errorf("an environment nobody runs in matches nothing: %+v", is)
 	}
 }
+
+func TestRecentAndPinnedIssuesLeadTheList(t *testing.T) {
+	l := ledger.New(ledger.State{})
+	add := func(id string, sev model.Severity, published time.Time) {
+		v := l.Create(model.Item{Title: id + " title", URL: "https://a.test/" + id, IDs: []string{id},
+			Severity: sev, Published: published, SourceID: "feed", SourceType: "rss"}, published, []string{"php"})
+		l.AddFinding(model.Finding{VulnID: v.ID, Project: "shop", Env: model.EnvProd, Status: model.StatusOpen, Applies: model.AppUnknown})
+	}
+	add("CRIT", model.SevCritical, now.AddDate(0, 0, -20))
+	add("NEWS", model.SevUnknown, now.Add(-5*time.Hour))
+	add("LOW", model.SevLow, now.AddDate(0, 0, -30))
+	ids := func(is []Issue) string {
+		var out []string
+		for _, i := range is {
+			out = append(out, i.ID)
+		}
+		return strings.Join(out, " ")
+	}
+
+	if got := ids(Open(l, Filter{}, now)); got != "CRIT LOW NEWS" {
+		t.Fatalf("without a recent window the rank decides: %s", got)
+	}
+	list := Open(l, Filter{Recent: 72 * time.Hour}, now)
+	if got := ids(list); got != "NEWS CRIT LOW" || !list[0].Recent || list[1].Recent {
+		t.Fatalf("an issue published in the window comes first: %s", got)
+	}
+
+	if _, err := l.Update("LOW", "shop", "", ledger.Update{Actor: "ann", Pin: new(true)}, now); err != nil {
+		t.Fatal(err)
+	}
+	list = Open(l, Filter{Recent: 72 * time.Hour}, now)
+	if got := ids(list); got != "LOW NEWS CRIT" || list[0].PinnedBy != "ann" || list[0].Priority[0] != "pinned by ann" {
+		t.Fatalf("a pinned issue comes before the recent ones: %s %+v", got, list[0])
+	}
+	if _, err := l.Update("LOW", "shop", "", ledger.Update{Actor: "ann", Pin: new(false)}, now); err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(Open(l, Filter{Recent: 72 * time.Hour}, now)); got != "NEWS CRIT LOW" {
+		t.Fatalf("unpinned, it goes back to its rank: %s", got)
+	}
+}

@@ -118,7 +118,9 @@ func DetailIn(v *model.Vulnerability, fs []model.Finding, vendors map[string]str
 		d.Issue.addTarget(fd, now, vendors[fd.Project])
 		d.Targets = append(d.Targets, TargetDetail{Project: fd.Project, Env: fd.Env, Installed: slices.Clone(fd.Installed), Evidence: slices.Clone(fd.Evidence)})
 	}
-	d.Why = prodWhere(priority.Reasons(factsOf(v, d.Issue.ProdOpen), now), d.Issue.Targets)
+	facts := factsOf(v, d.Issue.ProdOpen)
+	facts.Pinned, facts.PinnedBy = d.Issue.Pinned, d.Issue.PinnedBy
+	d.Why = prodWhere(priority.Reasons(facts, now), d.Issue.Targets)
 	d.Links = linksOf(v, fs)
 	return d
 }
