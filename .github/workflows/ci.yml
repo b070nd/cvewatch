@@ -35,11 +35,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: no live configuration is tracked
+      - name: no live configuration or local tooling is tracked
         run: |
-          live=$(git ls-files | grep -E '^(app/)?(config|sources)/' | grep -vE '\.dist$' || true)
+          live=$( (git ls-files | grep -E '^(app/)?(config|sources)/' | grep -vE '\.dist$'; git ls-files | grep -E '^\.claude/') || true)
           if [ -n "$live" ]; then
-            echo "Live configuration must stay out of git; only .dist files are tracked:"
+            echo "Live configuration and .claude/ must stay out of git; only .dist files are tracked there:"
             echo "$live"
             exit 1
           fi

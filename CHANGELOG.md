@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- `.claude/` stays out of git as a whole, and CI fails when a file under it is tracked. `build.sh` at the repository root is part of the repository: it builds both binaries into the root folder (`./build.sh`), or the tag on HEAD into `dist/` (`./build.sh tag`).
+
 ## [2.4.0] - 2026-11-19
 
 ### Upgrading from 2.3
