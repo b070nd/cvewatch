@@ -171,6 +171,23 @@ func TestFieldEditorEditsEveryKindOfFieldAndKeepsComments(t *testing.T) {
 	}
 	d.want("Edit fields of shop", "acme")
 
+	// the owner, which new findings and unassigned open ones take
+	d.toField(7)
+	d.press("enter")
+	d.want("Owner of shop", "Environment")
+	d.typ("web-team")
+	d.press("tab")
+	d.typ("qa")
+	d.press("enter")
+	d.want("problem: qa is not an environment of shop")
+	d.press("ctrl+u")
+	d.press("enter")
+	save("set the owner to web-team", "set_owner")
+	if got := fileAt(t, root, "config/projects/shop.yaml"); !strings.Contains(got, "owner: web-team") {
+		t.Fatalf("owner:\n%s", got)
+	}
+	d.want("Edit fields of shop", "web-team")
+
 	// environments: free names, added, renamed and removed one at a time
 	d.toField(0)
 	d.press("enter")

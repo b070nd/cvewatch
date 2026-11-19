@@ -174,6 +174,7 @@ func (c *cycle) revalidate(ctx context.Context, d inventory.Delta, cur model.Jud
 		return rv, err
 	}
 	c.markBackfill(d.Backfill, &rv)
+	c.applyOwners(nil)
 	rv.Reconciled, rv.Retired = c.res.Reconciled-reconciled, len(c.retired)-retired
 	for _, f := range c.retired[retired:] { // records are settled in id order, so these are grouped by id
 		if n := len(rv.Changes); n == 0 || rv.Changes[n-1].ID != f.VulnID || rv.Changes[n-1].Action != "retired" {
@@ -290,6 +291,33 @@ func (c *cycle) applyEnvs(rv *Revalidation, only map[string]bool) {
 		if !slices.Contains(rv.Changes[i].Projects, f.Project) {
 			rv.Changes[i].Projects = append(rv.Changes[i].Projects, f.Project)
 		}
+	}
+}
+
+// applyOwners gives the open findings of the projects run their project's
+// default owner (model.Finding.DefaultOwner): new ones, ones nobody assigned,
+// and ones whose default changed. An owner a person assigned stays. Each
+// change is recorded in the audit trail.
+func (c *cycle) applyOwners(only map[string]bool) {
+	l := c.r.Ledger
+	projects := map[string]model.Project{}
+	for _, p := range c.r.Cfg.Projects {
+		projects[p.Name] = p
+	}
+	for _, f := range l.Findings() {
+		p, ok := projects[f.Project]
+		if !ok || !has(only, f.Project) {
+			continue
+		}
+		owner := p.OwnerIn(f.Env)
+		l.Mutate(f.Key(), func(m *model.Finding) {
+			if !m.DefaultOwner(owner, c.now) {
+				return
+			}
+			c.dirty[m.VulnID] = true
+			c.events = append(c.events, audit.Event{Time: c.now, Actor: "cvewatch", Action: "assign", Vuln: m.VulnID,
+				Project: m.Project, Env: string(m.Env), Note: "owner=" + owner + " (the project's default owner)"})
+		})
 	}
 }
 

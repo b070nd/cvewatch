@@ -62,6 +62,7 @@ type EnvMove struct {
 type ProjectView struct {
 	Name      string      `json:"name"`
 	Vendor    string      `json:"vendor,omitempty"` // the customer or organisation that owns it; empty for none
+	Owner     string      `json:"owner,omitempty"`  // who handles its findings unless a person assigns another
 	Envs      []string    `json:"envs"`
 	Techs     []TechPin   `json:"techs"`
 	Lockfiles []LockEntry `json:"lockfiles"`
@@ -89,6 +90,7 @@ type EnvDiff struct {
 	Techs   map[string]string `json:"techs,omitempty"`   // version there: overrides a generic tech or adds one
 	Exclude []string          `json:"exclude,omitempty"` // generic techs that do not run there
 	Image   string            `json:"image,omitempty"`
+	Owner   string            `json:"owner,omitempty"`        // who handles the findings there, instead of the project's owner
 	Old     bool              `json:"old_spelling,omitempty"` // written under the old environments: key
 }
 
@@ -104,7 +106,7 @@ type LockEntry struct {
 
 // ViewOf copies the parts of a project worth showing.
 func ViewOf(p model.Project) ProjectView {
-	v := ProjectView{Name: p.Name, Vendor: p.Vendor, Envs: []string{}, Techs: []TechPin{}, Lockfiles: []LockEntry{}}
+	v := ProjectView{Name: p.Name, Vendor: p.Vendor, Owner: p.Owner, Envs: []string{}, Techs: []TechPin{}, Lockfiles: []LockEntry{}}
 	for _, e := range p.Envs {
 		v.Envs = append(v.Envs, string(e))
 	}
@@ -117,7 +119,7 @@ func ViewOf(p model.Project) ProjectView {
 	}
 	for _, e := range slices.SortedFunc(maps.Keys(p.Environments), model.EnvCompare) {
 		c := p.Environments[e]
-		v.Differences = append(v.Differences, EnvDiff{Env: string(e), Techs: c.Techs, Exclude: c.Exclude, Image: c.Image, Old: c.Old})
+		v.Differences = append(v.Differences, EnvDiff{Env: string(e), Techs: c.Techs, Exclude: c.Exclude, Image: c.Image, Owner: c.Owner, Old: c.Old})
 	}
 	for _, l := range p.Lockfiles {
 		declared := ""

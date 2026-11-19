@@ -182,6 +182,15 @@ var OpTable = []OpSpec{
 		Flag:    "-vendor NAME", Args: []string{"-vendor", "acme"},
 	},
 	{
+		Kind: KindSetOwner, Guided: true, Summary: "set who handles the project's findings unless a person assigns another, for the whole project or one environment",
+		Params: []Param{
+			{"owner", "string", false, "a person, team or address, one line of at most 100 characters; empty clears"},
+			{"env", "env", false, "only this environment (its when@ block); empty sets the owner of the whole project"},
+		},
+		Example: Op{Kind: KindSetOwner, Owner: "ann"},
+		Flag:    "-owner [ENV=]NAME", Args: []string{"-owner", "ann"},
+	},
+	{
 		Kind: KindSetProfile, Summary: "set how much evidence a match needs for the project: strict, balanced or discovery; empty takes the global profile",
 		Params:  []Param{{"profile", "string", false, "strict, balanced or discovery; empty clears, so the profile of config.yaml applies"}},
 		Example: Op{Kind: KindSetProfile, Profile: "strict"},

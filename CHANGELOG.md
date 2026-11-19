@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Default owners: `owner:` in a project file, and `owner:` in a `when@ENV` block for one environment. Open findings without an owner take it, new ones as they are found and existing ones on the next cycle or revalidation; an owner cvewatch set follows the default, and one a person assigned is never replaced. Set it in the TUI (Owner in a project's fields), with `cvewatch project NAME -owner [ENV=]NAME` or the MCP op `set_owner`.
+- `a` in the TUI Findings list assigns an owner, a due date or a ticket to every open environment of the marked issues at once, as one audited operation.
+
 ## [2.4.0] - 2026-11-19
 
 ### Upgrading from 2.3

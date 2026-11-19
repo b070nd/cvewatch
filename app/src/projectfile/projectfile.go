@@ -122,6 +122,7 @@ type Op struct {
 	Image    string         `json:"image,omitempty"`
 	Since    string         `json:"since,omitempty"`    // YYYY-MM-DD, for set_since; empty clears
 	Vendor   string         `json:"vendor,omitempty"`   // for set_vendor; empty clears
+	Owner    string         `json:"owner,omitempty"`    // for set_owner; empty clears
 	Profile  string         `json:"profile,omitempty"`  // strict, balanced or discovery, for set_profile; empty clears
 	Every    string         `json:"every,omitempty"`    // a period, for set_update; "default" removes it, empty leaves it
 	Auto     *bool          `json:"auto,omitempty"`     // for set_update; nil leaves it
@@ -234,6 +235,18 @@ func apply(root *yaml.Node, op Op) error {
 		return setUpdate(root, strings.TrimSpace(op.Every), op.Auto)
 	case KindSetVendor:
 		return setVendor(root, strings.TrimSpace(op.Vendor))
+	case KindSetOwner:
+		owner := strings.TrimSpace(op.Owner)
+		if !model.ValidOwner(owner) {
+			return fmt.Errorf("invalid owner %q (one line, at most 100 characters)", owner)
+		}
+		if op.Env == "" {
+			return setOwner(root, owner)
+		}
+		if !op.Env.Valid() {
+			return fmt.Errorf("invalid env %q (lowercase letters, digits, - and _)", op.Env)
+		}
+		return setEnvOwner(root, op.Env, owner)
 	}
 	return fmt.Errorf("unknown kind %q", op.Kind)
 }
@@ -420,6 +433,27 @@ func setVendor(root *yaml.Node, vendor string) error {
 		at = i + 2
 	}
 	root.Content = append(root.Content[:at], append([]*yaml.Node{str("vendor", 0), str(vendor, 0)}, root.Content[at:]...)...)
+	return nil
+}
+
+// setOwner sets the project's default owner, right after the vendor or the name.
+func setOwner(root *yaml.Node, owner string) error {
+	if owner == "" {
+		mapDel(root, "owner")
+		return nil
+	}
+	if mapGet(root, "owner") != nil {
+		setStr(root, "owner", owner, 0)
+		return nil
+	}
+	at := len(root.Content)
+	for _, after := range []string{"vendor", "name"} {
+		if i := mapIndex(root, after); i >= 0 {
+			at = i + 2
+			break
+		}
+	}
+	root.Content = append(root.Content[:at], append([]*yaml.Node{str("owner", 0), str(owner, 0)}, root.Content[at:]...)...)
 	return nil
 }
 

@@ -413,6 +413,42 @@ func (s *Session) Assign(a Assignment) (int, error) {
 	if err := validateTarget(s.Cfg, a.Project, a.Env); err != nil {
 		return 0, err
 	}
+	u, ev, err := a.update()
+	if err != nil {
+		return 0, err
+	}
+	return s.apply(a.ID, a.Project, a.Env, u, ev)
+}
+
+// assignInMemory checks one assignment and makes it in the ledger, without
+// recording or saving it (see bulkOnce).
+func (s *Session) assignInMemory(a Assignment) (int, string, audit.Event, error) {
+	if err := s.mayWrite(a.Project); err != nil {
+		return 0, "", audit.Event{}, err
+	}
+	if err := validateTarget(s.Cfg, a.Project, a.Env); err != nil {
+		return 0, "", audit.Event{}, err
+	}
+	u, ev, err := a.update()
+	if err != nil {
+		return 0, "", audit.Event{}, err
+	}
+	v := s.Ledger.Lookup([]string{strings.ToUpper(strings.TrimSpace(a.ID))})
+	if v == nil {
+		return 0, "", audit.Event{}, fmt.Errorf("unknown vulnerability %q", a.ID)
+	}
+	now := s.Now()
+	u.Actor = s.Actor
+	n, err := s.Ledger.Update(v.ID, a.Project, a.Env, u, now)
+	if err != nil {
+		return 0, "", audit.Event{}, err
+	}
+	ev.Time, ev.Actor, ev.Vuln, ev.Project, ev.Env = now, s.Actor, v.ID, a.Project, string(a.Env)
+	return n, v.ID, ev, nil
+}
+
+// update is the ledger change and the audit event of an assignment.
+func (a Assignment) update() (ledger.Update, audit.Event, error) {
 	var u ledger.Update
 	var parts []string
 	if a.Owner != "" {
@@ -433,16 +469,16 @@ func (s *Session) Assign(a Assignment) (int, error) {
 		if a.Due != "none" && a.Due != "-" {
 			var err error
 			if d, err = time.Parse("2006-01-02", a.Due); err != nil {
-				return 0, fmt.Errorf("due must look like 2026-11-30: %w", err)
+				return u, audit.Event{}, fmt.Errorf("due must look like 2026-11-30: %w", err)
 			}
 		}
 		u.Due = &d
 		parts = append(parts, "due="+d.Format("2006-01-02"))
 	}
 	if len(parts) == 0 {
-		return 0, errors.New("nothing to assign: give -owner, -due or -ticket")
+		return u, audit.Event{}, errors.New("nothing to assign: give -owner, -due or -ticket")
 	}
-	return s.apply(a.ID, a.Project, a.Env, u, audit.Event{Action: "assign", Note: strings.Join(parts, " ")})
+	return u, audit.Event{Action: "assign", Note: strings.Join(parts, " ")}, nil
 }
 
 // Pin puts an issue at the top of the lists of a project, every environment,

@@ -252,6 +252,7 @@ func (t Tech) Terms() []string {
 type Project struct {
 	Name      string        `yaml:"name"`
 	Vendor    string        `yaml:"vendor"` // the customer or organisation that owns the project; empty means none
+	Owner     string        `yaml:"owner"`  // who handles its findings unless a person assigns another; empty means nobody
 	Envs      []Env         `yaml:"envs"`   // none means LegacyEnvs
 	Techs     []ProjectTech `yaml:"techs"`
 	Lockfiles []Lockfile    `yaml:"lockfiles"`
@@ -322,6 +323,7 @@ type EnvConfig struct {
 	Techs   map[string]string `yaml:"techs"`   // tech name -> version there: overrides a generic tech or adds one that exists only here
 	Exclude []string          `yaml:"exclude"` // generic techs that do not run here
 	Image   string            `yaml:"image"`   // image tag or digest, recorded only; no registry is queried
+	Owner   string            `yaml:"owner"`   // who handles the findings there, instead of the project's owner
 	Old     bool              `yaml:"-"`       // written under the old environments: key
 }
 
@@ -329,6 +331,29 @@ type ProjectTech struct {
 	Name    string `yaml:"name"`
 	Version string `yaml:"version"`
 	Envs    []Env  `yaml:"envs"` // present only in these environments; none means all
+}
+
+// OwnerIn is who handles the project's findings in env: the environment's own
+// owner, else the project's; empty when neither is set.
+func (p Project) OwnerIn(env Env) string {
+	if o := p.Environments[env].Owner; o != "" {
+		return o
+	}
+	return p.Owner
+}
+
+// ValidOwner reports whether s can be an owner: a person, team or address on
+// one line of at most 100 characters.
+func ValidOwner(s string) bool {
+	if len([]rune(s)) > 100 {
+		return false
+	}
+	for _, r := range s {
+		if r < ' ' || r == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 // WhenPrefix starts the key of a block of differences: when@prod.
@@ -345,7 +370,7 @@ func (k *keyAt) UnmarshalYAML(n *yaml.Node) error {
 	return nil
 }
 
-var projectKeys = []string{"name", "vendor", "envs", "techs", "lockfiles", "since", "profile", "update", "environments"}
+var projectKeys = []string{"name", "vendor", "owner", "envs", "techs", "lockfiles", "since", "profile", "update", "environments"}
 
 // UnmarshalYAML gathers the when@<env> blocks into Environments next to the
 // old environments: map; any other unknown key stays an error.
@@ -394,7 +419,7 @@ func (p *Project) UnmarshalYAML(unmarshal func(any) error) error {
 		}
 		var ec EnvConfig
 		for j := 0; val.Kind == yaml.MappingNode && j+1 < len(val.Content); j += 2 {
-			if k := val.Content[j]; k.Value != "techs" && k.Value != "exclude" && k.Value != "image" {
+			if k := val.Content[j]; k.Value != "techs" && k.Value != "exclude" && k.Value != "image" && k.Value != "owner" {
 				errs = append(errs, fmt.Sprintf("line %d: field %s not found in type model.EnvConfig", k.Line, k.Value))
 			}
 		}
@@ -842,11 +867,14 @@ type Finding struct {
 
 	// Workflow. Owner, Due and Ticket say who handles it and by when; Note is
 	// the current reason or remark; Evidence and History keep the trail.
-	Owner    string        `json:"owner,omitempty"`
-	Due      time.Time     `json:"due,omitempty"`
-	Ticket   string        `json:"ticket,omitempty"` // change ticket, merge request or similar link
-	Evidence []Evidence    `json:"evidence,omitempty"`
-	History  []Disposition `json:"history,omitempty"`
+	Owner string `json:"owner,omitempty"`
+	// OwnerDefault says Owner is the project's default owner, which cvewatch
+	// set; a person's assignment clears it, and only then is the owner theirs.
+	OwnerDefault bool          `json:"owner_default,omitempty"`
+	Due          time.Time     `json:"due,omitempty"`
+	Ticket       string        `json:"ticket,omitempty"` // change ticket, merge request or similar link
+	Evidence     []Evidence    `json:"evidence,omitempty"`
+	History      []Disposition `json:"history,omitempty"`
 	// Alerted records the delivery per channel ("slack", "webhook", "email"),
 	// so one failing channel does not repeat alerts on the others.
 	Alerted map[string]time.Time `json:"alerted,omitempty"`

@@ -57,6 +57,46 @@ func (s *Session) ResolveAll(cs []Change) (BulkResult, error) {
 }
 
 func (s *Session) resolveAllOnce(cs []Change) (BulkResult, error) {
+	res, err := s.bulkOnce(len(cs), func(i int) (int, string, audit.Event, error) { return s.resolveInMemory(cs[i]) })
+	res.Done = cs[:res.Applied]
+	return res, err
+}
+
+// Assignments are the assignments that give every listed issue the owner,
+// due date and ticket on each of its open environments. Empty keeps a value,
+// "-" clears it, as in Assign.
+func Assignments(issues []query.Issue, owner, due, ticket string) []Assignment {
+	var out []Assignment
+	for _, is := range issues {
+		for _, t := range is.Targets {
+			if t.Status == model.StatusOpen {
+				out = append(out, Assignment{ID: is.ID, Project: t.Project, Env: t.Env, Owner: owner, Due: due, Ticket: ticket})
+			}
+		}
+	}
+	return out
+}
+
+// AssignAll applies assignments as one operation, like ResolveAll: each is
+// checked and audited on its own, the reports are rewritten once and the
+// ledger is saved once. It stops at the first one refused. Done stays empty.
+func (s *Session) AssignAll(as []Assignment) (BulkResult, error) {
+	run := func() (BulkResult, error) {
+		return s.bulkOnce(len(as), func(i int) (int, string, audit.Event, error) { return s.assignInMemory(as[i]) })
+	}
+	res, err := run()
+	if errors.Is(err, store.ErrConflict) {
+		if rerr := s.reload(); rerr != nil {
+			return BulkResult{}, rerr
+		}
+		return run()
+	}
+	return res, err
+}
+
+// bulkOnce runs n changes in memory, records each in the audit trail,
+// rewrites the reports of the issues touched and saves once.
+func (s *Session) bulkOnce(count int, one func(i int) (int, string, audit.Event, error)) (BulkResult, error) {
 	var (
 		res     BulkResult
 		events  []audit.Event
@@ -64,8 +104,8 @@ func (s *Session) resolveAllOnce(cs []Change) (BulkResult, error) {
 		refused error
 	)
 	now := s.Now()
-	for _, c := range cs {
-		n, id, ev, err := s.resolveInMemory(c)
+	for i := range count {
+		n, id, ev, err := one(i)
 		if err != nil {
 			refused = err
 			break
@@ -80,7 +120,6 @@ func (s *Session) resolveAllOnce(cs []Change) (BulkResult, error) {
 		events = append(events, ev)
 		res.Applied++
 		res.Findings += n
-		res.Done = append(res.Done, c)
 		if !slices.Contains(changed, id) {
 			changed = append(changed, id)
 		}
@@ -105,7 +144,7 @@ func (s *Session) resolveAllOnce(cs []Change) (BulkResult, error) {
 	}
 	if refused != nil {
 		if res.Applied > 0 {
-			refused = fmt.Errorf("%d of %d changes written, then: %w", res.Applied, len(cs), refused)
+			refused = fmt.Errorf("%d of %d changes written, then: %w", res.Applied, count, refused)
 		}
 		return res, refused
 	}

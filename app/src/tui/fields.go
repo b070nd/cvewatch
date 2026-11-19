@@ -58,11 +58,12 @@ const (
 	fldSince  = "since"
 	fldUpdate = "update"
 	fldVendor = "vendor"
+	fldOwner  = "owner"
 )
 
 var fieldLabels = map[string]string{
 	fldEnvs: "Environments", fldTechs: "Technologies", fldLocks: "Lockfiles",
-	fldDiff: "Differences per environment", fldSince: "Since", fldUpdate: "Updates", fldVendor: "Vendor",
+	fldDiff: "Differences per environment", fldSince: "Since", fldUpdate: "Updates", fldVendor: "Vendor", fldOwner: "Owner",
 }
 
 var fieldHeads = map[string][]string{
@@ -150,7 +151,26 @@ func topRows(p projectRow) []fieldRow {
 	return []fieldRow{
 		row(fldEnvs, envList(p)), row(fldTechs, techList(p)), row(fldLocks, locks),
 		row(fldDiff, diffs), row(fldSince, since), row(fldUpdate, orDash(p.Updates)), row(fldVendor, vendorText(p)),
+		row(fldOwner, ownerText(p)),
 	}
+}
+
+// ownerText is who handles the project's findings unless a person assigns
+// another: the project's owner and each environment's own.
+func ownerText(p projectRow) string {
+	var parts []string
+	if p.Owner != "" {
+		parts = append(parts, oneLine(p.Owner))
+	}
+	for _, d := range p.Differences {
+		if d.Owner != "" {
+			parts = append(parts, d.Env+": "+oneLine(d.Owner))
+		}
+	}
+	if len(parts) == 0 {
+		return "none: findings are assigned by hand"
+	}
+	return strings.Join(parts, "; ")
 }
 
 // vendorText is the vendor as the field list shows it: the customer or organisation that owns the project.
@@ -479,6 +499,8 @@ func (m *app) fieldOpen() tea.Cmd {
 			m.promptUpdate(p)
 		case fldVendor:
 			m.promptVendor(p)
+		case fldOwner:
+			m.promptOwner(p)
 		default:
 			ed.open = row.id
 			ed.sub.reset(len(subRows(p, row.id)))
@@ -790,6 +812,30 @@ func (m *app) promptVendor(p projectRow) {
 				label = "clear the vendor"
 			}
 			return label, []projectfile.Op{{Kind: projectfile.KindSetVendor, Vendor: v[0]}}, nil
+		})
+}
+
+func (m *app) promptOwner(p projectRow) {
+	owner, env := field{label: "Owner"}, field{label: "Environment"}
+	owner.in.set(p.Owner)
+	m.editPrompt(p, "Owner of "+p.Name, "who handles the findings unless a person assigns another: a person, team or address; new findings and open ones nobody assigned take it. An environment gives that environment its own; empty means the whole project. An empty owner clears it", []field{owner, env},
+		func(v []string) (string, []projectfile.Op, error) {
+			if !model.ValidOwner(v[0]) {
+				return "", nil, errors.New("an owner is one line of at most 100 characters")
+			}
+			e := model.Env(v[1])
+			if v[1] != "" && !slices.Contains(p.Envs, v[1]) {
+				return "", nil, fmt.Errorf("%s is not an environment of %s (%s)", v[1], p.Name, strings.Join(p.Envs, ", "))
+			}
+			where := ""
+			if e != "" {
+				where = " in " + v[1]
+			}
+			label := "set the owner" + where + " to " + v[0]
+			if v[0] == "" {
+				label = "clear the owner" + where
+			}
+			return label, []projectfile.Op{{Kind: projectfile.KindSetOwner, Owner: v[0], Env: e}}, nil
 		})
 }
 

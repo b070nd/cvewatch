@@ -378,7 +378,7 @@ func (l *Ledger) Update(vulnID, project string, env model.Env, u Update, now tim
 		if u.Owner != nil || u.Due != nil || u.Ticket != nil {
 			d := model.Disposition{Time: now, Actor: u.Actor, Action: "assign"}
 			if u.Owner != nil {
-				f.Owner, d.Owner = *u.Owner, *u.Owner
+				f.Owner, d.Owner, f.OwnerDefault = *u.Owner, *u.Owner, false // a person's choice from now on
 			}
 			if u.Due != nil {
 				f.Due, d.Due = *u.Due, *u.Due

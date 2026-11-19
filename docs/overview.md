@@ -229,6 +229,7 @@ Below the summary, the list holds every open issue. It is searched and sorted li
 | Ctrl+A | mark every issue in the list, or clear the marks when all are marked |
 | `p` | pin the issue to the top of its project's list, or unpin it. A pin is shared with everyone who sees the project and is audited. The title shows `[PIN]`; issues published within `recent` show `[NEW]`. A sort by a column ignores both |
 | `f` `i` `n` `o` | with marks: set every marked issue fixed, ignored, not affected, or open again |
+| `a` | with marks: give every open environment of the marked issues an owner, a due date or a ticket, one prompt for all and one audited operation. Empty keeps a value, `-` clears it |
 | Esc | clear the marks first; then go back to where a jump came from; then clear the filter |
 
 **An issue** (Enter on Findings)
@@ -258,7 +259,7 @@ Below the summary, the list holds every open issue. It is searched and sorted li
 | Enter | open the project: its problems, each with its fix, and its security issues. It also sets the context to the project (see [Context](#context)) |
 | `+` | add a project: from a folder, from a Dockerfile, compose or Kubernetes file, or an empty one (see [Adding a project](#adding-a-project-tui)) |
 | `-` | remove the selected project: it shows what it affects, asks for its name, and the file moves to the backups |
-| `c` | open the project's fields: environments, technologies, lockfiles, differences per environment, since, updates, vendor (see [Editing a project](#editing-a-project)) |
+| `c` | open the project's fields: environments, technologies, lockfiles, differences per environment, since, updates, vendor, owner (see [Editing a project](#editing-a-project)) |
 | `w` | work through the project's hints (see [Hints](#hints)) |
 | `e` | edit the project step by step in the guided form |
 | `a` | add a project in the guided form (`n` too) |
@@ -465,6 +466,7 @@ On the Projects screen, `c` opens the fields of the selected project. Inside a p
 | Lockfiles | the type, path, environment and dev flag of each lockfile | Enter or `d` toggles dev; `+` (or `a`) adds a lockfile by picking its file with Tab completion: the type comes from the name, then the prompt asks for the environment (empty means every environment) and dev (yes or no); `-` (or `x`) removes it after a question |
 | Since | where the history of the project starts | Enter opens a list like the time range of a dashboard: Past 24 hours, week, month, 3 months, 6 months, year, Any time, or Custom. A span is saved as the day or time it means now. Custom takes a day (`2026-01-31`), a time (`2026-01-31T08:30:00Z`, UTC) or a span (`24h`, `7d`, `2w`, `3m`, `1y`); an empty value clears it |
 | Vendor | the customer or organisation that owns the project (see [Vendors and projects](#vendors-and-projects)) | Enter opens a prompt for a lowercase name such as `acme`; an empty value clears it |
+| Owner | who handles the project's findings unless a person assigns another (see [Default owners](#default-owners)) | Enter opens a prompt for the owner and, optionally, one environment; an empty owner clears it |
 
 `s` on the list of fields adds inputs: give a folder, or a Dockerfile, compose file, manifest or lockfile, and what it names is merged into the project. Technologies already declared stay as they are (a declared technology without a version learns it from the scan), new ones and new lockfiles are added, and you see the change before it is saved. When the scan finds another version of a declared technology, you choose: only in one environment, everywhere, or keep the project as it is. A file you name is read even if `.gitignore` lists it. An image whose tag carries a runtime (`1.1.7-php-8.2.35`) gives that runtime and version. Run it again with another folder to add more. `+` for a lockfile in the same list takes a Dockerfile, Containerfile or compose file too and merges it the same way. A DDEV project (`.ddev/config.yaml`) gives its PHP, Node.js, database and web server versions.
 
@@ -519,6 +521,7 @@ cvewatch project shop -set php=8.3 -save                # write it; a backup goe
 | `-lock-nodev TYPE:PATH[:ENV]` | change an existing entry to stop counting them outside development-like environments |
 | `-since WHEN` | advisories count from this day (`YYYY-MM-DD`), this time (`2026-01-31T08:30:00Z`) or a span back from now (`24h`, `7d`, `2w`, `3m`, `1y`, saved as the day or time it means now); `-since ""` clears it |
 | `-vendor NAME` | the vendor that owns the project (see [Vendors and projects](#vendors-and-projects)); `-vendor ""` clears it |
+| `-owner [ENV=]NAME` | the default owner of the project, or with `ENV=` of one environment (see [Default owners](#default-owners)); empty clears it; repeatable |
 | `-update-every SPAN` | how often the project is refreshed, such as `30m`, `1h` or `2d` (at least 5m); `default` removes it (see [Update schedule per project](#update-schedule-per-project)) |
 | `-update-auto BOOL` | `false` leaves the project out of scheduled runs, `true` puts it back |
 | `-save` | write the change |
@@ -621,6 +624,23 @@ Findings stay with their project and are never merged across projects or vendors
 - The terms of a search that name a project, vendor, environment, status or owner must hold on the same environment of the same project. `project:crm env:prod` finds nothing when `crm` has no prod environment, even if another project does.
 - When an issue is open in several projects, the reason "open in prod" names the projects that are: `open in prod: blog, shop`.
 - An `access` rule can grant every project of a vendor with `vendor:acme` next to project names. It is resolved on every request, so a project added to the vendor later is covered, and one that leaves it is not. Setting a vendor needs write access to every project, because it decides who may see the project.
+
+## Default owners
+
+A project can name who handles its findings, and an environment can name its own:
+
+```yaml
+name: shop
+owner: web-team
+when@prod:
+  owner: ops-oncall
+```
+
+An owner is a person, team or address on one line, at most 100 characters. Set it in the TUI (`c` on a project, then Owner), with `cvewatch project shop -owner web-team -owner prod=ops-oncall -save`, the MCP op `set_owner` or by hand.
+
+- Every open finding without an owner takes the default of its environment, else of the project: new ones as they are found, and existing ones on the next cycle or revalidation after the default is set.
+- An owner cvewatch set this way follows the default when it changes, and goes when the default is removed. An owner a person assigned (`a` on an issue, `a` on marked issues, `cvewatch assign`, the MCP `assign`) is never replaced.
+- Closed findings are left as they are. Each change is in the finding's history and in the audit log, by `cvewatch`.
 
 ## Start date per project
 
