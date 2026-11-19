@@ -28,6 +28,10 @@ type ProjectChange struct {
 	// not in the catalog yet. They count as known while the change is checked
 	// and are written to techs.yaml, before the project, when it is saved.
 	NewTechs []model.Tech
+	// Template is the name of a projects/<name>.yaml.dist file the new project
+	// starts from, with its name set to Project; only for a project that does
+	// not exist yet.
+	Template string
 }
 
 // ProjectPreview is what a change does, so callers can show it before saving.
@@ -349,6 +353,8 @@ func (s *Session) EditProject(c ProjectChange) (ProjectPreview, error) {
 	old, err := os.ReadFile(path)
 	var f *projectfile.File
 	switch {
+	case err == nil && c.Template != "":
+		return out, fmt.Errorf("a project named %q already exists; a template only starts a new one", name)
 	case err == nil:
 		if f, err = projectfile.Parse(old); err != nil {
 			return out, err
@@ -358,7 +364,12 @@ func (s *Session) EditProject(c ProjectChange) (ProjectPreview, error) {
 		if _, _, open := s.Cfg.Allowed(baseActor(s.Actor)); !open {
 			return out, fmt.Errorf("%w: %s may not create projects", ErrDenied, s.Actor)
 		}
-		if f, err = projectfile.New(name); err != nil {
+		if c.Template != "" {
+			f, err = s.fromTemplate(c.Template, name)
+		} else {
+			f, err = projectfile.New(name)
+		}
+		if err != nil {
 			return out, err
 		}
 	default:

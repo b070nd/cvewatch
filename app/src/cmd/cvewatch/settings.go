@@ -68,29 +68,47 @@ type settingRow struct {
 	Value   string   `json:"value,omitempty"`
 	Items   []string `json:"items,omitempty"`
 	Secret  bool     `json:"secret,omitempty"`
+	Shared  bool     `json:"shared,omitempty"` // from a .dist file, not overridden by the user's file
 }
 
 func (r settingRow) shown() string {
+	v := r.Value
 	if r.Items != nil {
-		return strings.Join(r.Items, ", ")
+		v = strings.Join(r.Items, ", ")
 	}
-	return r.Value
+	if r.Shared {
+		v += " (shared)"
+	}
+	return v
 }
 
-// settingRows flattens the editable documents; shipped ones are reference only.
+// settingRows flattens the editable documents and the values of the shared
+// .dist files they do not override; shipped ones are reference only.
 func settingRows(v ops.SettingsView) []settingRow {
 	order := confdoc.Sections()
 	var rows []settingRow
-	for _, d := range v.Docs {
-		if d.Layer != confdoc.LayerUser {
-			continue
-		}
-		for _, e := range d.Entries {
-			sec := "Other"
-			if f, ok := confdoc.Lookup(d.Kind, e.Path); ok {
-				sec = f.Section
+	set := map[string][][]string{} // the paths the user's files set, by kind
+	for _, layer := range []confdoc.Layer{confdoc.LayerUser, confdoc.LayerDist} {
+		for _, d := range v.Docs {
+			if d.Layer != layer {
+				continue
 			}
-			rows = append(rows, settingRow{Section: sec, Doc: d.ID, Path: e.Path, Value: e.Value, Items: e.Items, Secret: e.Secret})
+			for _, e := range d.Entries {
+				segs, err := confdoc.ParsePath(e.Path)
+				if err != nil {
+					continue
+				}
+				if layer == confdoc.LayerUser {
+					set[d.Kind] = append(set[d.Kind], segs)
+				} else if overridden(set[d.Kind], d.Kind, segs) {
+					continue
+				}
+				sec := "Other"
+				if f, ok := confdoc.Lookup(d.Kind, e.Path); ok {
+					sec = f.Section
+				}
+				rows = append(rows, settingRow{Section: sec, Doc: d.ID, Path: e.Path, Value: e.Value, Items: e.Items, Secret: e.Secret, Shared: layer == confdoc.LayerDist})
+			}
 		}
 	}
 	rank := func(sec string) int {
@@ -101,6 +119,20 @@ func settingRows(v ops.SettingsView) []settingRow {
 	}
 	slices.SortStableFunc(rows, func(a, b settingRow) int { return rank(a.Section) - rank(b.Section) })
 	return rows
+}
+
+// overridden says the user's files set the part of a shared value they replace.
+func overridden(user [][]string, kind string, segs []string) bool {
+	unit := segs
+	if n := confdoc.OverrideUnit(kind, segs); n > 0 {
+		unit = segs[:n]
+	}
+	for _, u := range user {
+		if len(u) >= len(unit) && slices.Equal(u[:len(unit)], unit) {
+			return true
+		}
+	}
+	return false
 }
 
 func printIssues(issues []confdoc.Issue) {

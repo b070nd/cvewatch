@@ -1,5 +1,6 @@
-# Your own feeds, added to the shipped ones. An entry with the id of a shipped
-# feed changes only the fields it gives, so `- {id: cve-records, disabled: true}`
+# Feeds added to the shipped ones. Files ending in .yaml.dist hold the ones
+# shared by everyone who uses this folder; *.yaml files hold a person's own.
+# An entry with the id of an earlier feed changes only the fields it gives, so `- {id: cve-records, disabled: true}`
 # switches that feed off. Technology-specific vendor feeds switch on by
 # themselves when a project declares that technology.
 #

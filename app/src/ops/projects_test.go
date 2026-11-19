@@ -185,3 +185,33 @@ func TestLockfileOpsAcceptDeclaredOrResolvedPath(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestANewProjectCanStartFromATemplate(t *testing.T) {
+	s := editable(t, nil, "alice")
+	dir := config.ProjectsDir(s.Cfg.Root)
+	os.MkdirAll(dir, 0o755)
+	tmpl := "# the team's web shop layout\nname: webshop\nenvs: [local, prod] # our two\ntechs:\n  - {name: php, version: \"8.2\"}\n"
+	if err := os.WriteFile(filepath.Join(dir, "webshop.yaml.dist"), []byte(tmpl), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if names, err := s.ProjectTemplates(); err != nil || len(names) != 1 || names[0] != "webshop" {
+		t.Fatalf("templates: %v %v", names, err)
+	}
+	p, err := s.EditProject(ProjectChange{Project: "blog", Template: "webshop", Save: true})
+	if err != nil || !p.Saved || !p.Created {
+		t.Fatalf("%+v %v", p, err)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "blog.yaml"))
+	if !strings.Contains(string(got), "name: blog") || !strings.Contains(string(got), "envs: [local, prod] # our two") || !strings.Contains(string(got), "# the team's web shop layout") {
+		t.Fatalf("the template is copied with the new name and its comments:\n%s", got)
+	}
+	if _, err := s.EditProject(ProjectChange{Project: "blog", Template: "webshop"}); err == nil {
+		t.Fatal("a template only starts a new project")
+	}
+	if _, err := s.EditProject(ProjectChange{Project: "news", Template: "../config"}); err == nil || !strings.Contains(err.Error(), "no project template") {
+		t.Fatalf("only a listed template is read: %v", err)
+	}
+	if n, err := s.Audit.Verify(); err != nil || n != 1 {
+		t.Fatalf("the creation is audited: n=%d err=%v", n, err)
+	}
+}

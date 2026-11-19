@@ -1,7 +1,9 @@
-# Your own technologies. The ones cvewatch ships (run `cvewatch catalog` to
-# list them) are always available: add an entry here only for something that
+# Technologies added to the ones cvewatch ships (run `cvewatch catalog` to
+# list them), which are always available: add an entry only for something that
 # is missing, or to change a shipped one. An entry with the same name replaces
-# the shipped one; `disabled: true` removes it.
+# the shipped one; `disabled: true` removes it. techs.yaml.dist holds the ones
+# shared by everyone who uses this folder; techs.yaml holds a person's own,
+# and an entry there replaces a shared one with the same name.
 #
 # techs:
 #   - name: acme-gateway

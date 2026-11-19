@@ -32,6 +32,7 @@ type snapshot struct {
 	Projects   []projectRow
 	Warnings   []string       // parts that could not be read; the rest is still shown
 	Horizon    config.Horizon // which publication dates the daemon judges and alerts
+	Templates  []string       // project templates (ops.Workspace.Templates)
 
 	Stamp      string        // the files the findings are judged from, as they were when read (see inventory.FilesStamp)
 	Stale      ops.Staleness // whether the findings were judged against something else
@@ -68,7 +69,7 @@ func loadSnapshotMemo(s *ops.Session, memo *ops.StaleCache) (*snapshot, error) {
 	if err != nil {
 		return nil, err // access denied shows here
 	}
-	sn := &snapshot{At: w.At, Root: w.Root, ByProject: w.Issues, Wide: w.Wide, Status: w.Status, Violations: w.Violations, Horizon: w.Horizon}
+	sn := &snapshot{At: w.At, Root: w.Root, ByProject: w.Issues, Wide: w.Wide, Status: w.Status, Violations: w.Violations, Horizon: w.Horizon, Templates: w.Templates}
 	for _, warning := range w.Warnings {
 		sn.Warnings = append(sn.Warnings, oneLine(warning))
 	}

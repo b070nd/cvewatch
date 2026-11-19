@@ -106,6 +106,7 @@ type settingsIn struct {
 type settingsDoc struct {
 	ID      string          `json:"id"`
 	Kind    string          `json:"kind"`
+	Layer   confdoc.Layer   `json:"layer" jsonschema:"user: the file edits go to; dist: shared defaults (a .dist file) that the user file overrides key by key, never changed by these tools"`
 	Path    string          `json:"path,omitempty"`
 	Exists  bool            `json:"exists"`
 	Error   string          `json:"error,omitempty" jsonschema:"set when the file cannot be read as YAML; its values are then not listed"`
@@ -126,8 +127,8 @@ func (s *server) getSettings(_ context.Context, _ *mcp.CallToolRequest, in setti
 			return err
 		}
 		for _, d := range v.Docs {
-			if d.Layer == confdoc.LayerUser { // shipped documents are reference only
-				out.Docs = append(out.Docs, settingsDoc{ID: d.ID, Kind: d.Kind, Path: d.Path, Exists: d.Exists, Error: d.Error, Entries: d.Entries})
+			if d.Layer != confdoc.LayerShipped { // shipped documents are reference only
+				out.Docs = append(out.Docs, settingsDoc{ID: d.ID, Kind: d.Kind, Layer: d.Layer, Path: d.Path, Exists: d.Exists, Error: d.Error, Entries: d.Entries})
 			}
 		}
 		out.Issues = append(out.Issues, v.Issues...)

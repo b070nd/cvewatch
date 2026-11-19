@@ -1133,11 +1133,11 @@ type editCheckedMsg struct {
 }
 
 func editCheckCmd(b Backend, fx *fixState, project string, edits []projectfile.Op, seen map[string]bool) tea.Cmd {
-	techs := fx.techs
+	techs, template := fx.techs, fx.template
 	return func() tea.Msg {
 		var p ops.ProjectPreview
 		err := b.Read(func(s *ops.Session) (e error) {
-			p, e = s.EditProject(ops.ProjectChange{Project: project, Ops: edits, NewTechs: techs})
+			p, e = s.EditProject(ops.ProjectChange{Project: project, Ops: edits, NewTechs: techs, Template: template})
 			return e
 		})
 		return editCheckedMsg{fx: fx, prev: p, seen: seen, err: err}
@@ -1172,6 +1172,20 @@ func (m *app) editChecked(msg editCheckedMsg) outcome {
 		m.prj.ed.pick = nil // the choice is made; esc from the preview comes back to the list
 	}
 	return outcome{}
+}
+
+// submitTemplate previews a new project that starts from a template.
+func (m *app) submitTemplate(p *prompt, name string) tea.Cmd {
+	if name == "" {
+		p.problem = "give the project a name"
+		return nil
+	}
+	if m.data != nil && slices.ContainsFunc(m.data.Projects, func(r projectRow) bool { return r.Name == name }) {
+		p.problem = fmt.Sprintf("a project named %q already exists", name)
+		return nil
+	}
+	fx := &fixState{project: name, fix: projectfile.Fix{Label: "create project " + name + " from " + p.project}, seq: 1, vp: scrolling(), edit: true, land: name, template: p.project}
+	return m.start("checking...", "edit "+name, 0, p, editCheckCmd(m.b, fx, name, nil, map[string]bool{}))
 }
 
 // submitNew previews a new project with no folder scanned: a name, and

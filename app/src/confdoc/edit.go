@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/b070nd/cvewatch/app/src/config"
 )
 
 // Op is what an Edit does.
@@ -84,13 +87,16 @@ func (s *Set) apply(e Edit) error {
 		return err
 	}
 	if doc.ReadOnly {
-		return fmt.Errorf("%s is built in and cannot be changed; add an entry to your own file instead", doc.ID)
+		return readOnlyErr(doc)
 	}
 	if _, ok := fieldFor(doc.Kind, segs); !ok && e.Op != OpUnset { // a stray key can still be removed
 		return fmt.Errorf("unknown setting %q", e.Path)
 	}
 	root, err := doc.rootNode()
 	if err != nil {
+		return err
+	}
+	if err := s.fromDist(doc, root, segs, e.Op); err != nil {
 		return err
 	}
 	switch e.Op {
@@ -126,9 +132,114 @@ func (s *Set) applyReplace(e Edit) error {
 		}
 	}
 	if doc.ReadOnly {
-		return fmt.Errorf("%s is built in and cannot be changed", doc.ID)
+		return readOnlyErr(doc)
 	}
 	doc.replace(text)
+	return nil
+}
+
+func readOnlyErr(d *Document) error {
+	if d.Layer == LayerDist {
+		return fmt.Errorf("%s holds shared defaults and cvewatch does not change it; set the value in your own file to override it", filepath.Base(d.Path))
+	}
+	return fmt.Errorf("%s is built in and cannot be changed; add an entry to your own file instead", d.ID)
+}
+
+// distOf lists the shared documents a user document overrides.
+func (s *Set) distOf(doc *Document) []*Document {
+	var out []*Document
+	for _, d := range s.Docs {
+		if d.Layer != LayerDist || d.Kind != doc.Kind || d.node == nil || len(d.node.Content) == 0 {
+			continue
+		}
+		if d.Kind == KindSources || d.ID == doc.ID+config.Dist {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// fromDist prepares an edit of the user's file over a shared one. A value the
+// user's file replaces as a whole (a list, an entry of a map, a feed or tech
+// entry) is first copied from the shared file, so editing one part of it does
+// not drop the rest. Removing what only the shared file sets is refused: it
+// would change nothing.
+func (s *Set) fromDist(doc *Document, root *yaml.Node, segs []string, op Op) error {
+	if doc.Layer != LayerUser {
+		return nil
+	}
+	for _, d := range s.distOf(doc) {
+		droot := d.node.Content[0]
+		if op == OpUnset && !hasPath(root, segs) && hasPath(droot, segs) {
+			return fmt.Errorf("%s is set in %s, which cvewatch does not change; set another value to override it", FormatPath(segs), filepath.Base(d.Path))
+		}
+		n := unitLen(doc.Kind, segs)
+		if n == 0 || hasPath(root, segs[:n]) || !hasPath(droot, segs[:n]) {
+			continue
+		}
+		chain, err := walk(droot, segs[:n], false)
+		if err != nil {
+			return err
+		}
+		return insertAt(doc.Kind, root, segs[:n], cloneNode(chain[len(chain)-1]))
+	}
+	return nil
+}
+
+// OverrideUnit is how many segments of the path name the part a user's file
+// replaces as a whole when it sets it over a shared .dist file: a list, an
+// entry of a map, a feed or a tech entry. 0 means the path is a plain value.
+func OverrideUnit(kind string, segs []string) int { return unitLen(kind, segs) }
+
+// unitLen is how many segments of the path name the part the user's file
+// replaces as a whole; 0 when the path is a plain value.
+func unitLen(kind string, segs []string) int {
+	if kind == KindSources || kind == KindTechs {
+		if len(segs) >= 2 {
+			return 2 // feeds and techs merge entry by entry
+		}
+		return 0
+	}
+	for i := 1; i <= len(segs); i++ {
+		if f, ok := lookup(kind, segs[:i]); ok && f.Type == TypeList {
+			return i
+		}
+		if i >= 2 {
+			if f, ok := lookup(kind, segs[:i-1]); ok && f.Type == TypeMap {
+				return i
+			}
+		}
+	}
+	return 0
+}
+
+// insertAt puts node at the path, creating what leads to it; the last segment
+// is a key of a mapping, or an entry of a list.
+func insertAt(kind string, root *yaml.Node, segs []string, node *yaml.Node) error {
+	up, last := segs[:len(segs)-1], segs[len(segs)-1]
+	if f, ok := lookup(kind, up); ok && f.Type == TypeList && len(up) > 0 {
+		chain, err := walk(root, up[:len(up)-1], true)
+		if err != nil {
+			return err
+		}
+		p := chain[len(chain)-1]
+		seq, _ := step(p, up[len(up)-1])
+		switch {
+		case seq == nil:
+			seq = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+			p.Content = append(p.Content, scalarNode(up[len(up)-1]), seq)
+		case isEmptyValue(seq):
+			seq.Kind, seq.Tag, seq.Value, seq.Style = yaml.SequenceNode, "!!seq", "", 0
+		}
+		seq.Content = append(seq.Content, node)
+		return nil
+	}
+	chain, err := walk(root, up, true)
+	if err != nil {
+		return err
+	}
+	p := chain[len(chain)-1]
+	p.Content = append(p.Content, scalarNode(last), node)
 	return nil
 }
 

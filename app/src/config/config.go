@@ -351,6 +351,11 @@ func lineOf(msg string) int {
 }
 
 // Paths of the documents under a root.
+// Dist is the suffix of a shared file: config.yaml.dist, techs.yaml.dist and
+// sources/*.yaml.dist hold defaults, which the file without the suffix
+// overrides key by key. projects/*.yaml.dist are templates, never projects.
+const Dist = ".dist"
+
 func SettingsPath(root string) string { return filepath.Join(root, "config", "config.yaml") }
 func TechsPath(root string) string    { return filepath.Join(root, "config", "techs.yaml") }
 func SourcesDir(root string) string   { return filepath.Join(root, "sources") }
@@ -360,7 +365,9 @@ func ProjectsDir(root string) string  { return filepath.Join(root, "config", "pr
 type origins struct {
 	settings string
 	techs    string
-	userTech map[string]bool // lowercase names defined in the user's techs.yaml
+	userTech map[string]string // lowercase names defined in techs.yaml or techs.yaml.dist, and the file
+	distSet  map[string]any    // config.yaml.dist as plain data, to tell where a setting came from
+	userSet  map[string]any    // config.yaml as plain data
 	projects map[string]string
 	sources  map[string]sourceAt
 }
@@ -374,12 +381,17 @@ func assemble(root string, lenient bool, over Overlay) (*Bundle, []Issue) {
 	b := &Bundle{Root: root, Settings: Defaults()}
 	fail := func(err error) (*Bundle, []Issue) { return nil, []Issue{newIssue("", "", err)} }
 	rd := reader{over}
-	og := origins{settings: SettingsPath(root), techs: TechsPath(root), userTech: map[string]bool{},
+	og := origins{settings: SettingsPath(root), techs: TechsPath(root), userTech: map[string]string{},
 		projects: map[string]string{}, sources: map[string]sourceAt{}}
 
-	if err := rd.decode(og.settings, &b.Settings, true); err != nil {
-		return fail(err)
+	// config.yaml.dist holds shared defaults; config.yaml overrides them key by
+	// key. A list or a value is replaced as a whole, a map is merged.
+	for _, path := range []string{og.settings + Dist, og.settings} {
+		if err := rd.decode(path, &b.Settings, true); err != nil {
+			return fail(err)
+		}
 	}
+	og.distSet, og.userSet = rd.plain(og.settings+Dist), rd.plain(og.settings)
 	b.DataDir = resolve(root, b.DataDir)
 	b.AlertsDir = resolve(root, b.AlertsDir)
 
@@ -387,21 +399,28 @@ func assemble(root string, lenient bool, over Overlay) (*Bundle, []Issue) {
 	// in the folder layer on top by name (technologies) or id (feeds): an entry
 	// replaces the shipped one (a feed entry changes only the fields it gives), a
 	// new one is added, and `disabled: true` removes a shipped one.
-	var shippedTechs, userTechs struct {
+	var shippedTechs struct {
 		Techs []model.Tech `yaml:"techs"`
 	}
 	if err := decodeBytes("shipped techs.yaml", shipped.Techs(), &shippedTechs); err != nil {
 		return fail(err)
 	}
-	if _, err := rd.read(og.techs); errors.Is(err, os.ErrNotExist) {
-		b.DefaultTechs = true
-	} else if err := rd.decode(og.techs, &userTechs, false); err != nil {
-		return fail(err)
+	b.Techs, b.DefaultTechs = shippedTechs.Techs, true
+	for _, path := range []string{og.techs + Dist, og.techs} { // shared ones, then the user's own
+		var layer struct {
+			Techs []model.Tech `yaml:"techs"`
+		}
+		if _, err := rd.read(path); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err := rd.decode(path, &layer, false); err != nil {
+			return fail(err)
+		}
+		b.DefaultTechs = false
+		for _, t := range layer.Techs {
+			og.userTech[strings.ToLower(t.Name)] = path
+		}
+		b.Techs = catalog.Merge(b.Techs, layer.Techs)
 	}
-	for _, t := range userTechs.Techs {
-		og.userTech[strings.ToLower(t.Name)] = true
-	}
-	b.Techs = catalog.Merge(shippedTechs.Techs, userTechs.Techs)
 	b.Catalog = catalog.New(b.Techs)
 
 	decoded := map[string]bool{}
@@ -446,7 +465,7 @@ func assemble(root string, lenient bool, over Overlay) (*Bundle, []Issue) {
 	if err := decodeBytes("shipped sources", shipped.Sources(), &shippedSrc); err != nil {
 		return fail(err)
 	}
-	err = rd.each(SourcesDir(root), func(path string) error {
+	err = rd.eachLayered(SourcesDir(root), func(path string) error {
 		var s struct {
 			Sources []userSource `yaml:"sources"`
 		}
@@ -471,6 +490,7 @@ func assemble(root string, lenient bool, over Overlay) (*Bundle, []Issue) {
 func (b *Bundle) validate(decoded map[string]bool, og origins) []Issue {
 	var out []Issue
 	fail := func(file, field, f string, a ...any) { out = append(out, newIssue(file, field, fmt.Errorf(f, a...))) }
+	failSet := func(field, f string, a ...any) { fail(og.settingFile(field), field, f, a...) }
 
 	for _, err := range b.Catalog.Validate() {
 		is := newIssue("", "", err)
@@ -478,8 +498,8 @@ func (b *Bundle) validate(decoded map[string]bool, og origins) []Issue {
 		if errors.As(err, &p) {
 			if p.Tech == "" {
 				is.File, is.Field = og.techs, "techs"
-			} else if og.userTech[strings.ToLower(p.Tech)] {
-				is.File, is.Field = og.techs, "techs.[name="+p.Tech+"]"
+			} else if file := og.userTech[strings.ToLower(p.Tech)]; file != "" {
+				is.File, is.Field = file, "techs.[name="+p.Tech+"]"
 				if p.Field != "" {
 					is.Field += "." + p.Field
 				}
@@ -512,12 +532,12 @@ func (b *Bundle) validate(decoded map[string]bool, og origins) []Issue {
 		for _, name := range g.Projects {
 			if vendor, ok := VendorGrant(name); ok {
 				if vendor == "" || !model.ValidVendor(vendor) {
-					fail(og.settings, "access."+actor+".projects", "access for %q names the vendor %q, which is not a valid vendor name", actor, vendor)
+					failSet("access."+actor+".projects", "access for %q names the vendor %q, which is not a valid vendor name", actor, vendor)
 				}
 				continue
 			}
 			if name != "*" && !decoded[name] {
-				fail(og.settings, "access."+actor+".projects", "access for %q names unknown project %q", actor, name)
+				failSet("access."+actor+".projects", "access for %q names unknown project %q", actor, name)
 			}
 		}
 	}
@@ -563,18 +583,18 @@ func (b *Bundle) validate(decoded map[string]bool, og origins) []Issue {
 		}
 	}
 	if b.Interval <= 0 {
-		fail(og.settings, "interval", "interval must be positive")
+		failSet("interval", "interval must be positive")
 	}
 	if d := b.Notify.Digest; d.DailyAt != "" {
 		if _, err := time.Parse("15:04", d.DailyAt); err != nil {
-			fail(og.settings, "notify.digest.daily_at", "notify.digest.daily_at must look like 08:00")
+			failSet("notify.digest.daily_at", "notify.digest.daily_at must look like 08:00")
 		}
 		if d.Env != "" && !d.Env.Valid() {
-			fail(og.settings, "notify.digest.env", "notify.digest.env %q is not a valid environment name (lowercase letters, digits, - and _)", d.Env)
+			failSet("notify.digest.env", "notify.digest.env %q is not a valid environment name (lowercase letters, digits, - and _)", d.Env)
 		}
 		for _, c := range d.Channels {
 			if !slices.Contains([]string{"slack", "webhook", "email"}, c) {
-				fail(og.settings, "notify.digest.channels", "notify.digest.channels: unknown channel %q", c)
+				failSet("notify.digest.channels", "notify.digest.channels: unknown channel %q", c)
 			}
 		}
 	}
@@ -582,43 +602,43 @@ func (b *Bundle) validate(decoded map[string]bool, og origins) []Issue {
 		at := "policy.rules." + strconv.Itoa(i)
 		switch {
 		case r.Name == "":
-			fail(og.settings, at+".name", "policy rule %d needs a name", i+1)
+			failSet(at+".name", "policy rule %d needs a name", i+1)
 		case r.OwnerWithin <= 0 && r.FixWithin <= 0:
-			fail(og.settings, at+".fix_within", "policy rule %q needs owner_within or fix_within", r.Name)
+			failSet(at+".fix_within", "policy rule %q needs owner_within or fix_within", r.Name)
 		case r.Env != "" && !r.Env.Valid():
-			fail(og.settings, at+".env", "policy rule %q: %q is not a valid environment name", r.Name, r.Env)
+			failSet(at+".env", "policy rule %q: %q is not a valid environment name", r.Name, r.Env)
 		}
 	}
 	if b.TUI.Refresh < time.Second {
-		fail(og.settings, "tui.refresh", "tui.refresh must be at least 1s")
+		failSet("tui.refresh", "tui.refresh must be at least 1s")
 	}
 	if b.TUI.Fetch < 0 {
-		fail(og.settings, "tui.fetch", "tui.fetch must not be negative (0 fetches only on request)")
+		failSet("tui.fetch", "tui.fetch must not be negative (0 fetches only on request)")
 	}
 	if b.TUI.Editor != "" && strings.TrimSpace(b.TUI.Editor) == "" {
-		fail(og.settings, "tui.editor", "tui.editor must not be blank (remove it to use $VISUAL, $EDITOR or the usual editors)")
+		failSet("tui.editor", "tui.editor must not be blank (remove it to use $VISUAL, $EDITOR or the usual editors)")
 	}
 	if !b.Profile.Valid() {
-		fail(og.settings, "profile", "profile %q is not valid (use %s)", b.Profile, profileNames())
+		failSet("profile", "profile %q is not valid (use %s)", b.Profile, profileNames())
 	}
 	if !b.Retire.Valid() {
-		fail(og.settings, "retire", "retire %q is not valid (use %s or %s)", b.Retire, model.RetireAuto, model.RetireManual)
+		failSet("retire", "retire %q is not valid (use %s or %s)", b.Retire, model.RetireAuto, model.RetireManual)
 	}
 	for _, hp := range b.Horizon.Problems() {
-		fail(og.settings, "horizon."+hp.Field, "%s", hp.Msg)
+		failSet("horizon."+hp.Field, "%s", hp.Msg)
 	}
 	if reach := b.Horizon.Reach(time.Now()); reach > b.Lookback && b.Lookback > 0 {
 		b.Warnings = append(b.Warnings, fmt.Sprintf("horizon reaches back %s but lookback is %s: sources are only fetched back to the lookback on their first run, so older items are not seen; raise lookback",
 			formatSpan(reach), formatSpan(b.Lookback)))
 	}
 	if b.Storage.Backend != "" && !slices.Contains(store.Backends(), b.Storage.Backend) {
-		fail(og.settings, "storage.backend", "storage.backend must be file, sqlite or postgres")
+		failSet("storage.backend", "storage.backend must be file, sqlite or postgres")
 	}
 	if b.Storage.DSNEnv != "" && !envName.MatchString(b.Storage.DSNEnv) {
-		fail(og.settings, "storage.dsn_env", "storage.dsn_env must be the name of an environment variable, not the connection string itself")
+		failSet("storage.dsn_env", "storage.dsn_env must be the name of an environment variable, not the connection string itself")
 	}
 	if b.Retention > 0 && b.Retention < 2*b.Lookback {
-		fail(og.settings, "retention", "retention must be at least twice the lookback, or old items could be judged again")
+		failSet("retention", "retention must be at least twice the lookback, or old items could be judged again")
 	}
 	return out
 }
@@ -816,6 +836,44 @@ func (r reader) decode(path string, out any, optional bool) error {
 	return decodeBytes(path, raw, out)
 }
 
+// plain reads a document as plain data, or nil when it is missing or broken.
+func (r reader) plain(path string) map[string]any {
+	raw, err := r.read(path)
+	if err != nil {
+		return nil
+	}
+	var m map[string]any
+	if yaml.Unmarshal(raw, &m) != nil {
+		return nil
+	}
+	return m
+}
+
+// settingFile names the file a setting came from: config.yaml.dist when only
+// that file sets it, else config.yaml.
+func (og origins) settingFile(field string) string {
+	if has(og.distSet, field) && !has(og.userSet, field) {
+		return og.settings + Dist
+	}
+	return og.settings
+}
+
+// has reports whether the plain document sets the dotted field; a list index
+// or [name=...] segment stops the walk at the list.
+func has(m map[string]any, field string) bool {
+	cur := any(m)
+	for _, seg := range strings.Split(field, ".") {
+		mm, ok := cur.(map[string]any)
+		if !ok {
+			return cur != nil
+		}
+		if cur, ok = mm[seg]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // decodeError keeps the document name apart from yaml's own message.
 type decodeError struct {
 	name string
@@ -835,13 +893,24 @@ func decodeBytes(name string, raw []byte, out any) error {
 }
 
 // each runs fn for every *.yaml file in dir, in name order. A missing dir is empty.
-func (r reader) each(dir string, fn func(path string) error) error {
-	files, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
+func (r reader) each(dir string, fn func(path string) error) error { return r.eachOf(dir, ".yaml", fn) }
+
+// eachLayered runs fn for every *.yaml.dist file in dir, then every *.yaml
+// file, so the user's files override the shared ones.
+func (r reader) eachLayered(dir string, fn func(path string) error) error {
+	if err := r.eachOf(dir, ".yaml"+Dist, fn); err != nil {
+		return err
+	}
+	return r.eachOf(dir, ".yaml", fn)
+}
+
+func (r reader) eachOf(dir, suffix string, fn func(path string) error) error {
+	files, err := filepath.Glob(filepath.Join(dir, "*"+suffix))
 	if err != nil {
 		return err
 	}
 	for p, data := range r.over {
-		if filepath.Dir(p) == filepath.Clean(dir) && filepath.Ext(p) == ".yaml" && data != nil && !slices.Contains(files, p) {
+		if filepath.Dir(p) == filepath.Clean(dir) && strings.HasSuffix(p, suffix) && data != nil && !slices.Contains(files, p) {
 			files = append(files, p)
 		}
 	}

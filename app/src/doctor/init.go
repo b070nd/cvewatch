@@ -4,12 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/b070nd/cvewatch/app/src/confdoc"
 	"github.com/b070nd/cvewatch/app/src/config"
 	"github.com/b070nd/cvewatch/app/src/defaults"
 	"github.com/b070nd/cvewatch/app/src/discovery"
@@ -19,6 +21,13 @@ import (
 	"github.com/b070nd/cvewatch/app/src/setup"
 	"github.com/b070nd/cvewatch/app/src/store"
 )
+
+// InitLayout is every file Init writes, by path relative to the root folder.
+func InitLayout() map[string][]byte {
+	layout := defaults.Layout()
+	layout["config/config.yaml.dist"] = confdoc.DistSettings()
+	return layout
+}
 
 // InitOptions controls Init.
 type InitOptions struct {
@@ -42,8 +51,9 @@ func Init(root string, o InitOptions) (InitResult, error) {
 	if root == "" {
 		root = "."
 	}
-	for _, name := range defaults.Names() {
-		if err := res.write(root, name, defaults.Layout()[name], o.Force); err != nil {
+	layout := InitLayout()
+	for _, name := range slices.Sorted(maps.Keys(layout)) {
+		if err := res.write(root, name, layout[name], o.Force); err != nil {
 			return res, err
 		}
 	}
@@ -51,7 +61,7 @@ func Init(root string, o InitOptions) (InitResult, error) {
 	next := fmt.Sprintf("Next: run `cvewatch -root %s doctor`, then `cvewatch -root %s update`.", shellArg(root), shellArg(root))
 	if o.Repo == "" {
 		res.Notes = append(res.Notes,
-			"No repository given: copy config/projects/example.yaml.example to config/projects/<yourproject>.yaml and edit it.", next)
+			"No repository given: add a project in the TUI from the example template, or copy config/projects/example.yaml.dist to config/projects/<yourproject>.yaml and edit it.", next)
 		return res, nil
 	}
 
@@ -101,7 +111,7 @@ func Init(root string, o InitOptions) (InitResult, error) {
 	}
 	if !slices.ContainsFunc(edits, func(o projectfile.Op) bool { return o.Kind != projectfile.KindSetEnvs }) { // the environment alone is not a finding
 		res.Notes = append(res.Notes, fmt.Sprintf(
-			"Found no lockfile or technology in %s: copy config/projects/example.yaml.example to config/projects/%s.yaml and edit it.", repo, name), next)
+			"Found no lockfile or technology in %s: copy config/projects/example.yaml.dist to config/projects/%s.yaml and edit it.", repo, name), next)
 		return res, nil
 	}
 	if exists && !o.Force {

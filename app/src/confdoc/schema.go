@@ -292,8 +292,11 @@ func fieldList() []Field {
 		schema = fields()
 		d := reflect.ValueOf(config.Defaults())
 		for i := range schema {
-			if schema[i].Doc == KindSettings {
-				schema[i].Default = defaultAt(d, strings.Split(schema[i].Path, "."))
+			if schema[i].Doc != KindSettings {
+				continue
+			}
+			if def := defaultAt(d, strings.Split(schema[i].Path, ".")); def != "" || schema[i].Default == "" {
+				schema[i].Default = def
 			}
 		}
 	})

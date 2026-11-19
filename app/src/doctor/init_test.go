@@ -18,10 +18,10 @@ func TestInitWritesLayoutAndSkips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Written) != len(defaults.Layout()) || len(res.Skipped) != 0 {
+	if len(res.Written) != len(InitLayout()) || len(res.Skipped) != 0 {
 		t.Fatalf("written %v skipped %v", res.Written, res.Skipped)
 	}
-	for name, want := range defaults.Layout() {
+	for name, want := range InitLayout() {
 		got, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
 		if err != nil || string(got) != string(want) {
 			t.Errorf("%s: err %v, content differs", name, err)
@@ -40,7 +40,7 @@ func TestInitWritesLayoutAndSkips(t *testing.T) {
 		t.Errorf("dirs = %s %s", b.DataDir, b.AlertsDir)
 	}
 
-	edited := filepath.Join(root, "config", "techs.yaml")
+	edited := filepath.Join(root, "config", "techs.yaml.dist")
 	if err := os.WriteFile(edited, []byte("techs: []\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestInitWritesLayoutAndSkips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Written) != 0 || len(res.Skipped) != len(defaults.Layout()) {
+	if len(res.Written) != 0 || len(res.Skipped) != len(InitLayout()) {
 		t.Fatalf("second run written %v skipped %v", res.Written, res.Skipped)
 	}
 	if got, _ := os.ReadFile(edited); string(got) != "techs: []\n" {
@@ -59,7 +59,7 @@ func TestInitWritesLayoutAndSkips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Written) != len(defaults.Layout()) || len(res.Skipped) != 0 {
+	if len(res.Written) != len(InitLayout()) || len(res.Skipped) != 0 {
 		t.Fatalf("force run written %v skipped %v", res.Written, res.Skipped)
 	}
 	if got, _ := os.ReadFile(edited); string(got) != string(defaults.UserTechs()) {
@@ -187,11 +187,11 @@ func TestInitNothingFound(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, w := range res.Written {
-		if strings.HasPrefix(w, "config/projects/") && !strings.HasSuffix(w, ".example") {
+		if strings.HasPrefix(w, "config/projects/") && !strings.HasSuffix(w, ".dist") {
 			t.Errorf("unexpected project file %s", w)
 		}
 	}
-	if n := strings.Join(res.Notes, "\n"); !strings.Contains(n, "example.yaml.example") || !strings.Contains(n, "project.yaml") {
+	if n := strings.Join(res.Notes, "\n"); !strings.Contains(n, "example.yaml.dist") || !strings.Contains(n, "project.yaml") {
 		t.Errorf("notes = %s", n)
 	}
 

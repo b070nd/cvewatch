@@ -24,6 +24,7 @@ const (
 	pkEvidence                    // a note and a link attached to an environment
 	pkEdit                        // the value of one field of a project file
 	pkNew                         // a project made from a name, without scanning a folder
+	pkTemplate                    // a project made from a template; project holds the template's name
 	pkRename                      // the new name of a project
 	pkDuplicate                   // the name of the copy of a project
 	pkDelete                      // the name of the project to delete, typed to confirm
@@ -362,6 +363,8 @@ func (m *app) promptSubmit() tea.Cmd {
 		return m.previewSettings(label, p.crumb, edits, p)
 	case pkNew:
 		return m.submitNew(p, val(0), val(1))
+	case pkTemplate:
+		return m.submitTemplate(p, val(0))
 	case pkRename, pkDuplicate:
 		verb := ops.VerbRename
 		if p.kind == pkDuplicate {

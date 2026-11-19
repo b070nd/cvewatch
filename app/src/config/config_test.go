@@ -193,13 +193,9 @@ func TestShippedExamplesLoadWhenUncommented(t *testing.T) {
 	put(t, root, "config/techs.yaml", uncomment(t, shipped.UserTechs(), "techs"))
 	put(t, root, "sources/custom.yaml", uncomment(t, shipped.UserSources(), "sources"))
 	put(t, root, "config/projects/shop.yaml", "name: shop\n")
-	put(t, root, "config/config.yaml", uncomment(t, shipped.Settings(), "access")+uncomment(t, shipped.Settings(), "dashboard")+uncomment(t, shipped.Settings(), "tui")+uncomment(t, shipped.Settings(), "horizon"))
 	b, err := Load(root)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if b.Horizon.Window != WindowUnlimited || b.Horizon.From != "2026-01-01" {
-		t.Fatalf("example horizon not loaded: %+v", b.Horizon)
 	}
 	if tech, ok := b.Catalog.Get("acme-gateway"); !ok || len(tech.Aliases) != 1 {
 		t.Fatalf("example tech not loaded: %+v", tech)
@@ -614,5 +610,54 @@ func TestTheFileStoreIsTheDefault(t *testing.T) {
 	put(t, root, "config/config.yaml", "storage: {backend: postgres}\n")
 	if b, err = Load(root); err != nil || b.Place().Backend != "postgres" || b.Place().DSN != "postgresql://somewhere/db" {
 		t.Fatalf("postgres only when asked for: %+v %v", b.Place(), err)
+	}
+}
+
+func TestDistFilesHoldDefaultsTheUserFilesOverride(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, "config/config.yaml.dist", "interval: 2h\nlookback: 72h\naccess:\n  ann: {projects: ['*'], write: true}\n")
+	put(t, root, "config/config.yaml", "interval: 1h\naccess:\n  bob: {projects: [shop]}\n")
+	put(t, root, "config/techs.yaml.dist", "techs:\n  - {name: acme-gw, aliases: [acme gateway]}\n  - {name: team-tool}\n")
+	put(t, root, "config/techs.yaml", "techs:\n  - {name: acme-gw, aliases: [acme gw, acme gateway]}\n")
+	put(t, root, "sources/team.yaml.dist", "sources:\n  - {id: team-feed, type: rss, url: 'https://team.test/feed'}\n")
+	put(t, root, "sources/mine.yaml", "sources:\n  - {id: team-feed, url: 'https://team.test/other'}\n")
+	put(t, root, "config/projects/shop.yaml", "name: shop\n")
+	put(t, root, "config/projects/template.yaml.dist", "name: template\n")
+	b, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Interval != time.Hour || b.Lookback != 72*time.Hour {
+		t.Fatalf("config.yaml wins, config.yaml.dist fills in: interval %v lookback %v", b.Interval, b.Lookback)
+	}
+	if len(b.Access) != 2 || !b.Access["ann"].Write {
+		t.Fatalf("access rules of both files are merged by actor: %+v", b.Access)
+	}
+	if tech, ok := b.Catalog.Get("acme-gw"); !ok || len(tech.Aliases) != 2 {
+		t.Fatalf("the user's entry replaces the shared one: %+v", tech)
+	}
+	if _, ok := b.Catalog.Get("team-tool"); !ok || b.DefaultTechs {
+		t.Fatal("a shared tech is in the catalog")
+	}
+	i := slices.IndexFunc(b.Sources, func(s model.Source) bool { return s.ID == "team-feed" })
+	if i < 0 || b.Sources[i].URL != "https://team.test/other" || b.Sources[i].Type != "rss" {
+		t.Fatalf("a user feed entry changes the fields it gives of the shared one: %+v", b.Sources)
+	}
+	if len(b.Projects) != 1 || b.Projects[0].Name != "shop" {
+		t.Fatalf("a project .dist is a template, not a project: %+v", b.Projects)
+	}
+}
+
+func TestAProblemInADistFileIsReportedThere(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, "config/config.yaml.dist", "interval: 0s\n")
+	put(t, root, "config/config.yaml", "lookback: 72h\n")
+	_, issues := Check(root, nil)
+	if len(issues) != 1 || issues[0].File != SettingsPath(root)+Dist || issues[0].Field != "interval" {
+		t.Fatalf("%+v", issues)
+	}
+	_, issues = Check(root, Overlay{SettingsPath(root): []byte("interval: -1s\n")})
+	if len(issues) != 1 || issues[0].File != SettingsPath(root) {
+		t.Fatalf("overridden in config.yaml, it is reported there: %+v", issues)
 	}
 }

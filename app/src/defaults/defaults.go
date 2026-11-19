@@ -7,7 +7,6 @@ package defaults
 import (
 	"embed"
 	"io/fs"
-	"sort"
 )
 
 //go:embed files/*
@@ -27,37 +26,35 @@ func Techs() []byte { return read("techs.yaml") }
 // Sources is the shipped feed list (a sources: key, like any file in sources/).
 func Sources() []byte { return read("sources.yaml") }
 
-// UserTechs is the commented techs.yaml `init` writes: shipped technologies
-// are always available, so it holds only the user's own additions.
+// UserTechs is the commented techs.yaml.dist `init` writes: shipped
+// technologies are always available, so it holds only additions.
 func UserTechs() []byte { return read("user-techs.yaml") }
 
-// UserSources is the commented feed file `init` writes, for the user's own feeds.
+// UserSources is the commented feed file `init` writes, for added feeds.
 func UserSources() []byte { return read("user-sources.yaml") }
 
-// Settings is a commented config.yaml for `init`; every key in it is optional.
-func Settings() []byte { return read("config.yaml") }
-
-// ProjectExample is a commented project file for `init`.
-func ProjectExample() []byte { return read("project.example.yaml") }
-
-// Layout lists the files `init` writes, by path relative to the root folder.
-func Layout() map[string][]byte {
-	return map[string][]byte{
-		"config/config.yaml":                   Settings(),
-		"config/techs.yaml":                    UserTechs(),
-		"sources/custom.yaml":                  UserSources(),
-		"config/projects/example.yaml.example": ProjectExample(),
-	}
+// UserSettings is the config.yaml `init` writes: a person's own settings,
+// over config.yaml.dist (see confdoc.DistSettings, which `init` writes too).
+func UserSettings() []byte {
+	return []byte("# Your own settings. A key here overrides config.yaml.dist next to this file,\n" +
+		"# which lists every setting with its help and default. The TUI, the MCP\n" +
+		"# tools and the CLI write their changes here.\n\n" +
+		"data_dir: data       # state.json, audit.log (relative to this folder)\n" +
+		"alerts_dir: alerts   # generated reports and calendar pages\n")
 }
 
-// Names returns the layout paths in a stable order.
-func Names() []string {
-	var out []string
-	for n := range Layout() {
-		out = append(out, n)
+// ProjectExample is a commented project template for `init`.
+func ProjectExample() []byte { return read("project.example.yaml") }
+
+// Layout lists the files `init` writes from this package, by path relative to
+// the root folder. config/config.yaml.dist comes from the settings schema.
+func Layout() map[string][]byte {
+	return map[string][]byte{
+		"config/config.yaml":                UserSettings(),
+		"config/techs.yaml.dist":            UserTechs(),
+		"sources/custom.yaml.dist":          UserSources(),
+		"config/projects/example.yaml.dist": ProjectExample(),
 	}
-	sort.Strings(out)
-	return out
 }
 
 var _ fs.FS = files

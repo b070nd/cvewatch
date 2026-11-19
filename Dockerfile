@@ -13,7 +13,7 @@ LABEL io.modelcontextprotocol.server.name="io.github.b070nd/cvewatch"
 COPY --from=build /out/cvewatch /cvewatch
 COPY --from=build --chown=65532:65532 /out/data /data
 COPY --from=build --chown=65532:65532 /out/alerts /alerts
-COPY app/config/config.yaml /app/config/
+COPY app/config/config.yaml.dist /app/config/
 # Techs and feeds are built into the binary. Project configs are mounted at
 # /app/config/projects, never baked in.
 VOLUME ["/data", "/alerts"]

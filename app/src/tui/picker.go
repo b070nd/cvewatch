@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"strings"
+
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -157,17 +159,20 @@ func (m *app) choose(pk *picker) {
 // addChooser is + on the projects: where the new project comes from.
 func (m *app) addChooser() tea.Cmd {
 	m.choose(&picker{title: "Add a project", hint: "enter chooses, esc cancels; nothing is written until you save the project", crumb: "add project",
-		items: []pickItem{
+		items: append([]pickItem{
 			{value: "folder", label: "From a folder", detail: "scan a repository or monorepo folder for technologies and lockfiles"},
 			{value: "file", label: "From a Dockerfile or compose file", detail: "its base images, services and packages become the infrastructure of the project"},
 			{value: "empty", label: "Empty project", detail: "a name and its environments; add the rest later"},
-		},
+		}, m.templateItems()...),
 		done: func(m *app, vals []string) tea.Cmd {
 			m.chs = nil
-			switch vals[0] {
-			case "folder":
+			switch t, ok := strings.CutPrefix(vals[0], "template:"); {
+			case ok:
+				m.prm = &prompt{kind: pkTemplate, project: t, title: "New project from the template " + t, fields: []field{{label: "Name"}},
+					hint: "letters, digits, - and _; the project starts as a copy of " + t + ".yaml.dist with this name"}
+			case vals[0] == "folder":
 				m.startPath()
-			case "file":
+			case vals[0] == "file":
 				m.startFilePath()
 			default:
 				return m.newProject()
@@ -175,4 +180,16 @@ func (m *app) addChooser() tea.Cmd {
 			return nil
 		}})
 	return nil
+}
+
+// templateItems are the project templates as choices of the add list.
+func (m *app) templateItems() []pickItem {
+	if m.data == nil {
+		return nil
+	}
+	var out []pickItem
+	for _, t := range m.data.Templates {
+		out = append(out, pickItem{value: "template:" + t, label: "From the template " + t, detail: "a copy of config/projects/" + t + ".yaml.dist under a new name"})
+	}
+	return out
 }

@@ -1,5 +1,6 @@
-# Copy to <name>.yaml (any *.yaml in this folder is loaded and stays untracked),
-# or let `cvewatch init -repo /path/to/repo` write one for you.
+# A template: pick it when adding a project in the TUI, or copy it to <name>.yaml
+# (any *.yaml in this folder is loaded and stays untracked; *.yaml.dist never is),
+# or let `cvewatch init -repo /path/to/repo` write a project for you.
 name: shop
 envs: [dev, int, staging, prod]   # any names (local, qa-2 ...); omit for the old default: dev, int, staging, prod
 # since: 2026-01-01              # vulnerabilities published before this day are not checked
