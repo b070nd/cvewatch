@@ -773,12 +773,18 @@ func TestEveryBlockOfTheDistFileLoadsWhenUncommented(t *testing.T) {
 	}
 }
 
-func TestTheRepositoryDistFileIsTheGeneratedOne(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "..", "config", "config.yaml.dist"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(b) != string(DistSettings()) {
-		t.Fatal("app/config/config.yaml.dist is not what cvewatch generates: run `cvewatch -root app init -force` and keep only config/config.yaml.dist")
+func TestTheRepositoryDistFilesAreTheGeneratedOnes(t *testing.T) {
+	for file, want := range map[string][]byte{
+		"app/config/config.yaml.dist": DistSettings(),
+		"config/config.yaml.dist":     DistSettings(),
+		"config/techs.yaml.dist":      defaults.UserTechs(),
+	} {
+		b, err := os.ReadFile(filepath.Join("..", "..", "..", filepath.FromSlash(file)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(b) != string(want) {
+			t.Errorf("%s is not what cvewatch generates: run `cvewatch -root DIR init` in an empty folder and copy the file from there", file)
+		}
 	}
 }

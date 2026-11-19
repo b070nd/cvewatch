@@ -1,0 +1,201 @@
+# cvewatch settings: shared defaults (config.yaml.dist).
+#
+# Every setting is listed with its help and its default, commented out.
+# Uncomment a line to make it the default for everyone who uses this folder.
+# config.yaml next to this file overrides any key for one person, and the TUI,
+# the MCP tools and the CLI write their changes there, never here.
+# A value or a list in config.yaml replaces the one here as a whole; a map,
+# such as access, is merged by key.
+
+# Interval: How often a project is refreshed unless its file says otherwise
+# (update.every), and the longest the daemon sleeps before it looks at the
+# configuration again.
+# interval: 4h
+
+# update:
+#   # Scheduled updates: Refresh projects by themselves, the daemon and the
+#   # full-screen interface alike. Off, only update and the u key refresh. A
+#   # project can opt out or pick its own period in its file (update.auto,
+#   # update.every).
+#   auto: true
+
+# Lookback: How far back a source's first run reaches. A project's since date
+# reaches further, once: after you set or move it, the next fetch goes back to
+# that date.
+# lookback: 168h
+
+# Recent issues first: Issues published this recently lead the lists, the most
+# urgent of them first, so news of the last days (a weekend, say) is seen
+# before older issues of higher rank. Pinned issues still come before them; a
+# sort by a column ignores both. 0 turns it off. Default 72h.
+# recent: 72h
+
+# Retention: Forget items that matched nothing after this long; 0 keeps them.
+# At least twice the lookback. Until then a new tech or project can pick them
+# up again (cvewatch revalidate).
+# retention: 4320h
+
+# Matching profile: How much evidence a match needs: strict = only the
+# advisory's own product data; balanced = text counts when the advisory names
+# no product; discovery = also text matches still waiting for product data,
+# recorded but not alerted. A project can set its own in its file. One of:
+# strict, balanced, discovery.
+# profile: balanced
+
+# Retiring disproved matches: Who retires a finding whose match the advisory's
+# own product data disproves: auto = every update does; manual = updates only
+# report how many, and `cvewatch revalidate -apply` retires them. One of:
+# auto, manual.
+# retire: auto
+
+# Data directory: Where state, the audit log and backups live; relative to the
+# root folder.
+# data_dir: ../data
+
+# Alerts directory: Where markdown reports and calendar pages are written;
+# relative to the root folder.
+# alerts_dir: ../alerts
+
+# enrich:
+#   # EPSS lookups: Ask FIRST's EPSS service about the CVEs you track. Reveals
+#   # your stack to that service.
+#   epss: false
+#   # CVSS lookups: Rate tracked CVEs that no source gave a score, from NVD's
+#   # public data (a few per cycle, no key needed). Only the CVE id is sent.
+#   # Default on.
+#   cvss: true
+
+# storage:
+#   # Storage backend: Where state is kept. One of: file, sqlite, postgres.
+#   backend: file
+#   # Database DSN variable: For the postgres backend: the name of the
+#   # environment variable that holds the connection string (default
+#   # CVEWATCH_DSN). The string itself stays out of the file.
+#   dsn_env: ""
+
+# dashboard:
+#   # Dashboard: Rewrite a static status page after every cycle.
+#   enabled: false
+#   # Dashboard file: Default: dashboard.html inside the alerts directory.
+#   file: ""
+
+# tui:
+#   # TUI refresh: How often the full-screen interface re-reads the state. At
+#   # least 1s.
+#   refresh: 30s
+#   # TUI fetch: A fixed period at which the full-screen interface fetches the
+#   # feeds for every project, whatever the project schedule says. 0 leaves it
+#   # to tui.auto.
+#   fetch: 0s
+#   # TUI auto update: When no daemon is running, the full-screen interface
+#   # refreshes on the project schedule (each project's update.every, else the
+#   # interval). With a daemon it never fetches by itself. Needs update.auto.
+#   auto: true
+#   # TUI editor: The editor the E key opens files in, with its options, such as
+#   # code --wait. Empty uses $VISUAL, then $EDITOR, then the first of the usual
+#   # editors found on this machine.
+#   editor: ""
+
+# horizon:
+#   # Alert horizon: Only vulnerabilities published inside this window are
+#   # judged, alerted and digested; findings that exist stay. unlimited is any
+#   # time; custom uses from and to. Sources are fetched back to the lookback on
+#   # a first run, so keep the lookback at least as long. One of: unlimited,
+#   # hour, day, week, month, year, custom.
+#   window: unlimited
+#   # Horizon from: Custom window only: YYYY-MM-DD or RFC3339. Empty means no
+#   # start.
+#   from: ""
+#   # Horizon to: Custom window only: YYYY-MM-DD (that whole day) or RFC3339.
+#   # Empty means no end.
+#   to: ""
+
+# http:
+#   # User agent: Sent with every request.
+#   user_agent: cvewatch/1.0 (internal vulnerability monitor)
+#   # Timeout: Per request.
+#   timeout: 30s
+#   # Retries: Extra attempts after a failed request.
+#   retries: 3
+#   # Retry delay: Wait before a retry.
+#   retry_delay: 2s
+#   # Rate: Requests per second, per host.
+#   rate: 1
+#   # Host rates: Stricter or looser requests per second for single hosts.
+#   host_rates: {raw.githubusercontent.com: 5}
+#   # Max body: Largest response accepted, in bytes.
+#   max_body: 16777216
+#   # 429 threshold: Consecutive 429 answers before a host cools down.
+#   threshold_429: 3
+#   # 429 cooldown: How long a host is left alone after repeated 429 answers.
+#   cooldown_429: 2m
+#   # Allow private: Permit http:// and internal addresses, such as an internal
+#   # feed or proxy.
+#   allow_private: false
+
+# slack:
+#   # Slack webhook variable: Name of the environment variable holding the Slack
+#   # webhook URL.
+#   webhook_env: SLACK_WEBHOOK_URL
+#   # Slack minimum severity. One of: unknown, low, medium, high, critical.
+#   min_severity: unknown
+
+# notify:
+#   webhook:
+#     # Webhook URL variable: Name of the environment variable holding the https
+#     # URL.
+#     url_env: ""
+#     # Webhook secret variable: Name of the environment variable holding the
+#     # HMAC secret; optional.
+#     secret_env: ""
+#     # Webhook minimum severity. One of: unknown, low, medium, high, critical.
+#     min_severity: unknown
+#     # Webhook allow private: Internal receivers over http.
+#     allow_private: false
+#   email:
+#     # Email host: SMTP host; empty disables email.
+#     host: ""
+#     # Email port: Default 587.
+#     port: 0
+#     # Email from
+#     from: ""
+#     # Email to: Recipients.
+#     to: []
+#     # Email user variable: Name of the environment variable holding the SMTP
+#     # user.
+#     username_env: ""
+#     # Email password variable: Name of the environment variable holding the
+#     # SMTP password.
+#     password_env: ""
+#     # Email minimum severity. One of: unknown, low, medium, high, critical.
+#     min_severity: unknown
+#   digest:
+#     # Digest time: Local time like 08:00; empty disables the digest.
+#     daily_at: ""
+#     # Digest environment: Only findings in this environment (any name, such as
+#     # prod); empty means all.
+#     env: ""
+#     # Digest channels: Empty means every active channel. One of: slack,
+#     # webhook, email.
+#     channels: []
+#     # Digest size: Items listed; default 20.
+#     max: 0
+
+# policy:
+#   # Rules: Deadlines that `cvewatch policy` checks.
+#   #   - name
+#   #   - env: Any environment name, such as prod. Empty means every
+#   #     environment.
+#   #   - kev: Only issues on the CISA KEV list.
+#   #   - min_severity
+#   #   - owner_within: An owner must be set this long after detection.
+#   #   - fix_within: The finding must be closed this long after detection.
+#   rules: []
+
+# Access rules: Who may see and change which projects, by actor name. Empty
+# means everyone may do everything. Authorization on a local identity, not
+# authentication.
+#   - projects: Project names; vendor:NAME means every project of that vendor,
+#     also one added later; "*" means every project.
+#   - write: May change what the projects hold.
+# access: {}

@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `a` in the TUI Findings list assigns an owner, a due date or a ticket to every open environment of the marked issues at once, as one audited operation.
 
 ### Changed
+- The repository root's `config/` carries the shared `config.yaml.dist` (every setting, commented out) and the `techs.yaml.dist` template, the same as `cvewatch init` writes. A test keeps them, and `app/config/config.yaml.dist`, in step with the code.
 - `.claude/` stays out of git as a whole, and CI fails when a file under it is tracked. `build.sh` at the repository root is part of the repository: it builds both binaries into the root folder (`./build.sh`), or the tag on HEAD into `dist/` (`./build.sh tag`).
 
 ## [2.4.0] - 2026-11-19
