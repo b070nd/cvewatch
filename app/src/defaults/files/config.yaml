@@ -3,6 +3,7 @@ interval: 4h        # how often a project is refreshed unless its file says othe
 lookback: 168h      # first run of a source reaches this far back
 retention: 4320h    # forget items that matched nothing after 180 days; 0 keeps them
                     # (must be at least twice the lookback; findings and the audit log are never pruned)
+recent: 72h         # issues published this recently lead the lists (a weekend's news stays on top); 0 turns it off
 
 data_dir: data         # state.json, audit.log (relative to this folder)
 alerts_dir: alerts     # generated reports and calendar pages

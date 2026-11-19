@@ -340,3 +340,46 @@ func TestRefreshWithReportsEachPhase(t *testing.T) {
 		t.Fatalf("a refresh needs access to every project and must not start: err=%v calls=%d", err, calls)
 	}
 }
+
+func TestPinIsSharedPerProjectAndAudited(t *testing.T) {
+	cfg, st := bundle(t, nil), seeded(t)
+	s := open(t, cfg, st, "alice")
+	if n, err := s.Pin("cve-2026-1", "shop", true); err != nil || n != 1 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	list, err := s.List(query.Filter{Project: "shop"})
+	if err != nil || len(list) != 1 {
+		t.Fatalf("%v %v", list, err)
+	}
+	if list[0].PinnedBy != "alice" || list[0].Priority[0] != "pinned by alice" {
+		t.Fatalf("pinned issue: %+v", list[0])
+	}
+	if mw, _ := s.List(query.Filter{Project: "mw"}); !mw[0].Pinned.IsZero() {
+		t.Fatalf("a pin holds in its project only: %+v", mw[0])
+	}
+	if _, err := s.Pin("CVE-2026-1", "shop", false); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ := s.List(query.Filter{Project: "shop"}); !list[0].Pinned.IsZero() {
+		t.Fatalf("unpinned: %+v", list[0])
+	}
+	if n, err := s.Audit.Verify(); err != nil || n != 2 {
+		t.Fatalf("pin and unpin are audited: n=%d err=%v", n, err)
+	}
+}
+
+func TestTheRecentWindowComesFromTheSettings(t *testing.T) {
+	if config.Defaults().Recent != 72*time.Hour {
+		t.Fatalf("the default window is three days: %v", config.Defaults().Recent)
+	}
+	cfg, st := bundle(t, nil), seeded(t) // published two days before now
+	cfg.Recent = 72 * time.Hour
+	s := open(t, cfg, st, "alice")
+	if list, err := s.List(query.Filter{}); err != nil || !list[0].Recent {
+		t.Fatalf("within 72h: %+v %v", list, err)
+	}
+	cfg.Recent = 0
+	if list, _ := s.List(query.Filter{}); list[0].Recent {
+		t.Fatalf("0 turns it off: %+v", list[0])
+	}
+}

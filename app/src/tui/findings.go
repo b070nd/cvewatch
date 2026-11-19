@@ -338,6 +338,17 @@ func bindClearFilter(except func(m *app) bool) binding {
 		when: func(m *app) bool { return m.list().text != "" && !except(m) }, do: plain((*app).clearFilter)}
 }
 
+// togglePin pins the issue under the cursor to the top of its project's
+// list, or unpins it.
+func (m *app) togglePin() tea.Cmd {
+	if len(m.fnd.vis) == 0 {
+		return nil
+	}
+	is := m.fnd.vis[m.fnd.vp.at()]
+	p, on := rowProject(is), is.Pinned.IsZero()
+	return m.start("saving...", "pin "+is.ID+" "+p, reList|reDetail, nil, pinCmd(m.b, is.ID, p, on))
+}
+
 // openIssue opens the issue under the cursor.
 func (m *app) openIssue() tea.Cmd {
 	if len(m.fnd.vis) == 0 {
@@ -555,6 +566,12 @@ func renderFindings(total int, st *issueList, lv listView, none string, mon map[
 		title := oneLine(is.Untrusted.Title)
 		if is.KEV != nil {
 			title = "[KEV] " + title
+		}
+		if is.Recent {
+			title = "[NEW] " + title
+		}
+		if !is.Pinned.IsZero() {
+			title = "[PIN] " + title
 		}
 		age := is.Age
 		if age == "" {

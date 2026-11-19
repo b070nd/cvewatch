@@ -832,9 +832,13 @@ type Finding struct {
 	// Retired says why cvewatch itself gave up on the match while the finding
 	// stayed open: it then has nothing installed and counts as not affected.
 	// A match that returns clears it.
-	Retired   Retirement `json:"retired,omitempty"`
-	Updated   time.Time  `json:"updated"`
-	AlertedAt time.Time  `json:"alerted_at,omitempty"` // legacy: first delivery; see Alerted
+	Retired Retirement `json:"retired,omitempty"`
+	Updated time.Time  `json:"updated"`
+	// Pinned is when a person pinned the finding to the top of the lists, and
+	// PinnedBy who; zero when it is not pinned.
+	Pinned    time.Time `json:"pinned,omitzero"`
+	PinnedBy  string    `json:"pinned_by,omitempty"`
+	AlertedAt time.Time `json:"alerted_at,omitempty"` // legacy: first delivery; see Alerted
 
 	// Workflow. Owner, Due and Ticket say who handles it and by when; Note is
 	// the current reason or remark; Evidence and History keep the trail.

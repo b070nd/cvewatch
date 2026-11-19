@@ -83,3 +83,32 @@ func TestViolations(t *testing.T) {
 		t.Errorf("reasons: %v", seen)
 	}
 }
+
+func TestPinnedThenRecentLeadTheOrder(t *testing.T) {
+	old := now.AddDate(0, 0, -10)
+	kevCritical := Facts{Severity: model.SevCritical, KEV: &model.KEV{}, Published: old}
+	recentLow := Facts{Severity: model.SevLow, Published: now.Add(-time.Hour), Recent: true}
+	recentHigh := Facts{Severity: model.SevHigh, Published: now.Add(-2 * time.Hour), Recent: true}
+	pinnedFirst := Facts{Severity: model.SevLow, Published: old, Pinned: now.Add(-time.Hour), PinnedBy: "ann"}
+	pinnedLater := Facts{Severity: model.SevCritical, Published: old, Pinned: now, PinnedBy: "bob"}
+
+	if Compare(recentLow, kevCritical) >= 0 {
+		t.Error("a recent issue leads an older one of any rank")
+	}
+	if Compare(recentHigh, recentLow) >= 0 {
+		t.Error("among recent issues the usual order holds")
+	}
+	if Compare(pinnedLater, recentHigh) >= 0 || Compare(pinnedLater, kevCritical) >= 0 {
+		t.Error("a pinned issue leads everything else")
+	}
+	if Compare(pinnedFirst, pinnedLater) >= 0 {
+		t.Error("pinned issues keep the order they were pinned in")
+	}
+	r := Reasons(pinnedFirst, now)
+	if len(r) == 0 || r[0] != "pinned by ann" {
+		t.Errorf("reasons of a pinned issue: %v", r)
+	}
+	if r := Reasons(recentLow, now); len(r) == 0 || r[0] != "published 1h ago" {
+		t.Errorf("reasons of a recent issue: %v", r)
+	}
+}

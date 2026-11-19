@@ -213,3 +213,25 @@ func TestStatusKeysDoNothingWithoutASelectionOnTheList(t *testing.T) {
 		t.Fatal("f i n o need a selection or an open issue")
 	}
 }
+
+func TestPKeyPinsAnIssueToTheTopAndUnpinsIt(t *testing.T) {
+	d := start(t, newFake(t, nil), Options{})
+	d.screen("findings")
+	first := func() string { a := d.m.(*app); return a.fnd.vis[0].ID }
+	if first() != "CVE-2026-3" {
+		t.Fatalf("ranked first: %s", first())
+	}
+	d.press("end", "p")
+	d.want("CVE-2026-4 pinned to the top in shop", "[PIN] Minor thing")
+	if first() != "CVE-2026-4" {
+		t.Fatalf("the pinned issue leads the list: %s", first())
+	}
+	if a := d.m.(*app); a.fnd.vis[a.fnd.vp.at()].ID != "CVE-2026-4" {
+		t.Fatal("the cursor stays on the pinned issue")
+	}
+	d.press("p")
+	d.want("CVE-2026-4 unpinned in shop")
+	if first() != "CVE-2026-3" {
+		t.Fatalf("unpinned, it goes back to its rank: %s", first())
+	}
+}

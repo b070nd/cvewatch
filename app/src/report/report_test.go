@@ -163,3 +163,24 @@ func TestDigestAndReportNameTheVendorOfAProject(t *testing.T) {
 		}
 	}
 }
+
+func TestDigestListsPinnedRecentAndKnownExploitedInTheirOwnSections(t *testing.T) {
+	at := time.Date(2026, 11, 19, 8, 0, 0, 0, time.UTC)
+	issues := []query.Issue{
+		{ID: "P", Severity: model.SevLow, Pinned: at},
+		{ID: "R", Severity: model.SevUnknown, Recent: true},
+		{ID: "K", Severity: model.SevHigh, KEV: &query.KEVInfo{}},
+		{ID: "C", Severity: model.SevCritical},
+		{ID: "H", Severity: model.SevHigh},
+	}
+	out := Digest(issues, nil)
+	var heads []string
+	for _, line := range strings.Split(out, "\n") {
+		if line != "" && line[0] != ' ' && !strings.HasPrefix(line, "Open findings") {
+			heads = append(heads, line)
+		}
+	}
+	if got := strings.Join(heads, ", "); got != "PINNED (1), RECENT (1), KNOWN EXPLOITED (1), CRITICAL (1), HIGH (1)" {
+		t.Fatalf("sections: %s", got)
+	}
+}

@@ -31,6 +31,8 @@ func TestAccessIsDecidedFirst(t *testing.T) {
 		denied("assign "+project, err)
 		_, err = bob.Attach(Attachment{ID: "CVE-2026-1", Project: project, Note: "x"})
 		denied("attach "+project, err)
+		_, err = bob.Pin("CVE-2026-1", project, true)
+		denied("pin "+project, err)
 		_, err = bob.EditProject(ProjectChange{Project: project, Ops: addPHP})
 		denied("edit "+project, err)
 		_, err = bob.ProjectFile(project)
